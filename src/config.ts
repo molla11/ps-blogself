@@ -5,9 +5,12 @@ import type { folderPath } from './types';
 const configTarget = vscode.ConfigurationTarget.Global; // or .Workspace
 
 export function getRootFolder() {
-    return vscode.workspace
+    const raw = vscode.workspace
         .getConfiguration()
         .get<folderPath>(`${consts.EXT_PREFIX}.${consts.configs.ROOT_FOLDER}`);
+
+    if (!raw || raw.trim().length === 0) return undefined;
+    return raw;
 }
 
 export async function setRootFolder(folderPath: folderPath) {

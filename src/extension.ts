@@ -6,12 +6,8 @@ export async function activate(context: vscode.ExtensionContext) {
     console.log(`${consts.EXTENSION_ID}: activate() is executed.`);
 
     const commands = [
-        vscode.commands.registerCommand(`${consts.EXT_PREFIX}.selectRootFolder`, async () => {
-            await selectRootFolder();
-        }),
-        vscode.commands.registerCommand(`${consts.EXT_PREFIX}.clearRootFolder`, async () => {
-            await clearRootFolder();
-        }),
+        vscode.commands.registerCommand(`${consts.EXT_PREFIX}.selectRootFolder`, selectRootFolder),
+        vscode.commands.registerCommand(`${consts.EXT_PREFIX}.clearRootFolder`, clearRootFolder),
     ];
 
     commands.forEach((cmd) => {
@@ -24,30 +20,28 @@ async function selectRootFolder() {
         canSelectFiles: false,
         canSelectFolders: true,
         canSelectMany: false,
-        openLabel: '변경 사항을 기록할 루트 폴더',
+        openLabel: '선택 완료',
         defaultUri:
             vscode.workspace.workspaceFolders?.[0]?.uri ?? vscode.Uri.file(process.env.HOME ?? '/'),
     });
 
     if (!result || result.length === 0) {
-        const currentRootFolder = getRootFolder();
+        const rootPath = getRootFolder();
         vscode.window.showInformationMessage(
-            `현재 루트 폴더(변경되지 않음): ${currentRootFolder ?? '전체 워크스페이스'}`,
+            `현재 루트 폴더(변경되지 않음): ${rootPath.length === 0 ? '전체 워크스페이스' : rootPath}`,
         );
 
         return;
     }
 
-    const folderPath = result[0].fsPath;
-    await setRootFolder(folderPath);
+    const path = result[0].fsPath;
+    await setRootFolder(path);
 
-    vscode.window.showInformationMessage(
-        `변경 사항을 기록할 루트 폴더가 저장되었습니다: ${folderPath}`,
-    );
+    vscode.window.showInformationMessage(`이제 ${path} 아래의 변경 사항을 기록합니다.`);
 }
 
 async function clearRootFolder() {
-    await setRootFolder(undefined);
+    await setRootFolder('');
 
     vscode.window.showInformationMessage('이제 전체 워크스페이스의 변경 사항을 기록합니다.');
 }

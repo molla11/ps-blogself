@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { configManager } from './config';
+import { storageManager } from './storage/StorageManager';
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'psb.sidebar';
@@ -55,17 +56,36 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     this.updateState();
                     break;
                 }
+                case 'openFile': {
+                    vscode.workspace.openTextDocument(data.path).then((doc) => {
+                        vscode.window.showTextDocument(doc);
+                    });
+                    break;
+                }
             }
         });
+
+        // Listen for storage updates to refresh UI
+        const disposable = storageManager.onDidUpdateIndex(() => {
+            this.updateState();
+        });
+        // We can't easily push to context.subscriptions here without passing context properly,
+        // but for now, we rely on the webview's lifecycle.
+        // Ideally we should dispose this listener when webview is disposed.
     }
 
-    public updateState() {
+    public async updateState() {
         if (this._view) {
+            const recentLogs = await storageManager.getRecentFiles();
+            const totalSize = await storageManager.calculateTotalSize();
+
             this._view.webview.postMessage({
                 type: 'updateState',
                 root: configManager.getRootFolder(),
                 isRecording: configManager.isRecording(),
                 languages: configManager.getSupportedLanguages(),
+                recentLogs: recentLogs,
+                totalLogSize: totalSize,
             });
         }
     }
@@ -91,6 +111,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         font-size: var(--vscode-font-size);
                         line-height: 1.3;
                         background-color: var(--vscode-sideBar-background);
+                        display: flex;
+                        flex-direction: column;
+                        height: 100vh;
+                        box-sizing: border-box;
+                        overflow: hidden;
+                    }
+
+                    /* Utility */
+                    .flex-shrink-0 { flex-shrink: 0; }
+                    .flex-grow-1 { flex-grow: 1; }
+                    
+                    /* Config Sections (Top) */
+                    .config-section {
+                        flex-shrink: 0;
                     }
 
                     .config-box {
@@ -135,19 +169,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         height: 16px;
                     }
 
-                    .switch input {
-                        opacity: 0;
-                        width: 0;
-                        height: 0;
-                    }
+                    .switch input { opacity: 0; width: 0; height: 0; }
 
                     .slider {
                         position: absolute;
                         cursor: pointer;
-                        top: 0;
-                        left: 0;
-                        right: 0;
-                        bottom: 0;
+                        top: 0; left: 0; right: 0; bottom: 0;
                         background-color: #ccc;
                         transition: .2s;
                         border-radius: 16px;
@@ -156,28 +183,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     .slider:before {
                         position: absolute;
                         content: "";
-                        height: 12px;
-                        width: 12px;
-                        left: 2px;
-                        bottom: 2px;
+                        height: 12px; width: 12px;
+                        left: 2px; bottom: 2px;
                         background-color: white;
                         transition: .2s;
                         border-radius: 50%;
                     }
 
-                    input:checked + .slider {
-                        background-color: var(--vscode-button-background);
-                    }
-
-                    input:checked + .slider:before {
-                        transform: translateX(14px);
-                    }
+                    input:checked + .slider { background-color: var(--vscode-button-background); }
+                    input:checked + .slider:before { transform: translateX(14px); }
 
                     /* Language Chips */
-                    .language-group {
-                        display: flex;
-                        gap: 4px;
-                    }
+                    .language-group { display: flex; gap: 4px; }
 
                     .lang-chip {
                         padding: 2px 8px;
@@ -230,6 +247,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         margin-bottom: 0;
                     }
 
+                    /* Button Group */
                     .button-group {
                         display: flex;
                         flex-direction: column;
@@ -253,75 +271,181 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         transition: filter 0.1s;
                     }
 
-                    button:hover {
-                        filter: brightness(1.1);
-                    }
+                    button:hover { filter: brightness(1.1); }
 
                     .secondary {
                         background-color: var(--vscode-button-secondaryBackground);
                         color: var(--vscode-button-secondaryForeground);
                     }
-
-                    .icon {
-                        font-size: 0.9rem;
-                        flex-shrink: 0;
+                    
+                    button.action-btn {
+                        height: 28px;
+                        font-size: 0.8rem;
                     }
 
+                    .icon { font-size: 0.9rem; flex-shrink: 0; }
+
                     .hint {
-                        margin-top: 8px;
+                        margin-top: 4px;
+                        margin-bottom: 8px;
                         font-size: 0.65rem;
                         opacity: 0.4;
                         display: flex;
                         gap: 4px;
                     }
+
+                    /* Recent Logs Section (Middle) */
+                    .logs-section {
+                        flex-grow: 1;
+                        overflow-y: auto;
+                        margin-bottom: var(--item-margin);
+                        border-top: 1px solid var(--vscode-widget-border);
+                        border-bottom: 1px solid var(--vscode-widget-border);
+                        padding: 8px 0;
+                    }
+
+                    .logs-title {
+                        font-size: 0.7rem;
+                        font-weight: 700;
+                        opacity: 0.7;
+                        margin-bottom: 8px;
+                        padding: 0 4px;
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                    }
+
+                    .logs-container {
+                        display: flex;
+                        flex-direction: column;
+                        gap: 4px;
+                    }
+                    
+                    .log-item {
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        padding: 6px 8px;
+                        background: var(--vscode-list-hoverBackground);
+                        border-radius: 3px;
+                        cursor: pointer;
+                        transition: background 0.1s;
+                    }
+
+                    .log-item:hover {
+                        background: var(--vscode-list-activeSelectionBackground);
+                        color: var(--vscode-list-activeSelectionForeground);
+                    }
+
+                    .log-info {
+                        display: flex;
+                        flex-direction: column;
+                        overflow: hidden;
+                    }
+
+                    .log-name {
+                        font-size: 0.75rem;
+                        font-weight: 600;
+                        white-space: nowrap;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                    }
+
+                    .log-meta {
+                        font-size: 0.65rem;
+                        opacity: 0.7;
+                        display: flex;
+                        gap: 6px;
+                    }
+
+                    .empty-logs {
+                        font-size: 0.7rem;
+                        opacity: 0.5;
+                        text-align: center;
+                        padding: 20px 0;
+                    }
+
+                    /* Bottom Actions */
+                    .bottom-actions {
+                        flex-shrink: 0;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 6px;
+                    }
                 </style>
 			</head>
 			<body>
-                <div class="config-box">
-                    <div class="config-info">
-                        <span class="config-title">기록 상태</span>
-                        <span id="recording-status-text" class="config-subtitle">대기 중</span>
+                <div class="config-section">
+                    <div class="config-box">
+                        <div class="config-info">
+                            <span class="config-title">기록 상태</span>
+                            <span id="recording-status-text" class="config-subtitle">대기 중</span>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="recording-toggle">
+                            <span class="slider"></span>
+                        </label>
                     </div>
-                    <label class="switch">
-                        <input type="checkbox" id="recording-toggle">
-                        <span class="slider"></span>
-                    </label>
+
+                    <div class="config-box vertical">
+                        <div class="config-info">
+                            <span class="config-title">대상 확장자</span>
+                            <span id="lang-status-text" class="config-subtitle">현재: .c, .cpp, .py</span>
+                        </div>
+                        <div class="language-group">
+                            <div class="lang-chip" data-lang="c">C</div>
+                            <div class="lang-chip" data-lang="cpp">C++</div>
+                            <div class="lang-chip" data-lang="py">Python</div>
+                        </div>
+                    </div>
+
+                    <div class="current-status">
+                        <div class="status-title">활성 경로</div>
+                        <div id="root-folder-display" class="status-value">로딩 중...</div>
+                        
+                        <div class="hint">
+                            <span>💡</span>
+                            <span>활성 경로 하위의 파일 수정만을 기록합니다.</span>
+                        </div>
+
+                        <div class="button-group">
+                            <button id="clear-folder-btn" class="secondary">
+                                <span class="icon"> 🌐 </span>
+                                <span>전체 디렉토리</span>
+                            </button>
+                            <button id="use-ws-root-btn" class="secondary">
+                                <span class="icon"> 📂 </span>
+                                <span>현재 디렉토리</span>
+                            </button>
+                            <button id="select-folder-btn" class="secondary">
+                                <span class="icon"> 🖱️ </span>
+                                <span>사용자 지정 디렉토리</span>
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="config-box vertical">
-                    <div class="config-info">
-                        <span class="config-title">대상 확장자</span>
-                        <span id="lang-status-text" class="config-subtitle">현재: .c, .cpp, .py</span>
+                <!-- Recent Logs Section -->
+                <div class="logs-section">
+                    <div class="logs-title">
+                        <span>최근 변경 기록</span>
+                        <!-- <span style="font-size: 0.65rem; opacity: 0.5;">Auto-scroll</span> -->
                     </div>
-                    <div class="language-group">
-                        <div class="lang-chip" data-lang="c">C</div>
-                        <div class="lang-chip" data-lang="cpp">C++</div>
-                        <div class="lang-chip" data-lang="py">Python</div>
+                    <div id="logs-container" class="logs-container">
+                        <div class="empty-logs">기록된 변경 사항이 없습니다.</div>
                     </div>
                 </div>
 
-                <div class="current-status">
-                    <div class="status-title">활성 경로</div>
-                    <div id="root-folder-display" class="status-value">로딩 중...</div>
-                    <div class="button-group">
-                        <button id="clear-folder-btn" class="secondary">
-                            <span class="icon">🌐</span>
-                            <span>전체 디렉토리</span>
-                        </button>
-                        <button id="use-ws-root-btn" class="secondary">
-                            <span class="icon">📂</span>
-                            <span>현재 디렉토리</span>
-                        </button>
-                        <button id="select-folder-btn" class="secondary">
-                            <span class="icon">🖱️</span>
-                            <span>사용자 지정</span>
-                        </button>
-                    </div>
-                </div>
-                
-                <div class="hint">
-                    <span>💡</span>
-                    <span>활성 경로 하위의 파일 수정만을 기록합니다.</span>
+                <!-- Bottom Actions -->
+                <div class="bottom-actions">
+                    <button id="manage-logs-btn" class="action-btn secondary">
+                        <span class="icon">📜</span>
+                        <span>전체 로그 관리</span>
+                    </button>
+                    <button id="generate-blog-btn" class="action-btn">
+                        <span class="icon">✨</span>
+                        <span>블로그 포스트 생성</span>
+                    </button>
                 </div>
 
                 <script>
@@ -332,6 +456,64 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     const recordingStatusText = document.getElementById('recording-status-text');
                     const langStatusText = document.getElementById('lang-status-text');
                     const langChips = document.querySelectorAll('.lang-chip');
+                    const logsContainer = document.getElementById('logs-container');
+
+                    const rtf = new Intl.RelativeTimeFormat('ko', { numeric: 'auto' });
+
+                    function timeAgo(timestamp) {
+                        const seconds = Math.floor((Date.now() - timestamp) / 1000);
+                        if (seconds < 60) return rtf.format(-seconds, 'second');
+                        const minutes = Math.floor(seconds / 60);
+                        if (minutes < 60) return rtf.format(-minutes, 'minute');
+                        const hours = Math.floor(minutes / 60);
+                        if (hours < 24) return rtf.format(-hours, 'hour');
+                        const days = Math.floor(hours / 24);
+                        return rtf.format(-days, 'day');
+                    }
+
+                    // Store logs globally to re-render
+                    let currentLogs = [];
+
+                    function renderLogs(logs) {
+                        currentLogs = logs || [];
+                        if (!currentLogs || currentLogs.length === 0) {
+                            logsContainer.innerHTML = '<div class="empty-logs">기록된 변경 사항이 없습니다.</div>';
+                            return;
+                        }
+
+                        logsContainer.innerHTML = '';
+                        currentLogs.forEach(log => {
+                            const item = document.createElement('div');
+                            item.className = 'log-item';
+                            item.onclick = () => {
+                                vscode.postMessage({ type: 'openFile', path: log.filePath });
+                            };
+
+                            const info = document.createElement('div');
+                            info.className = 'log-info';
+
+                            const name = document.createElement('div');
+                            name.className = 'log-name';
+                            name.innerText = log.fileName;
+
+                            const meta = document.createElement('div');
+                            meta.className = 'log-meta';
+                            meta.innerText = \`\${log.language} • \${timeAgo(log.lastModified)}\`;
+
+                            info.appendChild(name);
+                            info.appendChild(meta);
+                            item.appendChild(info);
+                            
+                            logsContainer.appendChild(item);
+                        });
+                    }
+
+                    // Auto refresh time ago every 60 seconds
+                    setInterval(() => {
+                        if (currentLogs.length > 0) {
+                            renderLogs(currentLogs);
+                        }
+                    }, 60000);
 
                     window.addEventListener('message', event => {
                         const message = event.data;
@@ -358,6 +540,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                                     .map(l => '.' + l)
                                     .join(', ');
                                 langStatusText.textContent = enabledLangs ? \`(현재: \${enabledLangs})\` : '(필터링 없음)';
+                                
+                                if (message.recentLogs) {
+                                    renderLogs(message.recentLogs);
+                                }
+                                
+                                if (message.totalLogSize) {
+                                    const manageBtnSpan = document.querySelector('#manage-logs-btn span:last-child');
+                                    if (manageBtnSpan) {
+                                        manageBtnSpan.textContent = \`전체 로그 관리 (\${message.totalLogSize})\`;
+                                    }
+                                }
                                 break;
                         }
                     });
@@ -385,6 +578,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
                     document.getElementById('clear-folder-btn').addEventListener('click', () => {
                         vscode.postMessage({ type: 'clearRootFolder' });
+                    });
+
+                    document.getElementById('generate-blog-btn').addEventListener('click', () => {
+                        vscode.postMessage({ type: 'generateBlog' });
+                    });
+
+                    document.getElementById('manage-logs-btn').addEventListener('click', () => {
+                        vscode.postMessage({ type: 'manageLogs' });
                     });
 
                     // 초기 데이터 요청

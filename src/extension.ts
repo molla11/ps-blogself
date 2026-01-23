@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { consts } from './consts';
 import { configManager } from './config';
+import { storageManager } from './storage/StorageManager';
+import { fileWatcher } from './storage/FileWatcher';
 import { SidebarProvider } from './SidebarProvider';
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -8,6 +10,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Initialize state
     configManager.init(context);
+    storageManager.init(context);
+    fileWatcher.init(context);
 
     const sidebarProvider = new SidebarProvider(
         context.extensionUri,

@@ -289,7 +289,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         margin-top: 4px;
                         margin-bottom: 8px;
                         font-size: 0.65rem;
-                        opacity: 0.4;
+                        opacity: 0.7;
                         display: flex;
                         gap: 4px;
                     }
@@ -403,11 +403,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         <div class="status-title">활성 경로</div>
                         <div id="root-folder-display" class="status-value">로딩 중...</div>
                         
+
                         <div class="hint">
                             <span>💡</span>
-                            <span>활성 경로 하위의 파일 수정만을 기록합니다.</span>
+                            <span>활성 경로 하위, 대상 확장자의 파일 수정만을 기록합니다.</span>
                         </div>
 
+                        <div class="status-title" style="margin-top: 12px;">활성 경로 편집</div>
                         <div class="button-group">
                             <button id="clear-folder-btn" class="secondary">
                                 <span class="icon"> 🌐 </span>
@@ -440,7 +442,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 <div class="bottom-actions">
                     <button id="manage-logs-btn" class="action-btn secondary">
                         <span class="icon">📜</span>
-                        <span>전체 로그 관리</span>
+                        <span>코드 기록 관리</span>
                     </button>
                     <button id="generate-blog-btn" class="action-btn">
                         <span class="icon">✨</span>

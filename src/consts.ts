@@ -1,5 +1,5 @@
 export const consts = {
-    EXTENSION_ID: 'ps-blogself',
+    EXTENSION_ID: 'PS-Blogself',
     EXT_PREFIX: 'psb',
     configs: {
         ROOT_FOLDER: 'general.rootFolder',

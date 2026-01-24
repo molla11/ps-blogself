@@ -1,12 +1,12 @@
 import * as vscode from 'vscode';
-import { consts } from './consts';
 import { configManager } from './config';
 import { storageManager } from './storage/StorageManager';
 import { fileWatcher } from './storage/FileWatcher';
 import { SidebarProvider } from './SidebarProvider';
+import { Logger } from './services/logger';
 
 export async function activate(context: vscode.ExtensionContext) {
-    console.log(`${consts.EXTENSION_ID}: activate() is executed.`);
+    Logger.info(`activate() is executed.`);
 
     // Initialize state
     configManager.init(context);

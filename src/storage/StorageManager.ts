@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 import { FileHistory, Snapshot, RequestLog, SessionIndexItem } from './types';
 import { getHash, generateUUID } from './utils';
+import { Logger } from '../services/logger';
 
 export class StorageManager {
     private static _instance: StorageManager;
@@ -94,12 +95,12 @@ export class StorageManager {
 
             // Save history file
             await fs.writeFile(historyFileUri.fsPath, JSON.stringify(history, null, 2), 'utf-8');
-            console.log(`[StorageManager] Saved snapshot for ${absolutePath}`);
+            Logger.info(`[StorageManager] Saved snapshot for ${absolutePath}`);
 
             // Update Session Index
             await this._updateSessionIndex(document, timestamp, fileHash);
         } catch (error) {
-            console.error(`[StorageManager] Failed to save snapshot for ${absolutePath}:`, error);
+            Logger.error(`[StorageManager] Failed to save snapshot for ${absolutePath}:`, error);
         }
     }
 
@@ -185,9 +186,9 @@ export class StorageManager {
 
             history.requestLogs.push(newLog);
             await fs.writeFile(historyFileUri.fsPath, JSON.stringify(history, null, 2), 'utf-8');
-            console.log(`[StorageManager] Added request log for ${absolutePath}`);
+            Logger.info(`[StorageManager] Added request log for ${absolutePath}`);
         } catch (error) {
-            console.error(`[StorageManager] Failed to add request log:`, error);
+            Logger.error(`[StorageManager] Failed to add request log:`, error);
         }
     }
 
@@ -213,7 +214,7 @@ export class StorageManager {
                 return `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
             }
         } catch (error) {
-            console.error('[StorageManager] Failed to calculate size:', error);
+            Logger.error('[StorageManager] Failed to calculate size:', error);
             return 'Error';
         }
     }

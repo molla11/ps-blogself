@@ -523,7 +523,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                             case 'updateState':
                                 rootDisplay.textContent = message.root || '전체 워크스페이스';
                                 recordingToggle.checked = message.isRecording;
-                                recordingStatusText.textContent = message.isRecording ? '기록 중' : '중지됨';
+                                recordingStatusText.textContent = message.isRecording ? '실시간 기록 중' : '중지됨';
                                 recordingStatusText.style.color = message.isRecording ? 'var(--vscode-charts-green)' : 'inherit';
                                 
                                 langChips.forEach(chip => {

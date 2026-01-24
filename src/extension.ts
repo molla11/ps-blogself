@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { configManager } from './config';
 import { storageManager } from './storage/StorageManager';
 import { fileWatcher } from './storage/FileWatcher';
-import { SidebarProvider } from './SidebarProvider';
+import { SidebarProvider } from './sidebar/SidebarProvider';
 import { Logger } from './services/logger';
 
 export async function activate(context: vscode.ExtensionContext) {

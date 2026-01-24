@@ -430,7 +430,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 <!-- Recent Logs Section -->
                 <div class="logs-section">
                     <div class="logs-title">
-                        <span>최근 변경 기록</span>
+                        <span>최근 변경 기록 (상위 20개)</span>
                         <!-- <span style="font-size: 0.65rem; opacity: 0.5;">Auto-scroll</span> -->
                     </div>
                     <div id="logs-container" class="logs-container">
@@ -452,7 +452,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
                 <script>
                     const vscode = acquireVsCodeApi();
-                    
+
                     const rootDisplay = document.getElementById('root-folder-display');
                     const recordingToggle = document.getElementById('recording-toggle');
                     const recordingStatusText = document.getElementById('recording-status-text');
@@ -542,11 +542,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                                     .map(l => '.' + l)
                                     .join(', ');
                                 langStatusText.textContent = enabledLangs ? \`(현재: \${enabledLangs})\` : '(필터링 없음)';
-                                
+
                                 if (message.recentLogs) {
                                     renderLogs(message.recentLogs);
                                 }
-                                
+
                                 if (message.totalLogSize) {
                                     const manageBtnSpan = document.querySelector('#manage-logs-btn span:last-child');
                                     if (manageBtnSpan) {

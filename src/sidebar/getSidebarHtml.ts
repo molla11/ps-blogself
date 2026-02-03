@@ -282,6 +282,38 @@ export function getSidebarHtml(webview: vscode.Webview): string {
                         flex-direction: column;
                         gap: 6px;
                     }
+
+                    /* Context Menu */
+                    #context-menu {
+                        display: none;
+                        position: absolute;
+                        z-index: 1000;
+                        background: var(--vscode-menu-background);
+                        border: 1px solid var(--vscode-menu-border);
+                        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+                        border-radius: 4px;
+                        padding: 4px 0;
+                        min-width: 120px;
+                    }
+
+                    #context-menu.visible {
+                        display: block;
+                    }
+
+                    .menu-item {
+                        padding: 6px 12px;
+                        cursor: pointer;
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                        font-size: 11px;
+                        color: var(--vscode-menu-foreground);
+                    }
+
+                    .menu-item:hover {
+                        background: var(--vscode-menu-selectionBackground);
+                        color: var(--vscode-menu-selectionForeground);
+                    }
                 </style>
 			</head>
 			<body>
@@ -360,6 +392,16 @@ export function getSidebarHtml(webview: vscode.Webview): string {
                     </button>
                 </div>
 
+                <!-- Context Menu Template -->
+                <div id="context-menu">
+                    <div class="menu-item" id="ctx-open-file">
+                         파일 열기
+                    </div>
+                    <div class="menu-item" id="ctx-view-history">
+                        수정 기록 보기
+                    </div>
+                </div>
+
                 <script>
                     const vscode = acquireVsCodeApi();
 
@@ -397,8 +439,13 @@ export function getSidebarHtml(webview: vscode.Webview): string {
                         currentLogs.forEach(log => {
                             const item = document.createElement('div');
                             item.className = 'log-item';
-                            item.onclick = () => {
-                                vscode.postMessage({ type: 'openFile', path: log.filePath });
+                            // Store full log data on element
+                            item.dataset.log = JSON.stringify(log);
+                            
+                            item.onclick = (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                showContextMenu(e.clientX, e.clientY, log);
                             };
 
                             const info = document.createElement('div');
@@ -421,6 +468,40 @@ export function getSidebarHtml(webview: vscode.Webview): string {
                             logsContainer.appendChild(item);
                         });
                     }
+
+                    // Context Menu Logic
+                    const contextMenu = document.getElementById('context-menu');
+                    let selectedLog = null;
+
+                    function showContextMenu(x, y, log) {
+                        selectedLog = log;
+                        contextMenu.style.left = \`\${x}px\`;
+                        contextMenu.style.top = \`\${y}px\`;
+                        contextMenu.classList.add('visible');
+                    }
+
+                    function hideContextMenu() {
+                        contextMenu.classList.remove('visible');
+                        selectedLog = null;
+                    }
+
+                    // Global click to close menu
+                    document.addEventListener('click', () => {
+                        hideContextMenu();
+                    });
+
+                    // Context menu actions
+                    document.getElementById('ctx-open-file').addEventListener('click', () => {
+                        if (selectedLog) {
+                            vscode.postMessage({ type: 'openFile', path: selectedLog.filePath });
+                        }
+                    });
+
+                    document.getElementById('ctx-view-history').addEventListener('click', () => {
+                        if (selectedLog) {
+                            vscode.postMessage({ type: 'viewHistory', path: selectedLog.filePath });
+                        }
+                    });
 
                     function updateRelativeTimes() {
                         const metas = document.querySelectorAll('.log-meta');

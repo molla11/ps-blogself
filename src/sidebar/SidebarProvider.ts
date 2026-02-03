@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { configManager } from '../config';
 import { storageManager } from '../storage/StorageManager';
 import { getSidebarHtml } from './getSidebarHtml';
+import { HistoryManager } from '../services/HistoryManager';
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'psb.sidebar';
@@ -61,6 +62,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     vscode.workspace.openTextDocument(data.path).then((doc) => {
                         vscode.window.showTextDocument(doc);
                     });
+                    break;
+                }
+                case 'viewHistory': {
+                    HistoryManager.openHistory(this._extensionUri, data.path);
                     break;
                 }
             }

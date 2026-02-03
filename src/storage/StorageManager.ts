@@ -41,15 +41,23 @@ export class StorageManager {
         }
     }
 
-    private _getLastSnapshotContent(history: FileHistory): string | null {
-        if (history.snapshots.length === 0) {
+    public reconstructFileContent(
+        history: FileHistory,
+        targetSnapshotIndex: number,
+    ): string | null {
+        if (targetSnapshotIndex < 0 || targetSnapshotIndex >= history.snapshots.length) {
             return null;
         }
 
-        // Iterate backwards to find the last full content
+        // Optimization: if the target snapshot has full content, return it directly
+        if (history.snapshots[targetSnapshotIndex].content !== undefined) {
+            return history.snapshots[targetSnapshotIndex].content!;
+        }
+
+        // Otherwise, we need to find the nearest previous full snapshot
         let content: string | undefined;
         let diffs: SnapshotDiff[] = [];
-        let index = history.snapshots.length - 1;
+        let index = targetSnapshotIndex;
 
         while (index >= 0) {
             const snapshot = history.snapshots[index];
@@ -57,14 +65,12 @@ export class StorageManager {
                 content = snapshot.content;
                 break;
             } else if (snapshot.diff) {
-                diffs.unshift(snapshot.diff); // Add to front to apply in order
+                diffs.unshift(snapshot.diff);
             }
             index--;
         }
 
         if (content === undefined) {
-            // Should not happen if history is valid and starts with full content
-            // Fallback: This might be a corrupted history or pure diffs (unlikely with current logic)
             return null;
         }
 
@@ -74,6 +80,10 @@ export class StorageManager {
         }
 
         return content;
+    }
+
+    private _getLastSnapshotContent(history: FileHistory): string | null {
+        return this.reconstructFileContent(history, history.snapshots.length - 1);
     }
 
     public async saveSnapshot(document: vscode.TextDocument): Promise<void> {
@@ -266,6 +276,22 @@ export class StorageManager {
         } catch (error) {
             Logger.error('[StorageManager] Failed to calculate size:', error);
             return 'Error';
+        }
+    }
+
+    public async getFileHistory(absolutePath: string): Promise<FileHistory | null> {
+        if (!this._historyDir) {
+            return null;
+        }
+
+        const fileHash = getHash(absolutePath);
+        const historyFileUri = vscode.Uri.joinPath(this._historyDir, `${fileHash}.json`);
+
+        try {
+            const existingData = await fs.readFile(historyFileUri.fsPath, 'utf-8');
+            return JSON.parse(existingData);
+        } catch (error) {
+            return null;
         }
     }
 }

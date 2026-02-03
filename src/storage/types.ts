@@ -1,6 +1,13 @@
+export interface SnapshotDiff {
+    start: number;
+    end: number;
+    newText: string;
+}
+
 export interface Snapshot {
     timestamp: number;
-    content: string;
+    content?: string;
+    diff?: SnapshotDiff;
     hash: string;
 }
 

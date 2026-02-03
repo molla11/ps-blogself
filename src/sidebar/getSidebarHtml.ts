@@ -347,7 +347,6 @@ export function getSidebarHtml(webview: vscode.Webview): string {
                         
 
                         <div class="hint">
-                            <span>💡</span>
                             <span>활성 경로 하위, 대상 확장자의 파일 수정만을 기록합니다.</span>
                         </div>
 

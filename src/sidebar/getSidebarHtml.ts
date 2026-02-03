@@ -410,6 +410,8 @@ export function getSidebarHtml(webview: vscode.Webview): string {
 
                             const meta = document.createElement('div');
                             meta.className = 'log-meta';
+                            meta.setAttribute('data-timestamp', log.lastModified);
+                            meta.setAttribute('data-language', log.language);
                             meta.innerText = \`\${log.language} • \${timeAgo(log.lastModified)}\`;
 
                             info.appendChild(name);
@@ -420,12 +422,21 @@ export function getSidebarHtml(webview: vscode.Webview): string {
                         });
                     }
 
-                    // Auto refresh time ago every 60 seconds
-                    setInterval(() => {
-                        if (currentLogs.length > 0) {
-                            renderLogs(currentLogs);
-                        }
-                    }, 60000);
+                    function updateRelativeTimes() {
+                        const metas = document.querySelectorAll('.log-meta');
+                        metas.forEach(meta => {
+                            const timestamp = parseInt(meta.getAttribute('data-timestamp') || '0');
+                            const language = meta.getAttribute('data-language') || '';
+                            if (timestamp > 0) {
+                                meta.innerText = \`\${language} • \${timeAgo(timestamp)}\`;
+                            }
+                        });
+
+                        const nextTick = 1000 - (Date.now() % 1000);
+                        setTimeout(updateRelativeTimes, nextTick);
+                    }
+
+                    updateRelativeTimes();
 
                     window.addEventListener('message', event => {
                         const message = event.data;

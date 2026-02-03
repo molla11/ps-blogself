@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
-import { FileHistory, Snapshot, RequestLog, SessionIndexItem } from './types';
-import { getHash, generateUUID } from './utils';
+import { FileHistory, Snapshot, RequestLog, SessionIndexItem, SnapshotDiff } from './types';
+import { getHash, generateUUID, computeDiff } from './utils';
 import { Logger } from '../services/logger';
 
 export class StorageManager {
@@ -39,6 +39,41 @@ export class StorageManager {
         } catch (error) {
             // Context might prevent mkdir if parent doesn't exist, but recursive true handles it
         }
+    }
+
+    private _getLastSnapshotContent(history: FileHistory): string | null {
+        if (history.snapshots.length === 0) {
+            return null;
+        }
+
+        // Iterate backwards to find the last full content
+        let content: string | undefined;
+        let diffs: SnapshotDiff[] = [];
+        let index = history.snapshots.length - 1;
+
+        while (index >= 0) {
+            const snapshot = history.snapshots[index];
+            if (snapshot.content !== undefined) {
+                content = snapshot.content;
+                break;
+            } else if (snapshot.diff) {
+                diffs.unshift(snapshot.diff); // Add to front to apply in order
+            }
+            index--;
+        }
+
+        if (content === undefined) {
+            // Should not happen if history is valid and starts with full content
+            // Fallback: This might be a corrupted history or pure diffs (unlikely with current logic)
+            return null;
+        }
+
+        // Apply diffs
+        for (const diff of diffs) {
+            content = content.substring(0, diff.start) + diff.newText + content.substring(diff.end);
+        }
+
+        return content;
     }
 
     public async saveSnapshot(document: vscode.TextDocument): Promise<void> {
@@ -78,19 +113,34 @@ export class StorageManager {
             }
 
             // Check content change
+            let lastContent: string | null = null;
             if (history.snapshots.length > 0) {
                 const lastSnapshot = history.snapshots[history.snapshots.length - 1];
                 if (lastSnapshot.hash === contentHash) {
                     return; // No change
                 }
+                lastContent = this._getLastSnapshotContent(history);
+            }
+
+            // Determine snapshot type (Full vs Diff)
+            let newSnapshot: Snapshot = {
+                timestamp,
+                hash: contentHash,
+            };
+
+            if (lastContent !== null) {
+                const diff = computeDiff(lastContent, content);
+                if (diff) {
+                    newSnapshot.diff = diff;
+                } else {
+                    newSnapshot.content = content;
+                }
+            } else {
+                newSnapshot.content = content;
             }
 
             // Add snapshot
-            history.snapshots.push({
-                timestamp,
-                content,
-                hash: contentHash,
-            });
+            history.snapshots.push(newSnapshot);
             history.lastModified = timestamp;
 
             // Save history file

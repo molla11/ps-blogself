@@ -21,6 +21,107 @@ export class HistoryManager {
         );
 
         panel.webview.html = await this._getHtmlForWebview(panel.webview, filePath, extensionUri);
+
+        panel.webview.onDidReceiveMessage(async (message) => {
+            switch (message.type) {
+                case 'viewSnapshot':
+                    await this._openSnapshot(filePath, message.index);
+                    break;
+                case 'deleteSnapshot':
+                    await this._handleDeleteRequest(
+                        extensionUri,
+                        panel.webview,
+                        filePath,
+                        message.index,
+                    );
+                    break;
+            }
+        });
+    }
+
+    private static async _handleDeleteRequest(
+        extensionUri: vscode.Uri,
+        webview: vscode.Webview,
+        filePath: string,
+        index: number,
+    ) {
+        let confirmMessage = '이 로그를 삭제하시겠습니까?';
+
+        // Check if it's the first log (index 0) or middle log
+        if (index === 0) {
+            confirmMessage =
+                '첫 번째 로그를 삭제하면 다음 로그가 새로운 기준점이 됩니다. 삭제하시겠습니까?';
+        } else {
+            // For middle logs, we can verify if it's the last one by checking history length,
+            // but for simplicity, the generic warning about merging is fine or we can check here.
+            const history = await storageManager.getFileHistory(filePath);
+            if (history && index < history.snapshots.length - 1) {
+                confirmMessage =
+                    '중간 로그를 삭제하면 더 최근 로그로 수정 사항이 합쳐집니다. 삭제하시겠습니까?';
+            }
+        }
+
+        const selection = await vscode.window.showWarningMessage(
+            confirmMessage,
+            { modal: true },
+            '삭제',
+        );
+
+        if (selection === '삭제') {
+            await storageManager.deleteSnapshot(filePath, index);
+            // Refresh the view
+            webview.html = await this._getHtmlForWebview(webview, filePath, extensionUri);
+        }
+    }
+
+    private static async _openSnapshot(filePath: string, index: number) {
+        const history = await storageManager.getFileHistory(filePath);
+        if (!history) {
+            vscode.window.showErrorMessage('History not found.');
+            return;
+        }
+
+        let content = storageManager.reconstructFileContent(history, index);
+        if (content === null) {
+            vscode.window.showErrorMessage('Failed to reconstruct snapshot content.');
+            return;
+        }
+
+        // Add Header Comment
+        const snapshot = history.snapshots[index];
+        const date = new Date(snapshot.timestamp);
+        const dateStr = date.toLocaleString('en-US', {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: 'numeric',
+            second: 'numeric',
+            hour12: true,
+        });
+        const fileName = path.basename(filePath);
+
+        let commentPrefix = '//'; // Default (C, C++, Java, JS, TS, etc.)
+        if (
+            history.language === 'python' ||
+            history.language === 'ruby' ||
+            history.language === 'perl' ||
+            history.language === 'shellscript'
+        ) {
+            commentPrefix = '#';
+        }
+
+        const header = `${commentPrefix} PS-Blogself History Log: ${fileName} at ${dateStr}\n\n`;
+        content = header + content;
+
+        const doc = await vscode.workspace.openTextDocument({
+            content: content,
+            language: history.language,
+        });
+        await vscode.window.showTextDocument(doc, {
+            preview: true,
+            viewColumn: vscode.ViewColumn.Active, // Open in active tab (full screen effect)
+        });
     }
 
     private static async _getHtmlForWebview(
@@ -55,7 +156,7 @@ export class HistoryManager {
                     font-family: var(--vscode-font-family);
                     padding: 20px;
                     color: var(--vscode-editor-foreground);
-                    background-color: var(--vscode-editor-background);
+                    background-color: var(--vscode-sideBar-background); /* Use sidebar background for the page canvas */
                 }
                 .d2h-wrapper {
                     /* Color Overrides for VS Code Theme Adaptation */
@@ -141,6 +242,7 @@ export class HistoryManager {
                 /* Fix icons color if they use SVG fill */
                 .d2h-icon {
                     fill: var(--d2h-icon-color) !important;
+                    stroke: var(--d2h-icon-color) !important;
                 }
                 .d2h-tag {
                     display: none; /* Hide 'FILE', 'RENAMED' etc tags to look cleaner like VSCode */
@@ -151,11 +253,104 @@ export class HistoryManager {
                     padding-bottom: 8px;
                     color: var(--vscode-foreground);
                 }
+
+                .history-entry {
+                    margin-bottom: 30px;
+                    background-color: var(--vscode-editor-background); /* Explicitly set entry background */
+                    border: 1px solid var(--vscode-widget-border);
+                    border-radius: 6px;
+                    overflow: hidden;
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+                }
+
+                .entry-header {
+                    display: flex;
+                    justify-content: flex-end;
+                    align-items: center;
+                    padding: 8px 12px;
+                    background-color: var(--vscode-editor-inactiveSelectionBackground); /* Subtle background */
+                    border-bottom: 1px solid var(--vscode-widget-border);
+                }
+
+                .view-code-btn {
+                    background-color: var(--vscode-button-background);
+                    color: var(--vscode-button-foreground);
+                    border: none;
+                    padding: 4px 10px;
+                    cursor: pointer;
+                    font-size: 11px;
+                    border-radius: 2px;
+                    font-family: var(--vscode-font-family);
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                }
+
+                .view-code-btn:hover {
+                    background-color: var(--vscode-button-hoverBackground);
+                }
+
+                .delete-btn {
+                    background-color: var(--vscode-button-secondaryBackground);
+                    color: var(--vscode-button-secondaryForeground);
+                    border: none;
+                    padding: 4px 10px;
+                    cursor: pointer;
+                    font-size: 11px;
+                    border-radius: 2px;
+                    font-family: var(--vscode-font-family);
+                    display: flex; /* Ensure implementation */
+                    align-items: center;
+                    margin-right: 8px;
+                }
+
+                .delete-btn:hover {
+                    background-color: var(--vscode-button-secondaryHoverBackground);
+                }
+                
+                /* Remove bottom margin from d2h-wrapper inside our entry to avoid double spacing */
+                .d2h-wrapper {
+                   margin-bottom: 0 !important;
+                }
+                
+                .d2h-file-wrapper {
+                    margin-bottom: 0 !important;
+                    border: none !important;
+                    border-radius: 0 !important;
+                }
             </style>
         </head>
         <body>
             <h2>파일 수정 기록: ${path.basename(history.filePath)}</h2>
             ${diffsHtml}
+
+            <script>
+                const vscode = acquireVsCodeApi();
+                
+                document.querySelectorAll('.view-code-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const index = parseInt(e.currentTarget.getAttribute('data-index'));
+                        vscode.postMessage({
+                            type: 'viewSnapshot',
+                            index: index
+                        });
+                    });
+                });
+
+                document.querySelectorAll('.delete-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const btn = e.currentTarget;
+                        const indexStr = btn.getAttribute('data-index');
+                        const index = parseInt(indexStr);
+                        
+                        // Send request to backend immediately
+                        vscode.postMessage({
+                            type: 'deleteSnapshot',
+                            index: index
+                        });
+                    });
+                });
+            </script>
         </body>
         </html>`;
     }
@@ -223,7 +418,19 @@ export class HistoryManager {
                     renderNothingWhenEmpty: false,
                 });
 
-                html += `<div class="history-entry">${diffHtml}</div>`;
+                const isLastLog = i === history.snapshots.length - 1;
+                const deleteBtn = isLastLog
+                    ? ''
+                    : `<button class="delete-btn" data-index="${i}" data-is-middle="true">로그 삭제</button>`;
+
+                html += `
+                <div class="history-entry">
+                    <div class="entry-header">
+                        ${deleteBtn}
+                        <button class="view-code-btn" data-index="${i}">이 시점의 코드 보기</button>
+                    </div>
+                    ${diffHtml}
+                </div>`;
             }
         }
 
@@ -250,7 +457,14 @@ export class HistoryManager {
                     renderNothingWhenEmpty: false,
                 });
 
-                html += `<div class="history-entry">${diffHtml}</div>`;
+                html += `
+                <div class="history-entry">
+                    <div class="entry-header">
+                        <button class="delete-btn" data-index="0" data-is-middle="false">로그 삭제</button>
+                        <button class="view-code-btn" data-index="0">이 시점의 코드 보기</button>
+                    </div>
+                    ${diffHtml}
+                </div>`;
             }
         }
 

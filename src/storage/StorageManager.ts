@@ -9,6 +9,7 @@ export class StorageManager {
     private static _instance: StorageManager;
     private _globalStorageUri?: vscode.Uri;
     private _historyDir?: vscode.Uri;
+
     private _indexFileUri?: vscode.Uri;
     private _onDidUpdateIndex = new vscode.EventEmitter<void>();
     public readonly onDidUpdateIndex = this._onDidUpdateIndex.event;
@@ -292,6 +293,134 @@ export class StorageManager {
             return JSON.parse(existingData);
         } catch (error) {
             return null;
+        }
+    }
+    public async deleteSnapshot(filePath: string, index: number): Promise<void> {
+        if (!this._historyDir) {
+            return;
+        }
+
+        const fileHash = getHash(filePath);
+        const historyFileUri = vscode.Uri.joinPath(this._historyDir, `${fileHash}.json`);
+        let history: FileHistory;
+
+        if (index < 0) {
+            Logger.warn('[StorageManager] Invalid snapshot index for deletion');
+            return;
+        }
+
+        try {
+            const existingData = await fs.readFile(historyFileUri.fsPath, 'utf-8');
+            history = JSON.parse(existingData);
+        } catch (error) {
+            Logger.error('[StorageManager] Failed to load history for deletion:', error);
+            return;
+        }
+
+        if (index >= history.snapshots.length) {
+            Logger.warn('[StorageManager] Invalid snapshot index for deletion');
+            return;
+        }
+
+        // Enhancement: Prevent deleting the last log
+        if (index === history.snapshots.length - 1) {
+            Logger.warn('[StorageManager] Cannot delete the most recent snapshot');
+            return;
+        }
+
+        if (index === 0) {
+            // Deleting the root.
+            if (history.snapshots.length > 1) {
+                // The next one (index 1) becomes the new root (index 0).
+                const nextSnapshotContent = this.reconstructFileContent(history, 1);
+
+                if (nextSnapshotContent !== null) {
+                    history.snapshots.splice(0, 1); // Delete index 0
+                    // Now index 0 is the old index 1.
+                    history.snapshots[0].content = nextSnapshotContent;
+                    delete history.snapshots[0].diff;
+                } else {
+                    Logger.error('[StorageManager] Failed to reconstruct next snapshot content.');
+                    return;
+                }
+            } else {
+                // Deleting the only snapshot - blocked by last log check usually, but safe fallback
+                history.snapshots = [];
+            }
+        } else {
+            // Deleting a middle node S_i.
+            // S_{i-1} -> S_i -> S_{i+1}
+
+            // 1. Get Content of S_{i-1} (Base)
+            const prevContent = this.reconstructFileContent(history, index - 1);
+            // 2. Get Content of S_{i+1} (Target)
+            const nextContent = this.reconstructFileContent(history, index + 1);
+
+            if (prevContent !== null && nextContent !== null) {
+                // 3. Update S_{i+1}
+                // We are removing S_i at `index`.
+                history.snapshots.splice(index, 1);
+
+                // NOW S_{i+1} is at `index` (shifted down).
+                // Use recursive cleanup
+                this._updateAndCleanup(history, index, prevContent, nextContent);
+            } else {
+                Logger.error('[StorageManager] Failed to reconstruct content for middle deletion.');
+                return;
+            }
+        }
+
+        history.lastModified = Date.now();
+
+        await fs.writeFile(historyFileUri.fsPath, JSON.stringify(history, null, 2), 'utf-8');
+        Logger.info(`[StorageManager] Deleted snapshot at index ${index} for ${filePath}`);
+    }
+
+    private _updateAndCleanup(
+        history: FileHistory,
+        index: number,
+        prevContent: string,
+        currentContent: string,
+    ) {
+        if (prevContent === currentContent) {
+            // The content is identical to previous one. This snapshot is redundant.
+            // UNLESS it is the last snapshot. We must preserve the last snapshot state.
+            if (index === history.snapshots.length - 1) {
+                // It's the last one. We cannot delete it.
+                // But since it's identical, it effectively has an empty diff or no change.
+                const newDiff = computeDiff(prevContent, currentContent);
+                if (newDiff) {
+                    history.snapshots[index].diff = newDiff;
+                    delete history.snapshots[index].content;
+                } else {
+                    history.snapshots[index].content = currentContent;
+                    delete history.snapshots[index].diff;
+                }
+            } else {
+                // It's a middle one and it's redundant. Delete it!
+                history.snapshots.splice(index, 1);
+
+                // Now at 'index' we have the NEXT one (was S_{i+2}).
+                // We need to cleanup that one too against prevContent (which is still effective base).
+                if (index < history.snapshots.length) {
+                    const nextNodeContent = this.reconstructFileContent(history, index);
+                    if (nextNodeContent !== null) {
+                        this._updateAndCleanup(history, index, prevContent, nextNodeContent);
+                    }
+                }
+            }
+        } else {
+            // Not identical. Calculate diff and update.
+            const targetSnapshot = history.snapshots[index];
+            const newDiff = computeDiff(prevContent, currentContent);
+
+            if (newDiff) {
+                targetSnapshot.diff = newDiff;
+                delete targetSnapshot.content;
+            } else {
+                targetSnapshot.content = currentContent;
+                delete targetSnapshot.diff;
+            }
         }
     }
 }

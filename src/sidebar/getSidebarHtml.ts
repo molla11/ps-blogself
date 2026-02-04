@@ -142,6 +142,7 @@ export function getSidebarHtml(webview: vscode.Webview): string {
                     }
 
                     .status-value {
+                        margin-top: 3px;
                         word-break: break-all;
                         font-family: var(--vscode-editor-font-family);
                         font-size: 0.7rem;
@@ -342,7 +343,7 @@ export function getSidebarHtml(webview: vscode.Webview): string {
                     </div>
 
                     <div class="current-status">
-                        <div class="status-title">활성 경로</div>
+                        <span class="config-title">활성 경로</span>
                         <div id="root-folder-display" class="status-value">로딩 중...</div>
                         
 

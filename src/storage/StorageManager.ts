@@ -198,10 +198,10 @@ export class StorageManager {
 
         index.unshift(newItem);
 
-        // Limit index size to 20 (User request)
-        if (index.length > 20) {
-            index = index.slice(0, 20);
-        }
+        // Limit index size to 20 (User request) -> REMOVED to support Full Log View
+        // if (index.length > 20) {
+        //     index = index.slice(0, 20);
+        // }
 
         await fs.writeFile(this._indexFileUri.fsPath, JSON.stringify(index, null, 2), 'utf-8');
 
@@ -218,6 +218,55 @@ export class StorageManager {
             return JSON.parse(indexData);
         } catch (error) {
             return [];
+        }
+    }
+
+    public async getAllLogs(): Promise<SessionIndexItem[]> {
+        await this.rebuildIndex(); // Ensure index is up to date with all files
+        return this.getRecentFiles(); // Now returns all
+    }
+
+    public async rebuildIndex(): Promise<void> {
+        if (!this._historyDir || !this._indexFileUri) return;
+
+        try {
+            const files = await fs.readdir(this._historyDir.fsPath);
+            const index: SessionIndexItem[] = [];
+
+            for (const file of files) {
+                if (!file.endsWith('.json')) continue;
+
+                try {
+                    const filePath = path.join(this._historyDir.fsPath, file);
+                    const content = await fs.readFile(filePath, 'utf-8');
+                    const history: FileHistory = JSON.parse(content);
+
+                    // Skip request logs if only creating file index?
+                    // FileHistory has snapshots.
+
+                    if (history.filePath) {
+                        index.push({
+                            filePath: history.filePath,
+                            fileName: path.basename(history.filePath),
+                            language: history.language,
+                            lastModified: history.lastModified,
+                            fileHash: getHash(history.filePath), // Re-calculate or use history.id? history doesn't store hash of path usually on top level?
+                            // In saveSnapshot: const fileHash = getHash(absolutePath);
+                            // historyFileUri is named by fileHash.json.
+                            // So fileHash is path.basename(file, '.json')
+                        });
+                    }
+                } catch (e) {
+                    Logger.error(`[StorageManager] Failed to read ${file} during rebuild`, e);
+                }
+            }
+
+            // Sort by lastModified desc
+            index.sort((a, b) => b.lastModified - a.lastModified);
+
+            await fs.writeFile(this._indexFileUri.fsPath, JSON.stringify(index, null, 2), 'utf-8');
+        } catch (error) {
+            Logger.error('[StorageManager] Failed to rebuild index:', error);
         }
     }
 

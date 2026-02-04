@@ -16,10 +16,7 @@ export function generateUUID(): string {
  * Returns null if full snapshot is preferred.
  */
 export function computeDiff(oldText: string, newText: string): SnapshotDiff | null {
-    // Constraint: if total length <= 200, always save full snapshot
-    if (newText.length <= 200) {
-        return null;
-    }
+    // Constraint: if total length <= 200, always save full snapshot -> REMOVED per new logic
 
     const n = oldText.length;
     const m = newText.length;
@@ -42,8 +39,15 @@ export function computeDiff(oldText: string, newText: string): SnapshotDiff | nu
 
     const changedContent = newText.substring(start, endNew);
 
-    // Constraint: diff content length <= 100
-    if (changedContent.length > 100) {
+    // Constraint 1: <= 5 lines
+    const lineCount = changedContent.split('\n').length;
+    if (lineCount > 5) {
+        return null;
+    }
+
+    // Constraint 2: <= 500 bytes
+    const byteLength = Buffer.byteLength(changedContent, 'utf-8');
+    if (byteLength > 500) {
         return null;
     }
 

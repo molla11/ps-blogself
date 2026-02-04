@@ -19,7 +19,12 @@ export class HistoryManager {
             },
         );
 
-        panel.webview.html = await this._getHtmlForWebview(panel.webview, filePath, extensionUri);
+        panel.webview.html = this._getLoadingHtml(panel.webview); // Show loading first
+
+        // Compute actual HTML
+        this._getHtmlForWebview(panel.webview, filePath, extensionUri).then((html) => {
+            panel.webview.html = html;
+        });
 
         panel.webview.onDidReceiveMessage(async (message) => {
             switch (message.type) {
@@ -69,8 +74,54 @@ export class HistoryManager {
         if (selection === '삭제') {
             await storageManager.deleteSnapshot(filePath, index);
             // Refresh the view
+            webview.html = this._getLoadingHtml(webview);
             webview.html = await this._getHtmlForWebview(webview, filePath, extensionUri);
         }
+    }
+
+    private static _getLoadingHtml(webview: vscode.Webview): string {
+        return `<!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Loading History</title>
+            <style>
+                body {
+                    font-family: var(--vscode-font-family);
+                    background-color: var(--vscode-sideBar-background);
+                    color: var(--vscode-foreground);
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100vh;
+                    margin: 0;
+                }
+                .spinner {
+                    border: 4px solid var(--vscode-widget-border);
+                    border-top: 4px solid var(--vscode-progressBar-background);
+                    border-radius: 50%;
+                    width: 40px;
+                    height: 40px;
+                    animation: spin 1s linear infinite;
+                    margin-bottom: 16px;
+                }
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+                .text {
+                    font-size: 14px;
+                    opacity: 0.8;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="spinner"></div>
+            <div class="text">기록을 불러오는 중입니다...</div>
+        </body>
+        </html>`;
     }
 
     private static async _openSnapshot(filePath: string, index: number) {

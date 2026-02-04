@@ -30,7 +30,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             localResourceRoots: [this._extensionUri],
         };
 
-        webviewView.webview.html = getSidebarHtml(webviewView.webview);
+        webviewView.webview.html = getSidebarHtml(webviewView.webview, this._extensionUri);
 
         webviewView.webview.onDidReceiveMessage(async (data) => {
             switch (data.type) {
@@ -68,6 +68,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     HistoryManager.openHistory(this._extensionUri, data.path);
                     break;
                 }
+                case 'manageLogs': {
+                    const allLogs = await storageManager.getAllLogs();
+                    this._view?.webview.postMessage({
+                        type: 'showFullLogs',
+                        logs: allLogs,
+                    });
+                    break;
+                }
             }
         });
 
@@ -83,6 +91,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     public async updateState() {
         if (this._view) {
             const recentLogs = await storageManager.getRecentFiles();
+            const top20Logs = recentLogs.slice(0, 20);
             const totalSize = await storageManager.calculateTotalSize();
 
             this._view.webview.postMessage({
@@ -90,7 +99,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 root: configManager.getRootFolder(),
                 isRecording: configManager.isRecording(),
                 languages: configManager.getSupportedLanguages(),
-                recentLogs: recentLogs,
+                recentLogs: top20Logs,
                 totalLogSize: totalSize,
             });
         }

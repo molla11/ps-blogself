@@ -1,12 +1,23 @@
 import * as vscode from 'vscode';
 
-export function getSidebarHtml(webview: vscode.Webview): string {
+export function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
+    const codiconsUri = webview.asWebviewUri(
+        vscode.Uri.joinPath(
+            extensionUri,
+            'node_modules',
+            '@vscode/codicons',
+            'dist',
+            'codicon.css',
+        ),
+    );
+
     return `<!DOCTYPE html>
 			<html lang="en">
 			<head>
 				<meta charset="UTF-8">
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
 				<title>PS-Blogself</title>
+                <link href="${codiconsUri}" rel="stylesheet" />
                 <style>
                     :root {
                         --container-padding: 10px;
@@ -315,81 +326,142 @@ export function getSidebarHtml(webview: vscode.Webview): string {
                         background: var(--vscode-menu-selectionBackground);
                         color: var(--vscode-menu-selectionForeground);
                     }
+
+                    /* View Switching */
+                    .view-container {
+                        display: flex;
+                        flex-direction: column;
+                        height: 100%;
+                        width: 100%;
+                    }
+
+                    .hidden {
+                        display: none !important;
+                    }
+
+                    .header-bar {
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                        margin-bottom: 10px;
+                        padding-bottom: 8px;
+                        border-bottom: 1px solid var(--vscode-widget-border);
+                    }
+
+                    .header-title {
+                        font-weight: 700;
+                        font-size: 0.8rem;
+                        white-space: nowrap;
+                    }
+
+                    .back-btn {
+                        width: auto;
+                        padding: 4px;
+                        background: none;
+                        border: none;
+                        color: var(--vscode-foreground);
+                        cursor: pointer;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        border-radius: 3px;
+                    }
+
+                    .back-btn:hover {
+                        background: var(--vscode-toolbar-hoverBackground);
+                    }
                 </style>
 			</head>
 			<body>
-                <div class="config-section">
-                    <div class="config-box">
-                        <div class="config-info">
-                            <span class="config-title">기록 상태</span>
-                            <span id="recording-status-text" class="config-subtitle">대기 중</span>
+                <div id="main-view" class="view-container">
+                    <div class="config-section">
+                        <div class="config-box">
+                            <div class="config-info">
+                                <span class="config-title">기록 상태</span>
+                                <span id="recording-status-text" class="config-subtitle">대기 중</span>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="recording-toggle">
+                                <span class="slider"></span>
+                            </label>
                         </div>
-                        <label class="switch">
-                            <input type="checkbox" id="recording-toggle">
-                            <span class="slider"></span>
-                        </label>
+
+                        <div class="config-box vertical">
+                            <div class="config-info">
+                                <span class="config-title">대상 확장자</span>
+                                <span id="lang-status-text" class="config-subtitle">현재: .c, .cpp, .py</span>
+                            </div>
+                            <div class="language-group">
+                                <div class="lang-chip" data-lang="c">C</div>
+                                <div class="lang-chip" data-lang="cpp">C++</div>
+                                <div class="lang-chip" data-lang="py">Python</div>
+                            </div>
+                        </div>
+
+                        <div class="current-status">
+                            <span class="config-title">활성 경로</span>
+                            <div id="root-folder-display" class="status-value">로딩 중...</div>
+                            
+
+                            <div class="hint">
+                                <span>활성 경로 하위, 대상 확장자의 파일 수정만을 기록합니다.</span>
+                            </div>
+
+                            <div class="status-title" style="margin-top: 12px;">활성 경로 편집</div>
+                            <div class="button-group">
+                                <button id="clear-folder-btn" class="secondary">
+                                    <span class="icon"> 🌐 </span>
+                                    <span>전체 디렉토리</span>
+                                </button>
+                                <button id="use-ws-root-btn" class="secondary">
+                                    <span class="icon"> 📂 </span>
+                                    <span>현재 디렉토리</span>
+                                </button>
+                                <button id="select-folder-btn" class="secondary">
+                                    <span class="icon"> 🖱️ </span>
+                                    <span>사용자 지정 디렉토리</span>
+                                </button>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="config-box vertical">
-                        <div class="config-info">
-                            <span class="config-title">대상 확장자</span>
-                            <span id="lang-status-text" class="config-subtitle">현재: .c, .cpp, .py</span>
+                    <!-- Recent Logs Section -->
+                    <div class="logs-section">
+                        <div class="logs-title">
+                            <span>최근 변경 기록 (상위 20개)</span>
+                            <!-- <span style="font-size: 0.65rem; opacity: 0.5;">Auto-scroll</span> -->
                         </div>
-                        <div class="language-group">
-                            <div class="lang-chip" data-lang="c">C</div>
-                            <div class="lang-chip" data-lang="cpp">C++</div>
-                            <div class="lang-chip" data-lang="py">Python</div>
+                        <div id="logs-container" class="logs-container">
+                            <div class="empty-logs">기록된 변경 사항이 없습니다.</div>
                         </div>
                     </div>
 
-                    <div class="current-status">
-                        <span class="config-title">활성 경로</span>
-                        <div id="root-folder-display" class="status-value">로딩 중...</div>
-                        
-
-                        <div class="hint">
-                            <span>활성 경로 하위, 대상 확장자의 파일 수정만을 기록합니다.</span>
-                        </div>
-
-                        <div class="status-title" style="margin-top: 12px;">활성 경로 편집</div>
-                        <div class="button-group">
-                            <button id="clear-folder-btn" class="secondary">
-                                <span class="icon"> 🌐 </span>
-                                <span>전체 디렉토리</span>
-                            </button>
-                            <button id="use-ws-root-btn" class="secondary">
-                                <span class="icon"> 📂 </span>
-                                <span>현재 디렉토리</span>
-                            </button>
-                            <button id="select-folder-btn" class="secondary">
-                                <span class="icon"> 🖱️ </span>
-                                <span>사용자 지정 디렉토리</span>
-                            </button>
-                        </div>
+                    <!-- Bottom Actions -->
+                    <div class="bottom-actions">
+                        <button id="manage-logs-btn" class="action-btn secondary">
+                            <span class="icon">📜</span>
+                            <span>전체 로그 관리</span>
+                        </button>
+                        <button id="generate-blog-btn" class="action-btn">
+                            <span class="icon">✨</span>
+                            <span>블로그 포스트 생성</span>
+                        </button>
                     </div>
                 </div>
 
-                <!-- Recent Logs Section -->
-                <div class="logs-section">
-                    <div class="logs-title">
-                        <span>최근 변경 기록 (상위 20개)</span>
-                        <!-- <span style="font-size: 0.65rem; opacity: 0.5;">Auto-scroll</span> -->
+                <!-- Full Logs View -->
+                <div id="full-logs-view" class="view-container hidden">
+                    <div class="header-bar">
+                        <button id="full-logs-back-btn" class="back-btn" title="Back">
+                            <i class="codicon codicon-arrow-left"></i>
+                        </button>
+                        <span class="header-title">전체 코드 기록 관리</span>
                     </div>
-                    <div id="logs-container" class="logs-container">
-                        <div class="empty-logs">기록된 변경 사항이 없습니다.</div>
+                    <div class="logs-section">
+                         <div id="full-logs-container" class="logs-container">
+                            <!-- Logs here -->
+                        </div>
                     </div>
-                </div>
-
-                <!-- Bottom Actions -->
-                <div class="bottom-actions">
-                    <button id="manage-logs-btn" class="action-btn secondary">
-                        <span class="icon">📜</span>
-                        <span>코드 기록 관리</span>
-                    </button>
-                    <button id="generate-blog-btn" class="action-btn">
-                        <span class="icon">✨</span>
-                        <span>블로그 포스트 생성</span>
-                    </button>
                 </div>
 
                 <!-- Context Menu Template -->
@@ -411,6 +483,9 @@ export function getSidebarHtml(webview: vscode.Webview): string {
                     const langStatusText = document.getElementById('lang-status-text');
                     const langChips = document.querySelectorAll('.lang-chip');
                     const logsContainer = document.getElementById('logs-container');
+                    const fullLogsContainer = document.getElementById('full-logs-container');
+                    const mainView = document.getElementById('main-view');
+                    const fullLogsView = document.getElementById('full-logs-view');
 
                     const rtf = new Intl.RelativeTimeFormat('ko', { numeric: 'auto' });
 
@@ -428,15 +503,17 @@ export function getSidebarHtml(webview: vscode.Webview): string {
                     // Store logs globally to re-render
                     let currentLogs = [];
 
-                    function renderLogs(logs) {
-                        currentLogs = logs || [];
-                        if (!currentLogs || currentLogs.length === 0) {
-                            logsContainer.innerHTML = '<div class="empty-logs">기록된 변경 사항이 없습니다.</div>';
+                    function renderLogs(logs, container = logsContainer) {
+                        const targetContainer = container;
+                        const logData = logs || [];
+                        
+                        if (!logData || logData.length === 0) {
+                            targetContainer.innerHTML = '<div class="empty-logs">기록된 변경 사항이 없습니다.</div>';
                             return;
                         }
 
-                        logsContainer.innerHTML = '';
-                        currentLogs.forEach(log => {
+                        targetContainer.innerHTML = '';
+                        logData.forEach(log => {
                             const item = document.createElement('div');
                             item.className = 'log-item';
                             // Store full log data on element
@@ -457,7 +534,6 @@ export function getSidebarHtml(webview: vscode.Webview): string {
 
                             const meta = document.createElement('div');
                             meta.className = 'log-meta';
-                            meta.setAttribute('data-timestamp', log.lastModified);
                             meta.setAttribute('data-language', log.language);
                             meta.innerText = \`\${log.language} • \${timeAgo(log.lastModified)}\`;
 
@@ -465,7 +541,7 @@ export function getSidebarHtml(webview: vscode.Webview): string {
                             info.appendChild(meta);
                             item.appendChild(info);
                             
-                            logsContainer.appendChild(item);
+                            targetContainer.appendChild(item);
                         });
                     }
 
@@ -556,6 +632,12 @@ export function getSidebarHtml(webview: vscode.Webview): string {
                                     }
                                 }
                                 break;
+                            case 'showFullLogs':
+                                mainView.classList.add('hidden');
+                                fullLogsView.classList.remove('hidden');
+                                // Render into fullLogsContainer
+                                renderLogs(message.logs, fullLogsContainer);
+                                break;
                         }
                     });
 
@@ -590,6 +672,13 @@ export function getSidebarHtml(webview: vscode.Webview): string {
 
                     document.getElementById('manage-logs-btn').addEventListener('click', () => {
                         vscode.postMessage({ type: 'manageLogs' });
+                    });
+                    
+                    document.getElementById('full-logs-back-btn').addEventListener('click', () => {
+                        fullLogsView.classList.add('hidden');
+                        mainView.classList.remove('hidden');
+                        // Optionally refresh main state?
+                        // vscode.postMessage({ type: 'getInitialData' }); 
                     });
 
                     // 초기 데이터 요청

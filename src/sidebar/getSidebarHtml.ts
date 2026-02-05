@@ -535,6 +535,7 @@ export function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri
                             const meta = document.createElement('div');
                             meta.className = 'log-meta';
                             meta.setAttribute('data-language', log.language);
+                            meta.setAttribute('data-timestamp', log.lastModified);
                             meta.innerText = \`\${log.language} • \${timeAgo(log.lastModified)}\`;
 
                             info.appendChild(name);
@@ -619,7 +620,7 @@ export function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri
                                     .sort((a, b) => order.indexOf(a) - order.indexOf(b))
                                     .map(l => '.' + l)
                                     .join(', ');
-                                langStatusText.textContent = enabledLangs ? \`(현재: \${enabledLangs})\` : '(필터링 없음)';
+                                langStatusText.textContent = enabledLangs ? \`(현재: \${enabledLangs})\` : '(선택 없음)';
 
                                 if (message.recentLogs) {
                                     renderLogs(message.recentLogs);

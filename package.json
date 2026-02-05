@@ -19,7 +19,7 @@
                 {
                     "id": "ps-blogself-container",
                     "title": "PS-Blogself",
-                    "icon": "$(edit-sparkle)"
+                    "icon": "media/image/logo_ps_blogself1.png"
                 }
             ]
         },
@@ -29,7 +29,7 @@
                     "type": "webview",
                     "id": "psb.sidebar",
                     "name": "PS-Blogself",
-                    "icon": "$(edit-sparkle)"
+                    "icon": "media/image/logo_ps_blogself1.png"
                 }
             ]
         }

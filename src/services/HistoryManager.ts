@@ -315,11 +315,29 @@ export class HistoryManager {
 
                 .entry-header {
                     display: flex;
-                    justify-content: flex-end;
+                    justify-content: space-between;
                     align-items: center;
                     padding: 8px 12px;
                     background-color: var(--vscode-editor-inactiveSelectionBackground); /* Subtle background */
                     border-bottom: 1px solid var(--vscode-widget-border);
+                }
+
+                .entry-title {
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: var(--vscode-foreground);
+                    display: flex;
+                    gap: 8px;
+                    align-items: center;
+                }
+                
+                .stat-added { color: var(--vscode-charts-green, #89d185); }
+                .stat-removed { color: var(--vscode-charts-red, #f48771); }
+                .stat-date { opacity: 0.8; margin-left: 4px; font-weight: normal; }
+
+                .entry-actions {
+                    display: flex;
+                    align-items: center;
                 }
 
                 .view-code-btn {
@@ -485,7 +503,7 @@ export class HistoryManager {
             const prevContent = storageManager.reconstructFileContent(history, i - 1);
 
             if (currentContent !== null && prevContent !== null) {
-                const dateStr = new Date(history.snapshots[i].timestamp).toLocaleString();
+                const dateStr = this._formatDate(history.snapshots[i].timestamp);
 
                 const rawPrevHtml = await shikiService.highlight(prevContent, history.language);
                 const rawCurrHtml = await shikiService.highlight(currentContent, history.language);
@@ -506,9 +524,19 @@ export class HistoryManager {
                 let prevIdx = 0;
                 let currIdx = 0;
 
+                // Calculate Stats
+                let addedLines = 0;
+                let addedChars = 0;
+                let removedLines = 0;
+                let removedChars = 0;
+
                 diffResult.forEach((part) => {
                     const count = part.count || 0;
+                    const chars = part.value.length;
+
                     if (part.added) {
+                        addedLines += count;
+                        addedChars += chars;
                         for (let j = 0; j < count; j++) {
                             allRows.push({
                                 type: 'added',
@@ -518,6 +546,8 @@ export class HistoryManager {
                         }
                         currIdx += count;
                     } else if (part.removed) {
+                        removedLines += count;
+                        removedChars += chars;
                         for (let j = 0; j < count; j++) {
                             allRows.push({
                                 type: 'removed',
@@ -557,20 +587,9 @@ export class HistoryManager {
                 let diffTableRows = '';
                 let lastShownIndex = -1;
 
-                // Always show first few lines if context puts us close to start?
-                // Or maybe just strictly separate.
-
-                // If nothing changed (unlikely with diffLines logic unless empty), show nothing?
-                // Better: if no changes found, showing nothing implies identical files.
-                // But normally we only have entries if there are changes (unless logic allows empty diffs).
-
                 const sortedIndices = Array.from(indicesToShow).sort((a, b) => a - b);
 
-                // Only if file is small, showing all might be better?
-                // Let's stick to context logic.
-
                 if (sortedIndices.length === 0 && allRows.length > 0) {
-                    // No diffs? Show message or first few lines?
                     diffTableRows = `<tr><td colspan="3" style="padding: 10px; color: var(--vscode-descriptionForeground);">No changes detected.</td></tr>`;
                 } else {
                     sortedIndices.forEach((idx, arrayPos) => {
@@ -595,6 +614,15 @@ export class HistoryManager {
                     });
                 }
 
+                // Format Stats
+                let statsHtml = '';
+                if (addedLines > 0 || addedChars > 0) {
+                    statsHtml += `<span class="stat-added">+ ${addedLines}(${addedChars})</span>`;
+                }
+                if (removedLines > 0 || removedChars > 0) {
+                    statsHtml += `<span class="stat-removed">- ${removedLines}(${removedChars})</span>`;
+                }
+
                 const isLastLog = i === history.snapshots.length - 1;
                 const deleteBtn = isLastLog
                     ? ''
@@ -603,8 +631,14 @@ export class HistoryManager {
                 html += `
                 <div class="history-entry">
                     <div class="entry-header">
-                        ${deleteBtn}
-                        <button class="view-code-btn" data-index="${i}">이 시점의 코드 보기</button>
+                        <span class="entry-title">
+                            ${statsHtml}
+                            <span class="stat-date">${dateStr}</span>
+                        </span>
+                        <div class="entry-actions">
+                            ${deleteBtn}
+                            <button class="view-code-btn" data-index="${i}">이 시점의 코드 보기</button>
+                        </div>
                     </div>
                     <div class="diff-container">
                         <table class="diff-table">
@@ -619,6 +653,7 @@ export class HistoryManager {
         if (history.snapshots.length > 0) {
             const firstContent = storageManager.reconstructFileContent(history, 0);
             if (firstContent) {
+                const dateStr = this._formatDate(history.snapshots[0].timestamp);
                 const rawLines = await shikiService.highlight(firstContent, history.language);
                 const lines = this._extractShikiLines(rawLines);
 
@@ -632,11 +667,22 @@ export class HistoryManager {
                         </tr>`;
                 });
 
+                // Initial commit stats (all added)
+                const initialChars = firstContent.length;
+                const initialLines = lines.length;
+                const statsHtml = `<span class="stat-added">+${initialLines}(${initialChars})</span>`;
+
                 html += `
                 <div class="history-entry">
                     <div class="entry-header">
-                        <button class="delete-btn" data-index="0" data-is-middle="false">로그 삭제</button>
-                        <button class="view-code-btn" data-index="0">이 시점의 코드 보기</button>
+                        <span class="entry-title">
+                            ${statsHtml}
+                             <span class="stat-date">${dateStr}</span>
+                        </span>
+                         <div class="entry-actions">
+                            <button class="delete-btn" data-index="0" data-is-middle="false">로그 삭제</button>
+                            <button class="view-code-btn" data-index="0">이 시점의 코드 보기</button>
+                        </div>
                     </div>
                      <div class="diff-container">
                         <table class="diff-table">
@@ -648,6 +694,36 @@ export class HistoryManager {
         }
 
         return html;
+    }
+
+    private static _formatDate(timestamp: number): string {
+        const date = new Date(timestamp);
+        const months = [
+            'Jan',
+            'Feb',
+            'Mar',
+            'Apr',
+            'May',
+            'Jun',
+            'Jul',
+            'Aug',
+            'Sep',
+            'Oct',
+            'Nov',
+            'Dec',
+        ];
+        const month = months[date.getMonth()];
+        const day = date.getDate().toString().padStart(2, '0');
+        const year = date.getFullYear();
+
+        let hours = date.getHours();
+        const minutes = date.getMinutes().toString().padStart(2, '0');
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        hours = hours % 12;
+        hours = hours ? hours : 12; // the hour '0' should be '12'
+        const strTime = `${hours}:${minutes} ${ampm}`;
+
+        return `${month} ${day}, ${year} ${strTime}`;
     }
 
     private static _extractShikiLines(html: string): string[] {

@@ -1,5 +1,5 @@
 import * as crypto from 'crypto';
-import { SnapshotDiff } from './types';
+import { SnapshotDiff } from '../types';
 
 export function getHash(content: string): string {
     return crypto.createHash('sha256').update(content).digest('hex');

@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 import * as diff from 'diff';
 import { storageManager } from '../storage/StorageManager';
-import { FileHistory } from '../storage/types';
+import { FileHistory } from '../types';
 
 export class HistoryManager {
     public static readonly viewType = 'psb.history';

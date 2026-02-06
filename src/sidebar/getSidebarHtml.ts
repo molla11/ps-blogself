@@ -418,7 +418,7 @@ export function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri
                                     <span>현재 디렉토리</span>
                                 </button>
                                 <button id="select-folder-btn" class="secondary">
-                                    <span class="icon"> 🖱️ </span>
+                                    <span class="icon">&nbsp;⋯&nbsp;</span>
                                     <span>사용자 지정 디렉토리</span>
                                 </button>
                             </div>
@@ -444,7 +444,7 @@ export function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri
                         </button>
                         <button id="generate-blog-btn" class="action-btn">
                             <span class="icon">✨</span>
-                            <span>블로그 포스트 생성</span>
+                            <span>블로그 포스트 생성 (곧 출시)</span>
                         </button>
                     </div>
                 </div>

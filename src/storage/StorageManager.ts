@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
-import { FileHistory, Snapshot, RequestLog, SessionIndexItem, SnapshotDiff } from './types';
+import { FileHistory, Snapshot, RequestLog, SessionIndexItem, SnapshotDiff } from '../types';
 import { getHash, generateUUID, computeDiff } from './utils';
 import { Logger } from '../services/logger';
 

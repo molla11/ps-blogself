@@ -3,6 +3,7 @@ import { configManager } from '../config';
 import { storageManager } from '../storage/StorageManager';
 import { getSidebarHtml } from './getSidebarHtml';
 import { HistoryManager } from '../services/HistoryManager';
+import { BlogPostManager } from '../services/BlogPostManager';
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'psb.sidebar';
@@ -74,6 +75,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         type: 'showFullLogs',
                         logs: allLogs,
                     });
+                    break;
+                }
+                case 'generateBlog': {
+                    const allLogs = await storageManager.getAllLogs();
+                    this._view?.webview.postMessage({
+                        type: 'showBlogSelectionLogs',
+                        logs: allLogs,
+                    });
+                    break;
+                }
+                case 'selectLogForBlog': {
+                    BlogPostManager.openPage(this._extensionUri, data.path);
                     break;
                 }
             }

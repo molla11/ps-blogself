@@ -464,6 +464,21 @@ export function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri
                     </div>
                 </div>
 
+                <!-- Blog Log Selection View -->
+                <div id="blog-log-selection-view" class="view-container hidden">
+                    <div class="header-bar">
+                        <button id="blog-logs-back-btn" class="back-btn" title="Back">
+                            <i class="codicon codicon-arrow-left"></i>
+                        </button>
+                        <span class="header-title">블로그 생성 대상 선택</span>
+                    </div>
+                    <div class="logs-section">
+                         <div id="blog-logs-container" class="logs-container">
+                            <!-- Logs here -->
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Context Menu Template -->
                 <div id="context-menu">
                     <div class="menu-item" id="ctx-open-file">
@@ -484,8 +499,10 @@ export function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri
                     const langChips = document.querySelectorAll('.lang-chip');
                     const logsContainer = document.getElementById('logs-container');
                     const fullLogsContainer = document.getElementById('full-logs-container');
+                    const blogLogsContainer = document.getElementById('blog-logs-container');
                     const mainView = document.getElementById('main-view');
                     const fullLogsView = document.getElementById('full-logs-view');
+                    const blogLogSelectionView = document.getElementById('blog-log-selection-view');
 
                     const rtf = new Intl.RelativeTimeFormat('ko', { numeric: 'auto' });
 
@@ -503,7 +520,7 @@ export function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri
                     // Store logs globally to re-render
                     let currentLogs = [];
 
-                    function renderLogs(logs, container = logsContainer) {
+                    function renderLogs(logs, container = logsContainer, isBlogSelection = false) {
                         const targetContainer = container;
                         const logData = logs || [];
                         
@@ -522,7 +539,11 @@ export function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri
                             item.onclick = (e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                showContextMenu(e.clientX, e.clientY, log);
+                                if (isBlogSelection) {
+                                    vscode.postMessage({ type: 'selectLogForBlog', path: log.filePath });
+                                } else {
+                                    showContextMenu(e.clientX, e.clientY, log);
+                                }
                             };
 
                             const info = document.createElement('div');
@@ -636,8 +657,16 @@ export function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri
                             case 'showFullLogs':
                                 mainView.classList.add('hidden');
                                 fullLogsView.classList.remove('hidden');
+                                blogLogSelectionView.classList.add('hidden');
                                 // Render into fullLogsContainer
                                 renderLogs(message.logs, fullLogsContainer);
+                                break;
+                            case 'showBlogSelectionLogs':
+                                mainView.classList.add('hidden');
+                                fullLogsView.classList.add('hidden');
+                                blogLogSelectionView.classList.remove('hidden');
+                                // Render into blogLogsContainer with clickable action
+                                renderLogs(message.logs, blogLogsContainer, true);
                                 break;
                         }
                     });
@@ -680,6 +709,11 @@ export function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri
                         mainView.classList.remove('hidden');
                         // Optionally refresh main state?
                         // vscode.postMessage({ type: 'getInitialData' }); 
+                    });
+
+                    document.getElementById('blog-logs-back-btn').addEventListener('click', () => {
+                        blogLogSelectionView.classList.add('hidden');
+                        mainView.classList.remove('hidden');
                     });
 
                     // 초기 데이터 요청

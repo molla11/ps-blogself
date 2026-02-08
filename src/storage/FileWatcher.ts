@@ -45,7 +45,7 @@ export class FileWatcher {
         const timer = setTimeout(async () => {
             this._debounceTimers.delete(key);
             await storageManager.saveSnapshot(document);
-        }, 3000); // 3 seconds debounce
+        }, 10000); // 10 seconds debounce
 
         this._debounceTimers.set(key, timer);
     }

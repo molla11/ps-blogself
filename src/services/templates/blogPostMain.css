@@ -1,0 +1,238 @@
+body {
+    font-family: var(--vscode-font-family);
+    padding: 20px;
+    color: var(--vscode-editor-foreground);
+    background-color: var(--vscode-sideBar-background); /* Match HistoryManager */
+}
+h2,
+p,
+label {
+    color: var(--vscode-foreground);
+}
+button {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    padding: 6px 14px;
+    cursor: pointer;
+    border-radius: 2px;
+}
+button:hover {
+    background: var(--vscode-button-hoverBackground);
+}
+.controls {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-widget-border);
+    border-radius: 4px;
+}
+textarea {
+    width: 100%;
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+    padding: 8px;
+    border-radius: 2px;
+    resize: vertical;
+}
+
+/* Shiki Diff Styling (Matching HistoryManager) */
+.diff-container {
+    font-family: var(--vscode-editor-font-family, 'Consolas', 'Courier New', monospace);
+    font-size: var(--vscode-editor-font-size, 14px);
+    line-height: normal;
+    background-color: var(--vscode-editor-background);
+    border-radius: 4px;
+    overflow-x: auto;
+    margin-bottom: 10px;
+    border: 1px solid var(--vscode-widget-border); /* Add border to container */
+}
+.diff-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.diff-line {
+    white-space: pre;
+}
+.diff-line-number {
+    width: 40px;
+    text-align: right;
+    padding-right: 10px;
+    color: var(--vscode-editorLineNumber-foreground);
+    user-select: none;
+    vertical-align: top;
+    border-right: 1px solid var(--vscode-editorGutter-background);
+}
+.diff-content {
+    padding-left: 10px;
+    vertical-align: top;
+    color: var(--vscode-editor-foreground);
+}
+
+.diff-added {
+    background-color: var(--vscode-diffEditor-insertedLineBackground, rgba(100, 255, 100, 0.2));
+}
+.diff-removed {
+    background-color: var(--vscode-diffEditor-removedLineBackground, rgba(255, 100, 100, 0.2));
+}
+
+/* Timeline Slider */
+.timeline-container {
+    position: relative;
+    height: 36px; /* Compact height */
+    margin: 5px 0; /* Minimal vertical margin */
+    padding: 0 10px;
+    user-select: none;
+}
+.timeline-track {
+    position: absolute;
+    top: 50%;
+    left: 10px;
+    right: 10px;
+    height: 4px; /* Thinner track? Or same. 4px is fine. */
+    background: var(--vscode-scrollbarSlider-background); /* Softer gray */
+    transform: translateY(-50%);
+    border-radius: 2px;
+}
+.timeline-range {
+    position: absolute;
+    top: 50%;
+    height: 4px;
+    background: var(--vscode-progressBar-background); /* Accent color */
+    transform: translateY(-50%);
+    z-index: 1;
+    opacity: 1;
+}
+.timeline-dot {
+    position: absolute;
+    top: 50%;
+    width: 6px; /* Smaller */
+    height: 6px; /* Smaller */
+    background: var(--vscode-editor-background); /* Initial state: hollow-ish */
+    border: 2px solid var(--vscode-progressBar-background);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+    z-index: 2;
+    transition:
+        transform 0.1s,
+        background-color 0.1s,
+        border-color 0.1s;
+}
+.timeline-dot:hover {
+    transform: translate(-50%, -50%) scale(1.3);
+    background: var(--vscode-progressBar-background); /* Filled on hover */
+    border-color: var(--vscode-progressBar-background);
+    z-index: 20;
+}
+.timeline-dot.active {
+    background: var(--vscode-progressBar-background); /* Filled when active (start/end) */
+    border-color: var(--vscode-progressBar-background);
+    z-index: 3;
+    transform: translate(-50%, -50%) scale(1.2); /* Slightly larger */
+}
+.timeline-dot.in-range {
+    background: var(--vscode-progressBar-background); /* Filled in range */
+    border-color: var(--vscode-progressBar-background);
+}
+
+/* Tooltip */
+.timeline-tooltip {
+    position: absolute;
+    background: var(--vscode-editorHoverWidget-background);
+    border: 1px solid var(--vscode-editorHoverWidget-border);
+    color: var(--vscode-editorHoverWidget-foreground);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 10;
+    top: -30px;
+    transform: translateX(-50%);
+    opacity: 0;
+    transition: opacity 0.1s;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.timeline-dot:hover .timeline-tooltip {
+    opacity: 1;
+}
+
+/* History Entry Styling */
+.diff-selection-root {
+    margin-bottom: 30px;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-widget-border);
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+.diff-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background-color: var(--vscode-editor-inactiveSelectionBackground);
+    border-bottom: 1px solid var(--vscode-widget-border);
+}
+.diff-meta {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--vscode-foreground);
+}
+.diff-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.icon-btn {
+    background: none;
+    border: none;
+    color: var(--vscode-icon-foreground);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.icon-btn:hover {
+    background-color: var(--vscode-toolbar-hoverBackground);
+}
+.codicon-comment-flipped {
+    transform: scaleX(-1);
+}
+
+.comment-area {
+    padding: 10px;
+    background-color: var(--vscode-editor-background);
+    border-top: 1px solid var(--vscode-widget-border);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 2px;
+    padding: 4px;
+    font-family: var(--vscode-font-family);
+    resize: vertical;
+}
+.toggle-comment-btn {
+    background: none;
+    border: none;
+    color: var(--vscode-textLink-foreground);
+    cursor: pointer;
+    padding: 0;
+    font-size: 0.9em;
+    text-align: left;
+    width: fit-content;
+}
+.toggle-comment-btn:hover {
+    text-decoration: underline;
+}
+
+pre.shiki {
+    margin: 0;
+    padding: 0;
+    background-color: transparent !important;
+}
+.shiki code {
+    background-color: transparent !important;
+}

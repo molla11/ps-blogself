@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Blog Gen: {{fileName}}</title>
+        <link href="{{codiconsUri}}" rel="stylesheet" />
+        <!-- {{css}} -->
+        <style>
+            html {
+                height: 100%;
+                margin: 0;
+                padding: 0;
+                overflow: hidden; /* Hide outer scrollbar */
+            }
+            body {
+                height: 100%;
+                margin: 0;
+                padding: 20px;
+                box-sizing: border-box;
+                overflow-y: scroll; /* Force inner scrollbar */
+
+                font-family: var(--vscode-font-family);
+                color: var(--vscode-editor-foreground);
+                background-color: var(--vscode-editor-background);
+            }
+            h2 {
+                border-bottom: 1px solid var(--vscode-widget-border);
+                padding-bottom: 10px;
+            }
+            .controls {
+                margin-bottom: 5px;
+                border: 1px solid var(--vscode-widget-border);
+                padding: 10px;
+                border-radius: 4px;
+            }
+            textarea {
+                width: 100%;
+                height: 80px;
+                background: var(--vscode-input-background);
+                color: var(--vscode-input-foreground);
+                border: 1px solid var(--vscode-input-border);
+            }
+            button {
+                background: var(--vscode-button-background);
+                color: var(--vscode-button-foreground);
+                border: none;
+                padding: 6px 12px;
+                cursor: pointer;
+            }
+            button:hover {
+                background: var(--vscode-button-hoverBackground);
+            }
+            .inline-btn {
+                background: none;
+                color: var(--vscode-textLink-foreground);
+                padding: 0;
+                margin: 0;
+            }
+            .inline-btn:hover {
+                text-decoration: underline;
+                background: none;
+            }
+            .action-bar {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-top: 20px;
+                margin-bottom: 10px;
+            }
+            #range-info {
+                font-size: 1.2em;
+                font-weight: bold;
+                color: var(--vscode-editor-foreground);
+            }
+            #instructions-container {
+                display: none;
+                margin-top: 10px;
+            }
+            #instructions-container.visible {
+                display: block;
+            }
+            .comment-area {
+                display: none;
+                margin-top: 5px;
+            }
+            .comment-area.visible {
+                display: block;
+            }
+        </style>
+    </head>
+    <body>
+        <h2>블로그 생성하기 ({{fileName}})</h2>
+        <div class="controls">
+            <!-- Header with Label and Credits -->
+            <div
+                style="
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 5px;
+                "
+            >
+                <label style="font-weight: bold; font-size: 1.2em">Diff 선택:</label>
+            </div>
+            <div class="timeline-container" id="timeline">
+                <div class="timeline-track"></div>
+                <div class="timeline-range" id="timeline-range"></div>
+                <!-- Dots will be injected here -->
+            </div>
+            <!-- Range info moved to action bar -->
+        </div>
+        <!-- Separate Credit div removed -->
+
+        <div class="action-bar">
+            <span id="range-info">타임라인에서 구간을 선택하세요</span>
+            <div style="display: flex; gap: 10px; align-items: center">
+                <span
+                    class="badge"
+                    style="
+                        background: var(--vscode-badge-background);
+                        color: var(--vscode-badge-foreground);
+                        padding: 2px 6px;
+                        border-radius: 4px;
+                        font-size: 0.9em;
+                    "
+                    >Credits: 10</span
+                >
+                <button id="generate-btn">블로그 생성하기 (Mock)</button>
+            </div>
+        </div>
+
+        <div style="margin-top: 10px; margin-bottom: 20px">
+            <button id="toggle-instructions-btn" class="inline-btn">
+                + 설명 추가하기(Optional, 지문/풀이 설명, 문제 제한 등)
+            </button>
+            <div id="instructions-container">
+                <label for="instructions" style="display: block; margin-bottom: 5px"
+                    >설명 추가하기:</label
+                >
+                <textarea
+                    id="instructions"
+                    rows="3"
+                    placeholder="Click here to add extra context or specific requests..."
+                >
+{{instructions}}</textarea
+                >
+            </div>
+        </div>
+
+        <div id="diff-list">{{diffsHtml}}</div>
+
+        <!-- Buttons moved up -->
+
+        {{js}}
+    </body>
+</html>

@@ -1,412 +1,506 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as diff from 'diff';
+import MarkdownIt = require('markdown-it');
+import { randomBytes, randomUUID } from 'crypto';
 import { storageManager } from '../storage/StorageManager';
-import { BlogPostDraft, FileHistory } from '../types';
-import { SidebarProvider } from '../sidebar/SidebarProvider';
-import blogPostLoadingHtml from './templates/blogPostLoading.html';
-import blogPostMainHtml from './templates/blogPostMain.html';
-import blogPostCss from './templates/blogPostMain.css';
-import blogPostJs from './templates/blogPostMainScripts.webview.js';
+import { LocalJobs } from '../writing/LocalJobs';
+import { Writer } from '../writing/Writer';
+import { AiConfiguration } from '../writing/AiSettings';
+import { ServiceConnection, ServiceError } from '../writing/ServiceConnection';
+import { JobRouter, JobTarget } from '../writing/JobRouter';
+import { DraftStore } from '../writing/DraftStore';
+import {
+    WritingDraft,
+    mergeResult,
+    newDraft,
+    sourceFor,
+    preparationSource,
+    validatePlan,
+    historyFingerprint,
+} from '../writing/model';
+import template from './templates/blogPostMain.html';
+import css from './templates/blogPostMain.css';
+import script from './templates/blogPostMainScripts.webview.js';
 
+interface View {
+    panel?: vscode.WebviewPanel;
+    draft: WritingDraft;
+    queue: Promise<unknown>;
+    task?: Promise<void>;
+    error: string;
+    status: string;
+    progress: number;
+    ready: boolean;
+    partial?: string;
+    watcher?: AbortController;
+    announced?: string;
+}
 export class BlogPostManager {
     public static readonly viewType = 'psb.blogPost';
-    private static _panel: vscode.WebviewPanel | undefined;
-    private static _currentFilePath: string | undefined;
-
-    // In-memory draft storage for now (can be moved to storageManager later)
-    private static _drafts: Record<string, BlogPostDraft> = {};
-
-    public static async openPage(extensionUri: vscode.Uri, filePath: string) {
-        this._currentFilePath = filePath;
-
-        // Create or show panel
-        if (this._panel) {
-            this._panel.reveal(vscode.ViewColumn.One);
-        } else {
-            this._panel = vscode.window.createWebviewPanel(
-                BlogPostManager.viewType,
-                `Blog Generation: ${path.basename(filePath)}`,
-                vscode.ViewColumn.One,
-                {
-                    enableScripts: true,
-                    localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')],
-                    retainContextWhenHidden: true,
+    private static views = new Map<string, View>();
+    private static openings = new Map<string, Promise<void>>();
+    private static store: DraftStore;
+    private static jobs: JobRouter;
+    private static ai: AiConfiguration;
+    private static connection: ServiceConnection;
+    private static loads = new Map<string, Promise<View | undefined>>();
+    private static updates = new vscode.EventEmitter<string>();
+    static readonly onDidChange = this.updates.event;
+    static init(context: vscode.ExtensionContext) {
+        this.store = new DraftStore(path.join(context.globalStorageUri.fsPath, 'writing'));
+        this.ai = new AiConfiguration(context);
+        const writer = new Writer({ settings: () => this.ai.get() });
+        this.connection = new ServiceConnection(context);
+        this.jobs = new JobRouter(new LocalJobs(path.join(context.globalStorageUri.fsPath, 'writing-jobs'), (request, signal) => writer.run(request, signal)), this.connection);
+        context.subscriptions.push(
+            vscode.commands.registerCommand('psb.connect', () => this.connect()),
+            vscode.commands.registerCommand('psb.sample', async () => this.openPage(context.extensionUri, await storageManager.installSampleHistory())),
+            this.connection.changed.event(() => this.updates.fire('')),
+            this.connection.changed,
+        );
+        context.subscriptions.push(
+            vscode.window.registerWebviewPanelSerializer(this.viewType, {
+                deserializeWebviewPanel: async (panel, saved) => {
+                    const filePath = (saved as { filePath?: unknown })?.filePath;
+                    if (typeof filePath !== 'string') {
+                        panel.dispose();
+                        return;
+                    }
+                    try {
+                        await this.openPage(context.extensionUri, filePath, panel);
+                    } catch {
+                        panel.dispose();
+                    }
                 },
-            );
-
-            this._panel.onDidDispose(() => {
-                this._panel = undefined;
-                this._currentFilePath = undefined;
-            });
-
-            this._panel.webview.onDidReceiveMessage(async (message) => {
-                await this._handleMessage(message, extensionUri);
-            });
-        }
-
-        // Load content
-        this._panel.webview.html = this._getLoadingHtml();
-        const html = await this._getHtmlForWebview(this._panel.webview, filePath, extensionUri);
-        this._panel.webview.html = html;
+            }),
+        );
     }
-
-    private static async _handleMessage(message: any, extensionUri: vscode.Uri) {
-        if (!this._currentFilePath) return;
-        const filePath = this._currentFilePath;
-
-        switch (message.type) {
-            case 'saveDraft': {
-                const draft = message.draft as BlogPostDraft;
-                this._drafts[filePath] = draft;
-                // Optional: Persist to globalState or disk
-                break;
-            }
-            case 'generate': {
-                await this._generateBlogPost(message.draft);
-                break;
-            }
-            case 'reset': {
-                delete this._drafts[filePath];
-                const html = await this._getHtmlForWebview(
-                    this._panel!.webview,
-                    filePath,
-                    extensionUri,
-                );
-                this._panel!.webview.html = html;
-                break;
-            }
-        }
+    static async flush() {
+        for (const view of this.views.values()) view.watcher?.abort();
+        await Promise.all([...this.views.values()].map((view) => view.queue));
+        await this.store?.flush();
+        await this.jobs?.close();
     }
-
-    private static async _generateBlogPost(draft: BlogPostDraft) {
-        // Validation
-        if (!draft.selectedChangeIndices || draft.selectedChangeIndices.length === 0) {
-            vscode.window.showWarningMessage('선택된 변경 사항이 없습니다.');
+    static async connect() {
+        if (this.jobs.direct) await this.ai.configure();
+        else await this.connection.configure();
+    }
+    static async accountLabel() { return this.jobs.direct ? '직접 호출 · AI 설정' : (await this.connection.account())?.email || '로그인'; }
+    static preparationStatus(filePath: string) {
+        const view = this.views.get(filePath);
+        return view?.error ? '글쓰기 준비를 다시 시도할 수 있어요.' : view?.draft.pending ? 'AI가 글쓰기 내용을 준비하고 있어요…' : view?.draft.plan ? '글쓰기 준비가 끝났어요.' : '글쓰기에서 AI가 풀이를 정리해 드려요.';
+    }
+    private static async loadView(filePath: string): Promise<View | undefined> {
+        if (this.views.has(filePath)) return this.views.get(filePath);
+        if (this.loads.has(filePath)) return this.loads.get(filePath);
+        const loading = (async () => {
+            const saved = await this.store.read(filePath);
+            const history = saved?.history || await storageManager.getFileHistory(filePath);
+            if (!history?.snapshots.length) return undefined;
+            const view: View = { draft: saved || newDraft(history), queue: Promise.resolve(), error: '', status: '', progress: 0, ready: false };
+            this.views.set(filePath, view);
+            return view;
+        })().finally(() => this.loads.delete(filePath));
+        this.loads.set(filePath, loading);
+        return loading;
+    }
+    static async prepareOnReview(filePath: string) {
+        if (!vscode.workspace.getConfiguration('psb').get('prepareOnReview', true)) return;
+        try {
+            if (this.jobs.direct && !await this.ai.available()) return;
+            const target = await this.jobs.target(false); // Reviewing never opens a login prompt.
+            const view = await this.loadView(filePath);
+            if (!view) return;
+            await this.enqueue(view, async () => {
+                if (view.draft.pending) { this.run(view); return; }
+                const history = await storageManager.getFileHistory(filePath);
+                if (!history?.snapshots.length) return;
+                const key = historyFingerprint(history);
+                if (view.draft.preparationKey === key || (view.draft.plan && view.draft.fingerprint === key)) return;
+                await this.start(view, 'prepare_blog', target, true);
+            });
+        } catch { /* Optional preparation must not interrupt history viewing. */ }
+    }
+    public static async openPage(
+        extensionUri: vscode.Uri,
+        filePath: string,
+        restoredPanel?: vscode.WebviewPanel,
+    ) {
+        const opening = this.openings.get(filePath);
+        if (opening) {
+            await opening;
+            this.views.get(filePath)?.panel?.reveal();
             return;
         }
-
-        // Mock API Call
-        vscode.window.withProgress(
-            {
-                location: vscode.ProgressLocation.Notification,
-                title: '블로그 포스트 생성 중...',
-                cancellable: false,
-            },
-            async (progress) => {
-                progress.report({ increment: 0 });
-
-                // Construct Payload (Mock)
-                // const payload = { ... };
-
-                // Simulate API delay
-                await new Promise((resolve) => setTimeout(resolve, 2000));
-
-                // Calculate baseContent
-                const sortedIndices = draft.selectedChangeIndices.sort((a, b) => a - b);
-                const firstIndex = sortedIndices[0];
-                let baseContent = '';
-
-                if (firstIndex > 0) {
-                    const history = await storageManager.getFileHistory(draft.filePath);
-                    if (history) {
-                        const prev = storageManager.reconstructFileContent(history, firstIndex - 1);
-                        baseContent = prev !== null ? prev : '';
-                    }
-                }
-                draft.baseContent = baseContent;
-
-                // Verification for User: Calculate Final Content of the Selection
-                let finalContentPreview = '';
-                let finalLength = 0;
-                let snapshotsInfo = '';
-                const history = await storageManager.getFileHistory(draft.filePath);
-
-                if (history) {
-                    const lastIndex = sortedIndices[sortedIndices.length - 1];
-                    const reconstructed = storageManager.reconstructFileContent(history, lastIndex);
-                    if (reconstructed) {
-                        finalLength = reconstructed.length;
-                        finalContentPreview = reconstructed.substring(0, 100) + '...';
-                    }
-
-                    snapshotsInfo = sortedIndices
-                        .map((i) => {
-                            const snap = history.snapshots[i];
-                            if (snap.content) {
-                                return `Diff #${i + 1} (Full Content: ${snap.content.length} chars)`;
-                            }
-                            if (snap.diff) {
-                                return `Diff #${i + 1} (Diff: ${snap.diff.newText.length} chars added)`;
-                            }
-                            return `Diff #${i + 1} (Unknown)`;
-                        })
-                        .join('\n');
-
-                    // Allow resolved diffs to be part of the draft payload
-                    draft.diffs = sortedIndices.map((i) => {
-                        const snap = history.snapshots[i];
-                        return {
-                            index: i,
-                            type: snap.content ? 'full' : 'diff',
-                            content: snap.content || snap.diff!,
-                            timestamp: snap.timestamp,
-                        };
+        const operation = this.openPageInternal(extensionUri, filePath, restoredPanel).finally(() =>
+            this.openings.delete(filePath),
+        );
+        this.openings.set(filePath, operation);
+        await operation;
+    }
+    private static async openPageInternal(
+        extensionUri: vscode.Uri,
+        filePath: string,
+        restoredPanel?: vscode.WebviewPanel,
+    ) {
+        const view = await this.loadView(filePath);
+        if (view?.panel && !restoredPanel) {
+            view.panel.reveal();
+            return;
+        }
+        if (!view) {
+            void vscode.window.showInformationMessage('아직 기록이 없습니다. 파일을 한 번 저장해 주세요.');
+            restoredPanel?.dispose();
+            return;
+        }
+        const current = view;
+        const panel =
+            restoredPanel ||
+            vscode.window.createWebviewPanel(
+                this.viewType,
+                `글 만들기 · ${path.basename(filePath)}`,
+                vscode.ViewColumn.One,
+                { enableScripts: true, retainContextWhenHidden: true },
+            );
+        current.panel = panel;
+        current.ready = false;
+        panel.webview.options = { enableScripts: true, localResourceRoots: [] };
+        panel.onDidDispose(() => {
+            if (current.panel === panel) {
+                current.panel = undefined;
+                current.ready = false;
+            }
+        });
+        panel.webview.onDidReceiveMessage((message) => {
+            void this.enqueue(current, async () => {
+                try {
+                    await this.handle(current, message);
+                    void panel.webview.postMessage({ type: 'ack', id: message?.id });
+                } catch (error) {
+                    current.error = error instanceof Error ? error.message : String(error);
+                    void panel.webview.postMessage({
+                        type: 'saveError',
+                        id: message?.id,
+                        message: current.error,
                     });
                 }
-
-                progress.report({ increment: 100 });
-                vscode.window.showInformationMessage('블로그 포스트 생성이 완료되었습니다! (Mock)');
-
-                // Show result (Mock)
-                const doc = await vscode.workspace.openTextDocument({
-                    content:
-                        `# Generated Blog Post via Mock API\n\nBased on ${path.basename(draft.filePath)}\n\n` +
-                        `**Selection Config:**\n` +
-                        `- Selected Diffs: ${sortedIndices.join(', ')}\n` +
-                        `- Base Content Length: ${baseContent.length} ${baseContent.length === 0 ? '(Initial Creation or Start of History)' : ''}\n` +
-                        `- Final Content Length: ${finalLength}\n\n` +
-                        `**Selected Snapshots Info:**\n${snapshotsInfo}\n\n` +
-                        `**Instructions:**\n${draft.instructions}\n\n` +
-                        `**Mock Response:**\n(LLM generation would go here based on the above context...)\n\n` +
-                        `---\n` +
-                        `**Debug: Client Draft (Payload)**\n` +
-                        `\`\`\`json\n${JSON.stringify(draft, null, 2)}\n\`\`\``,
-                    language: 'markdown',
-                });
-                await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside });
-            },
-        );
-    }
-
-    private static _getLoadingHtml(): string {
-        return blogPostLoadingHtml;
-    }
-
-    private static async _getHtmlForWebview(
-        webview: vscode.Webview,
-        filePath: string,
-        extensionUri: vscode.Uri,
-    ): Promise<string> {
-        const history = await storageManager.getFileHistory(filePath);
-        if (!history) {
-            return `<h3>No history found for ${path.basename(filePath)}</h3>`;
-        }
-
-        const existingDraft = this._drafts[filePath];
-        const codiconsUri = webview.asWebviewUri(
-            vscode.Uri.joinPath(
-                extensionUri,
-                'node_modules',
-                '@vscode/codicons',
-                'dist',
-                'codicon.css',
-            ),
-        );
-        const diffsHtml = await this._generateSelectableDiffsHtml(history, existingDraft);
-
-        const draftJson = JSON.stringify(
-            existingDraft || {
-                filePath: filePath,
-                selectedChangeIndices: history.snapshots.map((_, i) => i),
-                instructions: '',
-                diffComments: {},
-                createdAt: Date.now(),
-            },
-        );
-
-        return blogPostMainHtml
-            .replace(/{{fileName}}/g, path.basename(filePath))
-            .replace('{{codiconsUri}}', codiconsUri.toString())
-            .replace('<!-- {{css}} -->', `<style>\n${blogPostCss}\n</style>`)
-            .replace('{{js}}', `<script>\n${blogPostJs}\n</script>`)
-            .replace('{{instructions}}', existingDraft?.instructions || '')
-            .replace('{{diffsHtml}}', diffsHtml)
-            .replace('/* {{snapshotsJson}} */ []', JSON.stringify(history.snapshots))
-            .replace('/* {{draftJson}} */ {}', draftJson);
-    }
-
-    private static async _generateSelectableDiffsHtml(
-        history: FileHistory,
-        draft: BlogPostDraft | undefined,
-    ): Promise<string> {
-        let html = '';
-        const shikiService = (await import('./ShikiService.js')).ShikiService.getInstance();
-        await shikiService.init();
-        const CONTEXT_SIZE = 3;
-
-        // Iterate backwards from latest snapshot
-        for (let i = history.snapshots.length - 1; i >= 0; i--) {
-            const currentContent = storageManager.reconstructFileContent(history, i);
-            // Logic for previous content:
-            // If i > 0, prev is i-1.
-            // If i == 0, prev is empty string (all added).
-            let prevContent = '';
-            if (i > 0) {
-                const prev = storageManager.reconstructFileContent(history, i - 1);
-                prevContent = prev !== null ? prev : '';
-            }
-
-            if (currentContent === null) continue;
-
-            const dateStr = this._formatDate(history.snapshots[i].timestamp);
-
-            // Diff Generation logic reuse (simplified for brevity, matching HistoryManager logic)
-            const rawPrevHtml = await shikiService.highlight(prevContent, history.language);
-            const rawCurrHtml = await shikiService.highlight(currentContent, history.language);
-            const prevLines = this._extractShikiLines(rawPrevHtml);
-            const currLines = this._extractShikiLines(rawCurrHtml);
-
-            const diffResult = diff.diffLines(prevContent, currentContent);
-
-            // Reconstruct rows
-            let rowsHtml = '';
-            let prevIdx = 0;
-            let currIdx = 0;
-            let added = 0;
-            let removed = 0;
-
-            const allRows: any[] = [];
-            diffResult.forEach((part) => {
-                const count = part.count || 0;
-                if (part.added) {
-                    added += count;
-                    for (let j = 0; j < count; j++) {
-                        allRows.push({
-                            type: 'added',
-                            html: currLines[currIdx + j] || '',
-                            lineNumCurr: currIdx + j + 1,
-                        });
-                    }
-                    currIdx += count;
-                } else if (part.removed) {
-                    removed += count;
-                    for (let j = 0; j < count; j++) {
-                        allRows.push({
-                            type: 'removed',
-                            html: prevLines[prevIdx + j] || '',
-                            lineNumPrev: prevIdx + j + 1,
-                        });
-                    }
-                    prevIdx += count;
-                } else {
-                    for (let j = 0; j < count; j++) {
-                        allRows.push({
-                            type: 'unchanged',
-                            html: currLines[currIdx + j] || '',
-                            lineNumPrev: prevIdx + j + 1,
-                            lineNumCurr: currIdx + j + 1,
-                        });
-                    }
-                    prevIdx += count;
-                    currIdx += count;
-                }
+                this.render(current);
             });
-
-            // Filter Context
-            // If it's a huge file, we only show changes + context.
-            // If it's the initial commit (i=0), it might be huge.
-
-            const indicesToShow = new Set<number>();
-            // If partial update (i>0), context logic.
-            // If i==0, usually we acknowledge it as "Created File", maybe just show first N lines or summary?
-            // For consistency let's apply context logic if there are changes.
-            // Initial commit is all "added", so it shows everything.
-
-            if (i === 0 && allRows.length > 50) {
-                // Truncate logic for initial commit if too large?
-                // Let's keep it simple: show all for now, or just top 50.
-                for (let r = 0; r < Math.min(allRows.length, 50); r++) {
-                    indicesToShow.add(r);
+        });
+        const nonce = randomBytes(24).toString('base64');
+        panel.webview.html = template
+            .replace(
+                '{{csp}}',
+                `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data:;`,
+            )
+            .replace('{{styles}}', () => `<style nonce="${nonce}">${css}</style>`)
+            .replace('{{script}}', () => `<script nonce="${nonce}">${script}</script>`);
+    }
+    private static enqueue(view: View, action: () => Promise<void>) {
+        const next = view.queue.then(action);
+        view.queue = next.catch((error) => {
+            view.error = error instanceof Error ? error.message : String(error);
+            this.render(view);
+        });
+        return next;
+    }
+    private static render(view: View) {
+        const announcement = `${!!view.draft.pending}:${!!view.draft.plan}:${view.error}`;
+        if (view.announced !== announcement) { view.announced = announcement; this.updates.fire(view.draft.filePath); }
+        if (!view.ready) return;
+        const { draft } = view;
+        void view.panel?.webview.postMessage({
+            type: 'model',
+            filePath: draft.filePath,
+            fileName: path.basename(draft.filePath),
+            plan: draft.plan,
+            instructions: draft.instructions,
+            title: draft.title,
+            markdown: draft.markdown,
+            revision: draft.revision,
+            count: draft.history.snapshots.length,
+            times: draft.history.snapshots.map((s) => s.timestamp),
+            pending: !!draft.pending,
+            running: !!view.task,
+            progress: view.progress,
+            status: view.status,
+            error: view.error,
+            candidate: !!draft.candidate,
+            versions: draft.articleVersions.map((v) => ({ at: v.at, title: v.title })),
+            streamHtml: view.partial ? new MarkdownIt({ html: false }).render(view.partial) : '',
+        });
+    }
+    private static async edit(view: View, fields: unknown) {
+        if (!fields || typeof fields !== 'object') return;
+        const value = fields as Record<string, unknown>,
+            draft = view.draft;
+        const before = JSON.stringify([
+            draft.plan,
+            draft.instructions,
+            draft.title,
+            draft.markdown,
+        ]);
+        const patch: Record<string, unknown> = {};
+        for (const [key, limit] of [
+            ['instructions', 12000],
+            ['title', 300],
+            ['markdown', 150000],
+        ] as const) {
+            if (value[key] !== undefined) {
+                if (typeof value[key] !== 'string' || (value[key] as string).length > limit) {
+                    throw new Error('입력 내용이 너무 깁니다.');
                 }
-                // Warning msg?
-            } else {
-                for (let r = 0; r < allRows.length; r++) {
-                    if (allRows[r].type !== 'unchanged') {
-                        const start = Math.max(0, r - CONTEXT_SIZE);
-                        const end = Math.min(allRows.length - 1, r + CONTEXT_SIZE);
-                        for (let k = start; k <= end; k++) {
-                            indicesToShow.add(k);
-                        }
-                    }
-                }
+                patch[key] = value[key];
             }
-
-            let lastShownIndex = -1;
-            const sortedIndices = Array.from(indicesToShow).sort((a, b) => a - b);
-
-            if (sortedIndices.length === 0 && allRows.length > 0) {
-                rowsHtml =
-                    '<tr><td colspan="3" style="padding:10px; opacity:0.6;">No changes to display in context.</td></tr>';
-            } else {
-                sortedIndices.forEach((idx) => {
-                    if (lastShownIndex !== -1 && idx > lastShownIndex + 1) {
-                        rowsHtml += `
-                            <tr class="diff-line diff-separator">
-                                <td class="diff-line-number">...</td>
-                                <td class="diff-line-number">...</td>
-                                <td class="diff-content" style="color: var(--vscode-descriptionForeground); font-style: italic;">...</td>
-                            </tr>`;
-                    }
-                    const row = allRows[idx];
-                    rowsHtml += `
-                        <tr class="diff-line diff-${row.type}">
-                            <td class="diff-line-number">${row.lineNumPrev || ''}</td>
-                            <td class="diff-line-number">${row.lineNumCurr || ''}</td>
-                            <td class="diff-content">${row.html}</td>
-                        </tr>`;
-                    lastShownIndex = idx;
-                });
-                if (i === 0 && allRows.length > 50) {
-                    rowsHtml +=
-                        '<tr><td colspan="3" style="text-align:center; opacity:0.6;">(Truncated for initial commit...)</td></tr>';
-                }
-            }
-
-            // Selection State
-            const isSelected = draft?.selectedChangeIndices?.includes(i);
-            const comment = draft?.diffComments?.[i] || '';
-
-            // Hidden by default, shown via JS if in range
-            const displayStyle = isSelected ? 'block' : 'none';
-
-            // Stats
-            const stats = [];
-            if (added) {
-                stats.push(`<span style="color:var(--vscode-charts-green)">+${added}</span>`);
-            }
-            if (removed) {
-                stats.push(`<span style="color:var(--vscode-charts-red)">-${removed}</span>`);
-            }
-
-            html += `
-            <div class="diff-selection-root" data-index="${i}" style="display: ${displayStyle}">
-                <div class="diff-header">
-                     <span class="diff-meta">Diff #${i + 1} (${dateStr}) ${stats.join(' ')}</span>
-                     <div class="diff-actions">
-                        <button class="icon-btn toggle-comment-btn" data-index="${i}" title="코멘트 추가/닫기">
-                            <span class="codicon codicon-comment codicon-comment-flipped"></span>
-                        </button>
-                     </div>
-                </div>
-                <div class="diff-container">
-                    <table class="diff-table">${rowsHtml}</table>
-                </div>
-                <div class="comment-area">
-                    <textarea class="comment-input comment-input-area" data-index="${i}" placeholder="내용에 대한 코멘트 추가...">${comment}</textarea>
-                </div>
-            </div>`;
         }
-        return html;
+        if (value.plan !== undefined) {
+            patch.plan = validatePlan(value.plan, draft.history.snapshots.length, true);
+        }
+        Object.assign(draft, patch);
+        if (
+            before !== JSON.stringify([draft.plan, draft.instructions, draft.title, draft.markdown])
+        ) {
+            draft.revision++;
+            draft.updatedAt = Date.now();
+        }
+        await this.store.save(draft);
     }
-
-    private static _formatDate(timestamp: number): string {
-        return new Date(timestamp).toLocaleString();
+    private static async handle(view: View, message: any) {
+        if (
+            !message ||
+            typeof message !== 'object' ||
+            typeof message.type !== 'string' ||
+            JSON.stringify(message).length > 400000
+        ) {
+            throw new Error('화면 요청을 확인할 수 없습니다.');
+        }
+        switch (message.type) {
+            case 'ready':
+                view.ready = true;
+                this.render(view);
+                if (view.draft.pending) this.run(view);
+                else if (!view.draft.plan) await this.start(view, 'prepare_blog');
+                break;
+            case 'save':
+                await this.edit(view, message.fields);
+                break;
+            case 'prepare':
+                await this.edit(view, message.fields);
+                await this.start(view, 'prepare_blog');
+                break;
+            case 'generate':
+                await this.edit(view, message.fields);
+                await this.start(view, 'write_blog');
+                break;
+            case 'retry':
+                await this.edit(view, message.fields);
+                if (view.draft.pending) this.run(view, true);
+                else await this.start(view, view.draft.plan ? 'write_blog' : 'prepare_blog');
+                break;
+            case 'cancel':
+                if (view.draft.pending) {
+                    view.draft.pending.cancelRequested = true;
+                    await this.store.save(view.draft);
+                    if (view.draft.pending.jobId) await this.jobs.cancel(view.draft.pending.jobId, view.draft.pending.target || { kind: 'direct' });
+                    this.run(view);
+                }
+                break;
+            case 'discardPending':
+                if (view.task) throw new Error('작업을 취소한 뒤 다시 시도해 주세요.');
+                if (view.draft.pending?.jobId && !view.draft.pending.apiUrl) {
+                    try { await this.jobs.cancel(view.draft.pending.jobId, view.draft.pending.target || { kind: 'direct' }); }
+                    catch (error) { if (!(error instanceof ServiceError && error.status === 404)) throw error; }
+                }
+                delete view.draft.pending;
+                view.error = '';
+                await this.store.save(view.draft);
+                break;
+            case 'applyCandidate':
+                await this.edit(view, message.fields);
+                if (view.draft.candidate) {
+                    mergeResult(view.draft, view.draft.candidate, view.draft.revision);
+                    delete view.draft.candidate;
+                    await this.store.save(view.draft);
+                }
+                break;
+            case 'discardCandidate':
+                delete view.draft.candidate;
+                await this.store.save(view.draft);
+                break;
+            case 'diff': {
+                const index = Number(message.index),
+                    source = sourceFor(view.draft.history, index, index);
+                void view.panel?.webview.postMessage({
+                    type: 'diff',
+                    index,
+                    text: source.changes[0].diff,
+                });
+                break;
+            }
+            case 'preview': {
+                await this.edit(view, message.fields);
+                const html = new MarkdownIt({ html: false }).render(view.draft.markdown);
+                void view.panel?.webview.postMessage({ type: 'preview', html });
+                break;
+            }
+            case 'export': {
+                await this.edit(view, message.fields);
+                const uri = await vscode.window.showSaveDialog({
+                    defaultUri: vscode.Uri.file(
+                        path.join(
+                            path.dirname(view.draft.filePath),
+                            path.basename(view.draft.filePath, path.extname(view.draft.filePath)) +
+                                '.md',
+                        ),
+                    ),
+                    filters: { Markdown: ['md'] },
+                });
+                if (uri) {
+                    await vscode.workspace.fs.writeFile(
+                        uri,
+                        Buffer.from(this.markdown(view.draft)),
+                    );
+                    view.status = 'Markdown 파일로 저장했습니다.';
+                }
+                break;
+            }
+            case 'copy':
+                await this.edit(view, message.fields);
+                await vscode.env.clipboard.writeText(this.markdown(view.draft));
+                view.status = '글을 복사했습니다.';
+                break;
+            case 'restore': {
+                await this.edit(view, message.fields);
+                const version = view.draft.articleVersions[Number(message.index)];
+                if (!version) throw new Error('이전 글을 찾을 수 없습니다.');
+                mergeResult(
+                    view.draft,
+                    { title: version.title, markdown: version.markdown },
+                    view.draft.revision,
+                );
+                await this.store.save(view.draft);
+                break;
+            }
+            case 'openLink': {
+                const url = new URL(String(message.url));
+                if (['http:', 'https:'].includes(url.protocol)) {
+                    await vscode.env.openExternal(vscode.Uri.parse(url.href));
+                }
+                break;
+            }
+            case 'connect':
+                await this.connect();
+                break;
+            default:
+                throw new Error('지원하지 않는 화면 요청입니다.');
+        }
     }
-
-    private static _extractShikiLines(html: string): string[] {
-        const match = html.match(/<code[^>]*>([\s\S]*?)<\/code>/);
-        const inner = match ? match[1] : html;
-        return inner.split('\n');
+    private static markdown(draft: WritingDraft) {
+        return `# ${draft.title || draft.plan?.title || '풀이 기록'}\n\n${draft.markdown}\n`;
+    }
+    private static async start(view: View, kind: 'prepare_blog' | 'write_blog', target?: JobTarget, prefetch = false) {
+        if (view.draft.pending || view.task) return;
+        const draft = view.draft;
+        const history =
+            kind === 'prepare_blog'
+                ? (await storageManager.getFileHistory(draft.filePath)) || draft.history
+                : draft.history;
+        const plan = draft.plan
+            ? {
+                  ...draft.plan,
+                  title: draft.plan.title.trim() || path.basename(draft.filePath) + ' 풀이 기록',
+              }
+            : undefined;
+        if (kind === 'write_blog' && !plan) {
+            throw new Error('AI가 풀이 흐름을 준비한 뒤 글을 만들 수 있습니다.');
+        }
+        if (plan && kind === 'write_blog') {
+            plan.steps = plan.steps
+                .filter((step) => step.end >= plan.start && step.start <= plan.end)
+                .map((step) => ({
+                    ...step,
+                    start: Math.max(step.start, plan.start),
+                    end: Math.min(step.end, plan.end),
+                }));
+        }
+        const source =
+            kind === 'prepare_blog'
+                ? preparationSource(history)
+                : sourceFor(history, plan!.start, plan!.end);
+        if (JSON.stringify(source).length > 480000) {
+            throw new Error('분석할 기록이 너무 큽니다. 기록 범위를 줄여 주세요.');
+        }
+        target ||= await this.jobs.target(!prefetch);
+        if (kind === 'prepare_blog') draft.preparationKey = historyFingerprint(history);
+        draft.pending = {
+            target,
+            request: {
+                kind,
+                priority: prefetch ? 'prefetch' : 'interactive',
+                requestId: randomUUID(),
+                source,
+                ...(kind === 'write_blog' ? { plan: structuredClone(plan!) } : {}),
+                instructions: draft.instructions,
+            },
+            baseRevision: kind === 'prepare_blog' && plan ? -1 : draft.revision,
+            ...(kind === 'prepare_blog' ? { history: structuredClone(history) } : {}),
+        };
+        await this.store.save(draft);
+        this.run(view);
+    }
+    private static run(view: View, retry = false) {
+        if (view.task || !view.draft.pending) return;
+        const pending = view.draft.pending;
+        view.error = '';
+        view.partial = '';
+        view.watcher = new AbortController();
+        const signal = view.watcher.signal;
+        view.status = pending.request.kind === 'prepare_blog' ? '구간과 풀이 설명을 준비하고 있어요…' : '글을 작성하고 있어요…';
+        view.task = (async () => {
+            try {
+                if (pending.apiUrl) {
+                    if (!retry && !pending.cancelRequested) throw new Error('이전 버전의 작업입니다. 다시 시도하면 현재 서비스로 새 요청을 보냅니다.');
+                    delete pending.apiUrl;
+                    delete pending.jobId;
+                    pending.target = await this.jobs.target();
+                }
+                const target = pending.target || { kind: 'direct' as const };
+                if (pending.cancelRequested && !pending.jobId) {
+                    await this.enqueue(view, async () => { delete view.draft.pending; await this.store.save(view.draft); });
+                    view.status = '작업을 취소했습니다.';
+                    return;
+                }
+                let job = pending.jobId ? await this.jobs.job(pending.jobId, target) : await this.jobs.create(pending.request, target);
+                await this.enqueue(view, async () => { pending.jobId = job.id; await this.store.save(view.draft); });
+                if (retry && ['failed', 'cancelled'].includes(job.status) && !pending.cancelRequested) job = await this.jobs.retry(job.id, target);
+                if (pending.cancelRequested && ['queued', 'running', 'failed'].includes(job.status)) job = (await this.jobs.cancel(job.id, target))!;
+                const update = (value: typeof job) => { view.progress = value.progress; view.partial = value.partial; this.render(view); };
+                update(job);
+                if (['queued', 'running'].includes(job.status)) job = await this.jobs.watch(job.id, target, update, signal);
+                if (job.status === 'completed') {
+                    if (!job.result || (pending.request.kind === 'prepare_blog' ? !job.result.plan : typeof job.result.markdown !== 'string')) throw new Error('AI 응답에 글이 없습니다. 다시 시도해 주세요.');
+                    await this.enqueue(view, async () => {
+                        mergeResult(view.draft, { ...job.result!, ...(pending.history ? { history: pending.history } : {}) }, pending.baseRevision);
+                        delete view.draft.pending;
+                        await this.store.save(view.draft);
+                    });
+                    view.partial = '';
+                    view.status = view.draft.candidate ? '수정한 내용을 보존했습니다. 새 결과를 적용할 수 있어요.' : pending.request.kind === 'prepare_blog' ? '준비됐어요. 그대로 글을 쓰거나 설명을 고쳐보세요.' : '글을 완성했습니다.';
+                    if (pending.history && pending.request.source.changes.length < pending.history.snapshots.length) view.status += ` 최근 ${pending.request.source.changes.length}개 변경을 분석했습니다.`;
+                } else if (job.status === 'failed') {
+                    throw new Error(job.error || '글쓰기에 실패했습니다. 다시 시도할 수 있습니다.');
+                } else if (job.status === 'cancelled') {
+                    await this.enqueue(view, async () => { delete view.draft.pending; await this.store.save(view.draft); });
+                    view.partial = '';
+                    view.status = '작업을 취소했습니다.';
+                }
+            } catch (error) {
+                if (!signal.aborted) view.error = error instanceof Error ? error.message : String(error);
+            } finally {
+                view.task = undefined;
+                this.render(view);
+            }
+        })();
+        this.render(view);
     }
 }

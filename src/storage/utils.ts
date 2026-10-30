@@ -12,12 +12,10 @@ export function generateUUID(): string {
 /**
  * Computes a diff between oldText and newText.
  * Returns a SnapshotDiff if the change is a single contiguous block
- * and the changed content length is <= 100 characters.
+ * and the inserted content fits within 5 lines and 500 UTF-8 bytes.
  * Returns null if full snapshot is preferred.
  */
 export function computeDiff(oldText: string, newText: string): SnapshotDiff | null {
-    // Constraint: if total length <= 200, always save full snapshot -> REMOVED per new logic
-
     const n = oldText.length;
     const m = newText.length;
     let start = 0;

@@ -4,13 +4,15 @@
     "description": "Generate problem-solving blog from code evolution",
     "version": "0.0.1",
     "engines": {
-        "vscode": "^1.108.1"
+        "vscode": "^1.108.1",
+        "node": ">=22"
     },
     "categories": [
         "Other"
     ],
     "activationEvents": [
-        "onStartupFinished"
+        "onStartupFinished",
+        "onWebviewPanel:psb.blogPost"
     ],
     "main": "./dist/extension.js",
     "contributes": {
@@ -32,6 +34,27 @@
                     "icon": "media/image/logo_ps_blogself1.png"
                 }
             ]
+        },
+        "commands": [
+            {
+                "command": "psb.connect",
+                "title": "PS-Blogself: 로그인 / 계정"
+            },
+            {
+                "command": "psb.sample",
+                "title": "PS-Blogself: 샘플로 글 만들기"
+            }
+        ],
+        "configuration": {
+            "title": "PS-Blogself",
+            "properties": {
+                "psb.prepareOnReview": {
+                    "type": "boolean",
+                    "default": true,
+                    "scope": "application",
+                    "description": "로그인한 상태에서 수정 이력을 열면 코드 변경을 AI 서비스로 보내 구간과 설명을 미리 준비합니다. 동일 이력은 재사용하며 AI 이용 횟수에 포함됩니다."
+                }
+            }
         }
     },
     "scripts": {
@@ -46,15 +69,24 @@
         "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
         "check-types": "tsc --noEmit",
         "lint": "eslint src",
-        "test": "vscode-test"
+        "test": "vscode-test",
+        "test:unit": "node --test --require ./scripts/register-typescript.cjs src/test/storage.test.ts src/test/writing.test.ts src/test/local-writing.test.ts src/test/sidebar.test.ts",
+        "test:ui": "playwright test",
+        "dev": "pnpm compile && node scripts/dev.cjs",
+        "package:vsix": "vsce package --no-dependencies --allow-missing-repository --skip-license --out dist/ps-blogself.vsix",
+        "test:host": "pnpm compile && node tests/vscode-host/launch.cjs"
     },
     "devDependencies": {
+        "@playwright/test": "1.64.1",
         "@types/diff": "^8.0.0",
+        "@types/markdown-it": "^14.1.2",
         "@types/mocha": "^10.0.10",
         "@types/node": "22.x",
         "@types/vscode": "^1.108.1",
         "@vscode/test-cli": "^0.0.12",
         "@vscode/test-electron": "^2.5.2",
+        "@vscode/vsce": "3.6.2",
+        "cross-spawn": "7.0.6",
         "esbuild": "^0.27.2",
         "eslint": "^9.39.2",
         "npm-run-all": "^4.1.5",
@@ -64,6 +96,8 @@
     "dependencies": {
         "@vscode/codicons": "^0.0.44",
         "diff": "^8.0.3",
+        "markdown-it": "^14.1.0",
         "shiki": "^3.22.0"
-    }
+    },
+    "packageManager": "pnpm@11.5.1"
 }

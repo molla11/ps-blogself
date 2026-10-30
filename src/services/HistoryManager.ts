@@ -4,6 +4,10 @@ import * as fs from 'fs/promises';
 import * as diff from 'diff';
 import { storageManager } from '../storage/StorageManager';
 import { FileHistory } from '../types';
+import { BlogPostManager } from './BlogPostManager';
+import { randomBytes } from 'crypto';
+
+const htmlText = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!));
 
 export class HistoryManager {
     public static readonly viewType = 'psb.history';
@@ -20,14 +24,23 @@ export class HistoryManager {
         );
 
         panel.webview.html = this._getLoadingHtml(panel.webview); // Show loading first
+        let loaded = false, disposed = false;
 
         // Compute actual HTML
         this._getHtmlForWebview(panel.webview, filePath, extensionUri).then((html) => {
-            panel.webview.html = html;
-        });
+            if (!disposed) panel.webview.html = html;
+        }).catch(() => { if (!disposed) panel.webview.html = '<p>기록을 불러오지 못했습니다. 다시 열어 주세요.</p>'; });
 
         panel.webview.onDidReceiveMessage(async (message) => {
             switch (message.type) {
+                case 'ready':
+                    loaded = true;
+                    if (panel.visible) void BlogPostManager.prepareOnReview(filePath);
+                    void panel.webview.postMessage({ type: 'preparation', text: BlogPostManager.preparationStatus(filePath) });
+                    break;
+                case 'write':
+                    await BlogPostManager.openPage(extensionUri, filePath);
+                    break;
                 case 'viewSnapshot':
                     await this._openSnapshot(filePath, message.index);
                     break;
@@ -41,6 +54,11 @@ export class HistoryManager {
                     break;
             }
         });
+        const preparation = BlogPostManager.onDidChange(changed => {
+            if (changed === filePath) void panel.webview.postMessage({ type: 'preparation', text: BlogPostManager.preparationStatus(filePath) });
+        });
+        panel.onDidChangeViewState(() => { if (loaded && panel.visible) void BlogPostManager.prepareOnReview(filePath); });
+        panel.onDidDispose(() => { disposed = true; preparation.dispose(); });
     }
 
     private static async _handleDeleteRequest(
@@ -185,7 +203,7 @@ export class HistoryManager {
             return `<!DOCTYPE html>
             <html lang="en">
             <body>
-                <h1>No history found for ${path.basename(filePath)}</h1>
+                <h1>No history found for ${htmlText(path.basename(filePath))}</h1>
             </body>
             </html>`;
         }
@@ -193,13 +211,15 @@ export class HistoryManager {
         // Generate diffs
         const diffsHtml = await this._generateDiffsHtml(history);
         const cssStyles = await this._loadCss(extensionUri);
+        const nonce = randomBytes(24).toString('base64');
 
         return `<!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>수정 기록: ${history.filePath}</title>
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+            <title>수정 기록: ${htmlText(history.filePath)}</title>
             <style>
                 ${cssStyles}
                 body {
@@ -389,13 +409,17 @@ export class HistoryManager {
             </style>
         </head>
         <body>
-            <h2>파일 수정 기록: ${path.basename(history.filePath)}</h2>
+            <h2>파일 수정 기록: ${htmlText(path.basename(history.filePath))}</h2>
+            <p><span id="preparation-status">글쓰기에서 AI가 풀이를 정리해 드려요.</span> <button id="write-btn" class="view-code-btn">글쓰기 열기</button></p>
             ${diffsHtml}
 
-            <script>
+            <script nonce="${nonce}">
                 const vscode = acquireVsCodeApi();
+                document.getElementById('write-btn').addEventListener('click', () => vscode.postMessage({ type: 'write' }));
+                window.addEventListener('message', ({data}) => { if (data.type === 'preparation') document.getElementById('preparation-status').textContent = data.text; });
+                vscode.postMessage({ type: 'ready' });
                 
-                document.querySelectorAll('.view-code-btn').forEach(btn => {
+                document.querySelectorAll('.view-code-btn[data-index]').forEach(btn => {
                     btn.addEventListener('click', (e) => {
                         const index = parseInt(e.currentTarget.getAttribute('data-index'));
                         vscode.postMessage({

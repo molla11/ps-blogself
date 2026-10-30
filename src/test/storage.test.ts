@@ -19,25 +19,33 @@ suite('Storage Logic Suite', () => {
         assert.strictEqual(reconstructed, newText);
     });
 
-    test('computeDiff - small file (<= 200) should return null (Full Snapshot)', () => {
+    test('computeDiff - small file retains a compact patch', () => {
         const oldText = 'Hello World! This is a test.';
         const newText = 'Hello Universe! This is a test.';
 
         const diff = computeDiff(oldText, newText);
-        assert.strictEqual(diff, null, 'Should ensure full snapshot for short files');
+        assert.ok(diff, 'Small edits use a patch');
+        assert.strictEqual(
+            oldText.slice(0, diff.start) + diff.newText + oldText.slice(diff.end),
+            newText,
+        );
     });
 
-    test('computeDiff - total length <= 200 should return null (Full Snapshot)', () => {
+    test('computeDiff - one-character edit in a short file', () => {
         const oldText = 'A'.repeat(50);
         const newText = 'A'.repeat(49) + 'B'; // Length 50
 
         const diff = computeDiff(oldText, newText);
-        assert.strictEqual(diff, null, 'Should ensure full snapshot for short files');
+        assert.ok(diff, 'Small edits use a patch');
+        assert.strictEqual(
+            oldText.slice(0, diff.start) + diff.newText + oldText.slice(diff.end),
+            newText,
+        );
     });
 
-    test('computeDiff - large change should return null', () => {
+    test('computeDiff - changes above the byte limit use full snapshots', () => {
         const oldText = 'A'.repeat(300);
-        const newText = 'A'.repeat(300) + 'B'.repeat(101); // Change > 100 chars
+        const newText = 'A'.repeat(300) + 'B'.repeat(501); // Change > 500 bytes
 
         const diff = computeDiff(oldText, newText);
         assert.strictEqual(diff, null, 'Should return null for large changes');

@@ -1,4 +1,5 @@
 const esbuild = require('esbuild');
+const fs = require('node:fs/promises');
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
@@ -24,6 +25,11 @@ const esbuildProblemMatcherPlugin = {
 };
 
 async function main() {
+    await fs.mkdir('media/codicons', { recursive: true });
+    for (const file of ['codicon.css', 'codicon.ttf']) {
+        await fs.copyFile(`node_modules/@vscode/codicons/dist/${file}`, `media/codicons/${file}`);
+    }
+    await fs.copyFile('node_modules/@vscode/codicons/LICENSE', 'media/codicons/LICENSE');
     const ctx = await esbuild.context({
         entryPoints: ['src/extension.ts'],
         bundle: true,

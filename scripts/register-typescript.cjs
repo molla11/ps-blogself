@@ -1,0 +1,17 @@
+const fs = require('node:fs');
+const ts = require('typescript');
+require.extensions['.ts'] = (module, filename) => {
+    const output = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
+        compilerOptions: {
+            module: ts.ModuleKind.CommonJS,
+            target: ts.ScriptTarget.ES2022,
+            esModuleInterop: true,
+        },
+        fileName: filename,
+    });
+    module._compile(output.outputText, filename);
+};
+
+// Run the existing storage suite with Node's test runner as well as the VS Code runner.
+global.suite = require('node:test').describe;
+global.test = require('node:test').test;

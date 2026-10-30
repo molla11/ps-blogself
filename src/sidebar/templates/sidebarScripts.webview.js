@@ -7,10 +7,14 @@ const langStatusText = document.getElementById('lang-status-text');
 const langChips = document.querySelectorAll('.lang-chip');
 const logsContainer = document.getElementById('logs-container');
 const fullLogsContainer = document.getElementById('full-logs-container');
-const blogLogsContainer = document.getElementById('blog-logs-container');
 const mainView = document.getElementById('main-view');
 const fullLogsView = document.getElementById('full-logs-view');
-const blogLogSelectionView = document.getElementById('blog-log-selection-view');
+const recentLogsLoader = document.getElementById('recent-logs-loader');
+const recentLogsStatus = document.getElementById('recent-logs-status');
+const retryLogsButton = document.getElementById('retry-logs-btn');
+const logsSearchToggle = document.getElementById('toggle-logs-search-btn');
+const logsSearch = document.getElementById('logs-search');
+const logsSearchInput = document.getElementById('logs-search-input');
 
 const rtf = new Intl.RelativeTimeFormat('ko', { numeric: 'auto' });
 
@@ -27,87 +31,361 @@ function timeAgo(timestamp) {
 
 // Store logs globally to re-render
 let currentLogs = [];
-
-function renderLogs(logs, container = logsContainer, isBlogSelection = false) {
-    const targetContainer = container;
-    const logData = logs || [];
-
-    if (!logData || logData.length === 0) {
-        targetContainer.innerHTML = '<div class="empty-logs">기록된 변경 사항이 없습니다.</div>';
-        return;
-    }
-
-    targetContainer.innerHTML = '';
-    logData.forEach((log) => {
-        const item = document.createElement('div');
-        item.className = 'log-item';
-        // Store full log data on element
-        item.dataset.log = JSON.stringify(log);
-
-        item.onclick = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (isBlogSelection) {
-                vscode.postMessage({ type: 'selectLogForBlog', path: log.filePath });
-            } else {
-                showContextMenu(e.clientX, e.clientY, log);
-            }
-        };
-
-        const info = document.createElement('div');
-        info.className = 'log-info';
-
-        const name = document.createElement('div');
-        name.className = 'log-name';
-        name.innerText = log.fileName;
-
-        const meta = document.createElement('div');
-        meta.className = 'log-meta';
-        meta.setAttribute('data-language', log.language);
-        meta.setAttribute('data-timestamp', log.lastModified);
-        meta.innerText = `${log.language} • ${timeAgo(log.lastModified)}`;
-
-        info.appendChild(name);
-        info.appendChild(meta);
-        item.appendChild(info);
-
-        targetContainer.appendChild(item);
+let recentLogsRevision = -1;
+let hasMoreRecentLogs = false;
+let recentLogsRequestId = 0;
+let pendingRecentLogsRequest = null;
+let recentLogsError = '';
+let recentLogsCheckScheduled = false;
+let recentLogsSearchId = 0;
+let recentLogsQuery = '';
+let recentLogsNeedsSearch = false;
+let recentLogsSearchTimer;
+let recentLogsComposing = false;
+let recentLogsAutoLoad = true;
+let selectedPath = vscode.getState()?.selectedPath || '';
+function selectPath(filePath) {
+    selectedPath = filePath;
+    vscode.setState({ selectedPath });
+    document.querySelectorAll('.log-item').forEach((item) => {
+        const selected = item.dataset.path === selectedPath;
+        item.classList.toggle('selected', selected);
+        item.setAttribute('aria-pressed', String(selected));
     });
 }
 
-// Context Menu Logic
-const contextMenu = document.getElementById('context-menu');
-let selectedLog = null;
+// File selection and the temporary action menu have independent state.
+// All rows share this controller, including rows in the full history view.
+class FileActionsMenu {
+    constructor(element) {
+        this.element = element;
+        this.owner = null;
+        this.point = null;
+        this.items = [...element.querySelectorAll('[role="menuitem"]')];
+    }
 
-function showContextMenu(x, y, log) {
-    selectedLog = log;
-    contextMenu.style.left = `${x}px`;
-    contextMenu.style.top = `${y}px`;
-    contextMenu.classList.add('visible');
+    get isOpen() { return this.owner !== null; }
+
+    open(row, { point = null, focus = false, last = false } = {}) {
+        this.close();
+        this.owner = row;
+        this.point = point;
+        row.setAttribute('aria-expanded', 'true');
+        this.element.setAttribute('aria-label', row.dataset.name + ' 작업');
+        this.element.hidden = false;
+        this.position();
+        if (focus) (last ? this.items.at(-1) : this.items[0]).focus();
+    }
+
+    close(restoreFocus = false) {
+        const row = this.owner;
+        this.owner = null;
+        this.point = null;
+        this.element.hidden = true;
+        row?.setAttribute('aria-expanded', 'false');
+        if (restoreFocus && row?.isConnected) row.focus({ preventScroll: true });
+    }
+
+    position() {
+        if (!this.owner) return;
+        if (!this.owner.isConnected) { this.close(); return; }
+        const row = this.owner.getBoundingClientRect();
+        const list = this.owner.closest('.logs-container').getBoundingClientRect();
+        if (row.bottom <= list.top || row.top >= list.bottom) { this.close(); return; }
+        const menu = this.element.getBoundingClientRect();
+        const width = document.documentElement.clientWidth;
+        const height = document.documentElement.clientHeight;
+        const gap = 6;
+        // Pointer menus follow the click; keyboard menus stay anchored to the row.
+        const left = this.point ? this.point.x + gap : row.left;
+        const below = (this.point?.y ?? row.bottom) + gap;
+        const above = (this.point?.y ?? row.top) - gap - menu.height;
+        // Flip above when needed, keeping the click point clear for a double-click.
+        // Prefer the list area so the menu does not cover the footer controls.
+        const top = below + menu.height <= Math.min(list.bottom, height) ? below
+            : above >= Math.max(list.top, 0) ? above
+            : below + menu.height <= height ? below : above;
+        // Measure the rendered menu instead of assuming a fixed label size.
+        this.element.style.left = Math.max(0, Math.min(left, width - menu.width)) + 'px';
+        this.element.style.top = Math.max(0, Math.min(top, height - menu.height)) + 'px';
+    }
+
+    activate(action) {
+        const filePath = this.owner?.dataset.path;
+        this.close(true);
+        if (filePath) vscode.postMessage({ type: action, path: filePath });
+    }
+
+    navigate(key) {
+        const current = this.items.indexOf(document.activeElement);
+        const index = key === 'Home' ? 0 : key === 'End' ? this.items.length - 1
+            : (current + (key === 'ArrowDown' ? 1 : -1) + this.items.length) % this.items.length;
+        this.items[index].focus();
+    }
 }
 
-function hideContextMenu() {
-    contextMenu.classList.remove('visible');
-    selectedLog = null;
+const fileActions = new FileActionsMenu(document.getElementById('context-menu'));
+
+function renderLogs(logs, container = logsContainer) {
+    const rows = new Map([...container.querySelectorAll('.log-item')].map(row => [row.dataset.path, row]));
+    const focused = container.contains(document.activeElement) ? document.activeElement : null;
+    const top = container.getBoundingClientRect().top;
+    const anchor = container.scrollTop > 0
+        ? [...rows.values()].find(row => row.getBoundingClientRect().bottom > top) : null;
+    const anchorTop = anchor?.getBoundingClientRect().top;
+    const tail = container === logsContainer ? recentLogsLoader : null;
+    const nextRows = (logs || []).map(log => {
+        let row = rows.get(log.filePath);
+        if (!row) {
+            row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'log-item';
+            row.dataset.path = log.filePath;
+            row.setAttribute('aria-haspopup', 'menu');
+            row.setAttribute('aria-controls', 'context-menu');
+            row.setAttribute('aria-expanded', 'false');
+            row.setAttribute('aria-description', '클릭하면 작업을 선택합니다. 더블클릭하면 파일을 엽니다.');
+            const info = document.createElement('span');
+            info.className = 'log-info';
+            const name = document.createElement('span');
+            name.className = 'log-name';
+            const meta = document.createElement('span');
+            meta.className = 'log-meta';
+            info.append(name, meta);
+            row.append(info);
+        }
+        row.dataset.name = log.fileName;
+        row.title = log.filePath;
+        row.classList.toggle('selected', log.filePath === selectedPath);
+        row.setAttribute('aria-pressed', String(log.filePath === selectedPath));
+        row.querySelector('.log-name').textContent = log.fileName;
+        const meta = row.querySelector('.log-meta');
+        meta.dataset.language = log.language;
+        meta.dataset.timestamp = log.lastModified;
+        meta.textContent = `${log.language} • ${timeAgo(log.lastModified)}`;
+        return row;
+    });
+
+    const retained = new Set(nextRows);
+    for (const child of [...container.children]) {
+        if (child !== tail && !retained.has(child)) {
+            if (fileActions.owner === child) fileActions.close();
+            child.remove();
+        }
+    }
+    // Preserve row identity, focus and native double-clicks during background updates.
+    let cursor = container.firstElementChild;
+    for (const row of nextRows) {
+        if (row !== cursor) container.insertBefore(row, cursor);
+        cursor = row.nextElementSibling;
+    }
+    if (!nextRows.length && !(container === logsContainer && recentLogsNeedsSearch)) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-logs';
+        empty.setAttribute('role', 'status');
+        empty.textContent = container === logsContainer && recentLogsQuery ? '검색 결과가 없습니다.' : '기록된 변경 사항이 없습니다.';
+        container.insertBefore(empty, tail);
+    }
+    if (anchor?.isConnected) container.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+    if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+    fileActions.position();
 }
 
-// Global click to close menu
-document.addEventListener('click', () => {
-    hideContextMenu();
+function updateRecentLogsStatus() {
+    const loading = pendingRecentLogsRequest !== null || (recentLogsNeedsSearch && !recentLogsError);
+    logsContainer.setAttribute('aria-busy', String(loading));
+    recentLogsLoader.hidden = !hasMoreRecentLogs && !loading && !recentLogsError;
+    recentLogsStatus.textContent = recentLogsError || (loading ? (recentLogsQuery ? '검색 중…' : '기록을 불러오는 중…') : '');
+    retryLogsButton.hidden = !recentLogsError;
+    document.getElementById('generate-blog-btn').disabled = !currentLogs.length;
+}
+
+function requestMoreRecentLogs() {
+    if (recentLogsNeedsSearch || !hasMoreRecentLogs || pendingRecentLogsRequest !== null) return;
+    recentLogsError = '';
+    pendingRecentLogsRequest = ++recentLogsRequestId;
+    updateRecentLogsStatus();
+    vscode.postMessage({ type: 'loadMoreLogs', requestId: pendingRecentLogsRequest, count: currentLogs.length, searchId: recentLogsSearchId });
+}
+
+function checkRecentLogsEnd() {
+    if (recentLogsCheckScheduled) return;
+    recentLogsCheckScheduled = true;
+    requestAnimationFrame(() => {
+        recentLogsCheckScheduled = false;
+        if (!recentLogsAutoLoad || mainView.classList.contains('hidden') || !logsContainer.clientHeight || recentLogsError) return;
+        // Prefetch about two rows before the end, including after a viewport resize.
+        if (logsContainer.scrollHeight - logsContainer.scrollTop - logsContainer.clientHeight <= 120) requestMoreRecentLogs();
+    });
+}
+
+function applyRecentLogs(message) {
+    if ((message.recentLogsSearchId ?? 0) !== recentLogsSearchId) return;
+    if (typeof message.recentLogsRevision === 'number') {
+        if (message.recentLogsRevision <= recentLogsRevision) return;
+        recentLogsRevision = message.recentLogsRevision;
+    }
+    currentLogs = message.recentLogs;
+    recentLogsNeedsSearch = false;
+    hasMoreRecentLogs = Boolean(message.hasMoreRecentLogs);
+    recentLogsError = '';
+    if (!currentLogs.some(log => log.filePath === selectedPath)) {
+        selectPath(currentLogs.find(log => log.filePath === message.activeFile)?.filePath || currentLogs[0]?.filePath || '');
+    }
+    renderLogs(currentLogs);
+    updateRecentLogsStatus();
+    checkRecentLogsEnd();
+}
+
+function requestLogsSearch() {
+    clearTimeout(recentLogsSearchTimer);
+    if (!recentLogsNeedsSearch || pendingRecentLogsRequest !== null || recentLogsComposing) return;
+    recentLogsError = '';
+    pendingRecentLogsRequest = ++recentLogsRequestId;
+    updateRecentLogsStatus();
+    vscode.postMessage({ type: 'searchLogs', requestId: pendingRecentLogsRequest, searchId: recentLogsSearchId, query: recentLogsQuery });
+}
+
+function updateLogsSearch() {
+    clearTimeout(recentLogsSearchTimer);
+    const query = logsSearchInput.value.trim();
+    if (query !== recentLogsQuery) {
+        recentLogsQuery = query;
+        recentLogsSearchId++;
+        recentLogsRevision = -1;
+        pendingRecentLogsRequest = null;
+        recentLogsNeedsSearch = true;
+        recentLogsError = '';
+        hasMoreRecentLogs = false;
+        currentLogs = [];
+        // Clearing starts at 20 again; expand only after another scroll gesture.
+        recentLogsAutoLoad = Boolean(query);
+        fileActions.close();
+        logsContainer.scrollTop = 0;
+        renderLogs([]);
+        updateRecentLogsStatus();
+    }
+    if (!recentLogsNeedsSearch || recentLogsComposing) return;
+    if (!query) requestLogsSearch();
+    else recentLogsSearchTimer = setTimeout(requestLogsSearch, 150);
+}
+
+function setLogsSearchOpen(open) {
+    logsSearch.hidden = !open;
+    logsSearchToggle.setAttribute('aria-expanded', String(open));
+    if (open) logsSearchInput.focus();
+    else {
+        recentLogsComposing = false;
+        logsSearchInput.value = '';
+        updateLogsSearch();
+        logsSearchToggle.focus();
+    }
+}
+
+logsSearchToggle.addEventListener('click', () => setLogsSearchOpen(logsSearch.hidden));
+logsSearchInput.addEventListener('input', updateLogsSearch);
+logsSearchInput.addEventListener('compositionstart', () => {
+    recentLogsComposing = true;
+    clearTimeout(recentLogsSearchTimer);
+});
+logsSearchInput.addEventListener('compositionend', () => {
+    recentLogsComposing = false;
+    updateLogsSearch();
+});
+logsSearchInput.addEventListener('keydown', event => {
+    if (event.isComposing) return;
+    if (event.key === 'Escape') { event.preventDefault(); setLogsSearchOpen(false); }
+    if (event.key === 'Enter') { event.preventDefault(); requestLogsSearch(); }
 });
 
-// Context menu actions
-document.getElementById('ctx-open-file').addEventListener('click', () => {
-    if (selectedLog) {
-        vscode.postMessage({ type: 'openFile', path: selectedLog.filePath });
+logsContainer.addEventListener('scroll', () => {
+    if (logsContainer.scrollTop > 0) recentLogsAutoLoad = true;
+    checkRecentLogsEnd();
+});
+logsContainer.addEventListener('wheel', event => {
+    if (event.deltaY > 0) { recentLogsAutoLoad = true; checkRecentLogsEnd(); }
+}, { passive: true });
+logsContainer.addEventListener('keydown', event => {
+    if (['PageDown', 'End', 'ArrowDown', ' '].includes(event.key)) { recentLogsAutoLoad = true; checkRecentLogsEnd(); }
+});
+new ResizeObserver(checkRecentLogsEnd).observe(logsContainer);
+retryLogsButton.addEventListener('click', () => recentLogsNeedsSearch ? requestLogsSearch() : requestMoreRecentLogs());
+
+// One click transition handles opening, dismissal and actions. A dismissing click
+// still selects its row or activates its control, but does not reopen the menu.
+document.addEventListener('click', event => {
+    if (!(event.target instanceof Element)) return;
+    if (fileActions.element.contains(event.target)) {
+        const action = event.target.closest('[data-action]');
+        if (action) fileActions.activate(action.dataset.action);
+        return;
+    }
+    const wasOpen = fileActions.isOpen;
+    fileActions.close();
+    const row = event.target.closest('.log-item');
+    if (!row) return;
+    selectPath(row.dataset.path);
+    // Native click counts respect the user's double-click settings; no delay timer.
+    if (!wasOpen && event.detail < 2) {
+        fileActions.open(row, {
+            point: event.detail > 0 ? { x: event.clientX, y: event.clientY } : null,
+            focus: event.detail === 0,
+        });
     }
 });
 
-document.getElementById('ctx-view-history').addEventListener('click', () => {
-    if (selectedLog) {
-        vscode.postMessage({ type: 'viewHistory', path: selectedLog.filePath });
+document.addEventListener('dblclick', event => {
+    const row = event.target instanceof Element && event.target.closest('.log-item');
+    if (!row) return;
+    fileActions.close();
+    selectPath(row.dataset.path);
+    vscode.postMessage({ type: 'openFile', path: row.dataset.path });
+});
+
+document.addEventListener('contextmenu', event => {
+    const row = event.target instanceof Element && event.target.closest('.log-item');
+    if (!row) { fileActions.close(); return; }
+    event.preventDefault();
+    selectPath(row.dataset.path);
+    fileActions.open(row, { point: { x: event.clientX, y: event.clientY } });
+});
+
+document.addEventListener('keydown', event => {
+    if (fileActions.isOpen && event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        fileActions.close(true);
+        return;
+    }
+    if (fileActions.isOpen && event.key === 'Tab') {
+        fileActions.close(fileActions.element.contains(event.target));
+        return; // Keep native Tab / Shift+Tab navigation.
+    }
+    if (fileActions.element.contains(event.target) && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault();
+        fileActions.navigate(event.key);
+        return;
+    }
+    const row = event.target instanceof Element && event.target.closest('.log-item');
+    if (row && (['ArrowDown', 'ArrowUp', 'ContextMenu'].includes(event.key) || (event.shiftKey && event.key === 'F10'))) {
+        event.preventDefault();
+        selectPath(row.dataset.path);
+        fileActions.open(row, { focus: true, last: event.key === 'ArrowUp' });
     }
 });
+
+document.addEventListener('scroll', event => {
+    if (!fileActions.element.contains(event.target)) fileActions.close();
+}, true);
+window.addEventListener('resize', () => fileActions.close());
+window.addEventListener('blur', () => fileActions.close());
+document.addEventListener('visibilitychange', () => { if (document.hidden) fileActions.close(); });
+
+function showView(view) {
+    fileActions.close();
+    for (const candidate of [mainView, fullLogsView]) candidate.classList.toggle('hidden', candidate !== view);
+    if (view === mainView) checkRecentLogsEnd();
+}
 
 function updateRelativeTimes() {
     const metas = document.querySelectorAll('.log-meta');
@@ -129,6 +407,7 @@ window.addEventListener('message', (event) => {
     const message = event.data;
     switch (message.type) {
         case 'updateState':
+            document.getElementById('connect-server-btn').textContent = message.accountLabel || '로그인';
             rootDisplay.textContent = message.root || '전체 워크스페이스';
             recordingToggle.checked = message.isRecording;
             recordingStatusText.textContent = message.isRecording ? '실시간 기록 중' : '중지됨';
@@ -138,6 +417,7 @@ window.addEventListener('message', (event) => {
 
             langChips.forEach((chip) => {
                 const lang = chip.getAttribute('data-lang');
+                chip.setAttribute('aria-pressed', String(message.languages.includes(lang)));
                 if (message.languages.includes(lang)) {
                     chip.classList.add('active');
                 } else {
@@ -154,29 +434,29 @@ window.addEventListener('message', (event) => {
             langStatusText.textContent = enabledLangs ? `(현재: ${enabledLangs})` : '(선택 없음)';
 
             if (message.recentLogs) {
-                renderLogs(message.recentLogs);
+                applyRecentLogs(message);
             }
 
             if (message.totalLogSize) {
                 const manageBtnSpan = document.querySelector('#manage-logs-btn span:last-child');
                 if (manageBtnSpan) {
-                    manageBtnSpan.textContent = `전체 로그 관리 (${message.totalLogSize})`;
+                    manageBtnSpan.textContent = `전체 기록 (${message.totalLogSize})`;
                 }
             }
             break;
-        case 'showFullLogs':
-            mainView.classList.add('hidden');
-            fullLogsView.classList.remove('hidden');
-            blogLogSelectionView.classList.add('hidden');
-            // Render into fullLogsContainer
-            renderLogs(message.logs, fullLogsContainer);
+        case 'recentLogsPage': {
+            if ((message.recentLogsSearchId ?? 0) !== recentLogsSearchId) break;
+            const pending = message.requestId === pendingRecentLogsRequest;
+            if (pending) pendingRecentLogsRequest = null;
+            if (message.recentLogs) applyRecentLogs(message);
+            if (pending && message.error && (hasMoreRecentLogs || recentLogsNeedsSearch)) recentLogsError = message.error;
+            updateRecentLogsStatus();
+            checkRecentLogsEnd();
             break;
-        case 'showBlogSelectionLogs':
-            mainView.classList.add('hidden');
-            fullLogsView.classList.add('hidden');
-            blogLogSelectionView.classList.remove('hidden');
-            // Render into blogLogsContainer with clickable action
-            renderLogs(message.logs, blogLogsContainer, true);
+        }
+        case 'showFullLogs':
+            showView(fullLogsView);
+            renderLogs(message.logs, fullLogsContainer);
             break;
     }
 });
@@ -186,6 +466,14 @@ recordingToggle.addEventListener('change', () => {
 });
 
 langChips.forEach((chip) => {
+    chip.tabIndex = 0;
+    chip.setAttribute('role', 'button');
+    chip.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            chip.click();
+        }
+    });
     chip.addEventListener('click', () => {
         vscode.postMessage({
             type: 'toggleLanguage',
@@ -207,24 +495,19 @@ document.getElementById('clear-folder-btn').addEventListener('click', () => {
 });
 
 document.getElementById('generate-blog-btn').addEventListener('click', () => {
-    vscode.postMessage({ type: 'generateBlog' });
+    vscode.postMessage({ type: 'generateBlog', path: selectedPath || currentLogs[0]?.filePath });
 });
 
 document.getElementById('manage-logs-btn').addEventListener('click', () => {
     vscode.postMessage({ type: 'manageLogs' });
 });
 
-document.getElementById('full-logs-back-btn').addEventListener('click', () => {
-    fullLogsView.classList.add('hidden');
-    mainView.classList.remove('hidden');
-    // Optionally refresh main state?
-    // vscode.postMessage({ type: 'getInitialData' });
-});
-
-document.getElementById('blog-logs-back-btn').addEventListener('click', () => {
-    blogLogSelectionView.classList.add('hidden');
-    mainView.classList.remove('hidden');
-});
+document.getElementById('full-logs-back-btn').addEventListener('click', () => showView(mainView));
 
 // 초기 데이터 요청
 vscode.postMessage({ type: 'getInitialData' });
+
+document
+    .getElementById('connect-server-btn')
+    .addEventListener('click', () => vscode.postMessage({ type: 'connectServer' }));
+document.getElementById('sample-btn').addEventListener('click', () => vscode.postMessage({ type: 'sample' }));

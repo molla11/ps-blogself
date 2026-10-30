@@ -3,6 +3,7 @@ import { configManager } from './config';
 import { storageManager } from './storage/StorageManager';
 import { fileWatcher } from './storage/FileWatcher';
 import { SidebarProvider } from './sidebar/SidebarProvider';
+import { BlogPostManager } from './services/BlogPostManager';
 import { Logger } from './services/logger';
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -12,6 +13,7 @@ export async function activate(context: vscode.ExtensionContext) {
     configManager.init(context);
     storageManager.init(context);
     fileWatcher.init(context);
+    BlogPostManager.init(context);
 
     const sidebarProvider = new SidebarProvider(
         context.extensionUri,
@@ -92,4 +94,7 @@ async function toggleLanguage(sidebarProvider: SidebarProvider, lang: string) {
     sidebarProvider.updateState();
 }
 
-export function deactivate() {}
+export async function deactivate() {
+    await storageManager.flush();
+    await BlogPostManager.flush();
+}

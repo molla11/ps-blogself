@@ -8,6 +8,7 @@ import { Logger } from '../services/logger';
 export class StorageManager {
     private static _instance: StorageManager;
     private _globalStorageUri?: vscode.Uri;
+    private _saveQueue: Promise<void> = Promise.resolve();
     private _historyDir?: vscode.Uri;
 
     private _indexFileUri?: vscode.Uri;
@@ -46,7 +47,7 @@ export class StorageManager {
         history: FileHistory,
         targetSnapshotIndex: number,
     ): string | null {
-        if (targetSnapshotIndex < 0 || targetSnapshotIndex >= history.snapshots.length) {
+        if (!Number.isInteger(targetSnapshotIndex) || targetSnapshotIndex < 0 || targetSnapshotIndex >= history.snapshots.length) {
             return null;
         }
 
@@ -87,7 +88,44 @@ export class StorageManager {
         return this.reconstructFileContent(history, history.snapshots.length - 1);
     }
 
-    public async saveSnapshot(document: vscode.TextDocument): Promise<void> {
+    public saveSnapshot(document: vscode.TextDocument): Promise<void> {
+        const content = document.getText();
+        const write = this._saveQueue.then(() => this._saveSnapshot(document, content));
+        this._saveQueue = write.catch(() => {});
+        return write;
+    }
+
+    public async flush(): Promise<void> {
+        await this._saveQueue;
+    }
+
+    public async installSampleHistory(): Promise<string> {
+        if (!this._globalStorageUri) throw new Error('저장 공간을 준비하지 못했습니다.');
+        const filePath = path.join(this._globalStorageUri.fsPath, 'samples', '샘플-중복제거.py');
+        const write = this._saveQueue.then(async () => {
+            await this._ensureStorageInit();
+            const hash = getHash(filePath);
+            const historyPath = path.join(this._historyDir!.fsPath, hash + '.json');
+            try { await fs.access(historyPath); return; } catch { /* First use only. */ }
+            const versions = [
+                'def unique_numbers(numbers):\n    result = []\n    for number in numbers:\n        if number not in result:\n            result.append(number)\n    return result\n',
+                'def unique_numbers(numbers):\n    return list(set(numbers))\n',
+                'def unique_numbers(numbers):\n    seen = set()\n    result = []\n    for number in numbers:\n        if number not in seen:\n            seen.add(number)\n            result.append(number)\n    return result\n',
+                'def unique_numbers(numbers):\n    return list(dict.fromkeys(numbers))\n\nassert unique_numbers([3, 1, 3, 2, 1]) == [3, 1, 2]\nassert unique_numbers([]) == []\n',
+            ];
+            const now = Date.now();
+            const history: FileHistory = { id: generateUUID(), filePath, language: 'python', startedAt: now - 180000, lastModified: now, requestLogs: [], snapshots: versions.map((content, i) => ({ content, timestamp: now - (3 - i) * 60000, hash: getHash(content) })) };
+            await fs.mkdir(path.dirname(filePath), { recursive: true });
+            await fs.writeFile(filePath, versions[3]);
+            await fs.writeFile(historyPath, JSON.stringify(history));
+            await this._updateSessionIndex({ uri: vscode.Uri.file(filePath), languageId: 'python' } as vscode.TextDocument, now, hash);
+        });
+        this._saveQueue = write.catch(() => {});
+        await write;
+        return filePath;
+    }
+
+    private async _saveSnapshot(document: vscode.TextDocument, content: string): Promise<void> {
         if (!this._historyDir) {
             console.warn('StorageManager not initialized');
             return;
@@ -97,7 +135,6 @@ export class StorageManager {
         const fileHash = getHash(absolutePath);
         const historyFileUri = vscode.Uri.joinPath(this._historyDir, `${fileHash}.json`);
 
-        const content = document.getText();
         const contentHash = getHash(content);
         const timestamp = Date.now();
 
@@ -210,6 +247,7 @@ export class StorageManager {
     }
 
     public async getRecentFiles(): Promise<SessionIndexItem[]> {
+        await this._saveQueue;
         if (!this._indexFileUri) {
             return [];
         }
@@ -330,6 +368,7 @@ export class StorageManager {
     }
 
     public async getFileHistory(absolutePath: string): Promise<FileHistory | null> {
+        await this._saveQueue;
         if (!this._historyDir) {
             return null;
         }
@@ -344,7 +383,13 @@ export class StorageManager {
             return null;
         }
     }
-    public async deleteSnapshot(filePath: string, index: number): Promise<void> {
+    public deleteSnapshot(filePath: string, index: number): Promise<void> {
+        const write = this._saveQueue.then(() => this._deleteSnapshot(filePath, index));
+        this._saveQueue = write.catch(() => {});
+        return write;
+    }
+
+    private async _deleteSnapshot(filePath: string, index: number): Promise<void> {
         if (!this._historyDir) {
             return;
         }

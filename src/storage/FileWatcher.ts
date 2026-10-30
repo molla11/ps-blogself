@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { configManager } from '../config';
 import { storageManager } from './StorageManager';
 
@@ -25,6 +26,12 @@ export class FileWatcher {
         );
         context.subscriptions.push(this._disposable);
         context.subscriptions.push(this._changeDisposable);
+        context.subscriptions.push({
+            dispose: () => {
+                for (const timer of this._debounceTimers.values()) clearTimeout(timer);
+                this._debounceTimers.clear();
+            },
+        });
     }
 
     private _onDidChangeDocument(event: vscode.TextDocumentChangeEvent) {
@@ -44,7 +51,7 @@ export class FileWatcher {
 
         const timer = setTimeout(async () => {
             this._debounceTimers.delete(key);
-            await storageManager.saveSnapshot(document);
+            if (this._isValidDocument(document)) await storageManager.saveSnapshot(document);
         }, 10000); // 10 seconds debounce
 
         this._debounceTimers.set(key, timer);
@@ -73,7 +80,15 @@ export class FileWatcher {
 
         // 2. Check if file is in the tracked root folder
         const rootFolder = configManager.getRootFolder();
-        if (rootFolder && !document.fileName.startsWith(rootFolder)) {
+        const relative = rootFolder ? path.relative(rootFolder, document.uri.fsPath) : '';
+        if (
+            document.uri.scheme !== 'file' ||
+            (rootFolder
+                ? relative === '..' ||
+                  relative.startsWith('..' + path.sep) ||
+                  path.isAbsolute(relative)
+                : !vscode.workspace.getWorkspaceFolder(document.uri))
+        ) {
             return false;
         }
 

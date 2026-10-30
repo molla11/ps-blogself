@@ -1,157 +1,132 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Blog Gen: {{fileName}}</title>
-        <link href="{{codiconsUri}}" rel="stylesheet" />
-        <!-- {{css}} -->
-        <style>
-            html {
-                height: 100%;
-                margin: 0;
-                padding: 0;
-                overflow: hidden; /* Hide outer scrollbar */
-            }
-            body {
-                height: 100%;
-                margin: 0;
-                padding: 20px;
-                box-sizing: border-box;
-                overflow-y: scroll; /* Force inner scrollbar */
-
-                font-family: var(--vscode-font-family);
-                color: var(--vscode-editor-foreground);
-                background-color: var(--vscode-editor-background);
-            }
-            h2 {
-                border-bottom: 1px solid var(--vscode-widget-border);
-                padding-bottom: 10px;
-            }
-            .controls {
-                margin-bottom: 5px;
-                border: 1px solid var(--vscode-widget-border);
-                padding: 10px;
-                border-radius: 4px;
-            }
-            textarea {
-                width: 100%;
-                height: 80px;
-                background: var(--vscode-input-background);
-                color: var(--vscode-input-foreground);
-                border: 1px solid var(--vscode-input-border);
-            }
-            button {
-                background: var(--vscode-button-background);
-                color: var(--vscode-button-foreground);
-                border: none;
-                padding: 6px 12px;
-                cursor: pointer;
-            }
-            button:hover {
-                background: var(--vscode-button-hoverBackground);
-            }
-            .inline-btn {
-                background: none;
-                color: var(--vscode-textLink-foreground);
-                padding: 0;
-                margin: 0;
-            }
-            .inline-btn:hover {
-                text-decoration: underline;
-                background: none;
-            }
-            .action-bar {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-top: 20px;
-                margin-bottom: 10px;
-            }
-            #range-info {
-                font-size: 1.2em;
-                font-weight: bold;
-                color: var(--vscode-editor-foreground);
-            }
-            #instructions-container {
-                display: none;
-                margin-top: 10px;
-            }
-            #instructions-container.visible {
-                display: block;
-            }
-            .comment-area {
-                display: none;
-                margin-top: 5px;
-            }
-            .comment-area.visible {
-                display: block;
-            }
-        </style>
+        <meta http-equiv="Content-Security-Policy" content="{{csp}}" />
+        <title>글 만들기</title>
+        {{styles}}
     </head>
     <body>
-        <h2>블로그 생성하기 ({{fileName}})</h2>
-        <div class="controls">
-            <!-- Header with Label and Credits -->
-            <div
-                style="
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 5px;
-                "
-            >
-                <label style="font-weight: bold; font-size: 1.2em">Diff 선택:</label>
+        <header class="topbar">
+            <div>
+                <span class="eyebrow" id="file-name">풀이 기록</span>
+                <h1>글 만들기</h1>
             </div>
-            <div class="timeline-container" id="timeline">
-                <div class="timeline-track"></div>
-                <div class="timeline-range" id="timeline-range"></div>
-                <!-- Dots will be injected here -->
+            <div class="actions">
+                <span id="save-status" role="status"></span
+                ><button id="generate-btn" disabled>이대로 글쓰기</button>
             </div>
-            <!-- Range info moved to action bar -->
-        </div>
-        <!-- Separate Credit div removed -->
-
-        <div class="action-bar">
-            <span id="range-info">타임라인에서 구간을 선택하세요</span>
-            <div style="display: flex; gap: 10px; align-items: center">
-                <span
-                    class="badge"
-                    style="
-                        background: var(--vscode-badge-background);
-                        color: var(--vscode-badge-foreground);
-                        padding: 2px 6px;
-                        border-radius: 4px;
-                        font-size: 0.9em;
-                    "
-                    >Credits: 10</span
-                >
-                <button id="generate-btn">블로그 생성하기 (Mock)</button>
+        </header>
+        <main>
+            <div class="notice" id="progress-box" role="status">
+                <span id="status-text">기록을 불러오고 있어요…</span
+                ><button class="quiet" id="cancel-btn" hidden>취소</button
+                ><progress id="progress" max="100" hidden></progress>
             </div>
-        </div>
-
-        <div style="margin-top: 10px; margin-bottom: 20px">
-            <button id="toggle-instructions-btn" class="inline-btn">
-                + 설명 추가하기(Optional, 지문/풀이 설명, 문제 제한 등)
-            </button>
-            <div id="instructions-container">
-                <label for="instructions" style="display: block; margin-bottom: 5px"
-                    >설명 추가하기:</label
-                >
-                <textarea
-                    id="instructions"
-                    rows="3"
-                    placeholder="Click here to add extra context or specific requests..."
-                >
-{{instructions}}</textarea
-                >
+            <div class="notice error" id="error-box" role="alert" hidden>
+                <span id="error-text"></span>
+                <div class="actions">
+                    <button id="retry-btn">다시 시도</button
+                    ><button class="secondary" id="connect-btn">로그인 / AI 설정</button
+                    ><button class="quiet" id="discard-pending-btn" hidden>새 요청 준비</button>
+                </div>
             </div>
-        </div>
-
-        <div id="diff-list">{{diffsHtml}}</div>
-
-        <!-- Buttons moved up -->
-
-        {{js}}
+            <div class="notice" id="candidate-box" hidden>
+                <span>새 결과가 준비됐어요. 적용하면 현재 내용이 바뀝니다.</span>
+                <div class="actions">
+                    <button id="apply-candidate-btn">새 결과 적용</button
+                    ><button class="quiet" id="discard-candidate-btn">현재 내용 유지</button>
+                </div>
+            </div>
+            <nav id="view-tabs" hidden aria-label="글 작성 화면">
+                <button class="tab active" id="plan-tab">풀이 흐름</button
+                ><button class="tab" id="article-tab">완성된 글</button>
+            </nav>
+            <section id="stream-box" hidden>
+                <h2>작성 중인 글</h2>
+                <article id="stream-preview" class="article-preview" aria-label="작성 중인 본문"></article>
+            </section>
+            <section id="plan-view">
+                <div id="preparing">
+                    <div class="skeleton"></div>
+                    <div class="skeleton short"></div>
+                    <p>변경 구간과 풀이 설명을 먼저 채워드릴게요.</p>
+                    <button id="prepare-empty-btn" class="secondary" hidden>풀이 준비</button>
+                </div>
+                <div id="plan-content" hidden>
+                    <div class="section-heading">
+                        <h2>글에 담을 흐름</h2>
+                        <button class="quiet" id="prepare-btn">다시 분석</button>
+                    </div>
+                    <details class="range-box" id="range-details">
+                        <summary>
+                            <span id="range-info"></span><span class="muted">범위 조정</span>
+                        </summary>
+                        <div class="timeline" id="timeline" aria-hidden="true">
+                            <div id="timeline-range"></div>
+                        </div>
+                        <div class="range-controls">
+                            <label
+                                >시작 <input id="range-start" type="range" min="0" max="0" /><output
+                                    id="start-label"
+                                ></output></label
+                            ><label
+                                >끝 <input id="range-end" type="range" min="0" max="0" /><output
+                                    id="end-label"
+                                ></output
+                            ></label>
+                        </div>
+                        <div id="range-changes" class="range-changes"></div>
+                    </details>
+                    <label class="field"
+                        >글 제목<input id="plan-title" maxlength="300" placeholder="글 제목"
+                    /></label>
+                    <label class="field"
+                        >전체 설명<textarea
+                            id="summary"
+                            rows="3"
+                            maxlength="12000"
+                            placeholder="풀이의 전체 흐름"
+                        ></textarea>
+                    </label>
+                    <div id="steps"></div>
+                </div>
+                <label class="field extra"
+                    >추가로 담고 싶은 내용 <span class="muted">선택 사항</span
+                    ><textarea
+                        id="instructions"
+                        rows="2"
+                        maxlength="12000"
+                        placeholder="문제 설명이나 원하는 글의 분위기를 적어도 좋아요."
+                    ></textarea>
+                </label>
+            </section>
+            <section id="article-view" hidden>
+                <div class="section-heading">
+                    <h2>완성된 글</h2>
+                    <div class="actions">
+                        <button class="secondary" id="preview-btn">미리보기</button
+                        ><button class="secondary" id="copy-btn">복사</button
+                        ><button id="export-btn">Markdown 저장</button>
+                    </div>
+                </div>
+                <label class="field">글 제목<input id="article-title" maxlength="300" /></label>
+                <label class="field" id="body-field"
+                    >본문<textarea
+                        id="article-body"
+                        rows="18"
+                        maxlength="150000"
+                        spellcheck="false"
+                    ></textarea>
+                </label>
+                <article id="article-preview" class="article-preview" hidden></article>
+                <details id="versions-box" hidden>
+                    <summary>이전 글</summary>
+                    <div id="versions"></div>
+                </details>
+            </section>
+        </main>
+        {{script}}
     </body>
 </html>

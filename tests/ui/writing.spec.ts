@@ -1,0 +1,225 @@
+import { test, expect, Page } from '@playwright/test';
+import { openWebview as open } from './webview';
+const plan = {
+    title: '중복 탐색을 줄인 풀이',
+    summary: '반복되는 탐색을 집합 조회로 바꿨다.',
+    start: 0,
+    end: 1,
+    steps: [
+        {
+            title: '조회 방식 변경',
+            body: '중복 계산을 줄이기 위해 집합을 사용했다.',
+            start: 0,
+            end: 1,
+        },
+    ],
+};
+const base = {
+    type: 'model',
+    filePath: '/work/solve.cpp',
+    fileName: 'solve.cpp',
+    plan,
+    instructions: '',
+    title: '',
+    markdown: '',
+    revision: 1,
+    count: 2,
+    times: [1, 2],
+    pending: false,
+    running: false,
+    progress: 100,
+    status: '준비됐어요.',
+    error: '',
+    candidate: false,
+    versions: [],
+};
+async function model(page: Page, patch: any = {}) {
+    await page.evaluate((m) => window.dispatchEvent(new MessageEvent('message', { data: m })), {
+        ...base,
+        ...patch,
+    });
+}
+async function messages(page: Page) {
+    return page.evaluate(() => (window as any).__messages);
+}
+
+test('the compact sidebar selects a file and starts writing without another navigation screen', async ({
+    page,
+}) => {
+    await page.setViewportSize({ width: 300, height: 650 });
+    await open(page, true);
+    await page.evaluate(() =>
+        window.dispatchEvent(
+            new MessageEvent('message', {
+                data: {
+                    type: 'updateState',
+                    root: '/work',
+                    isRecording: true,
+                    languages: ['cpp', 'py'],
+                    totalLogSize: '10 KB',
+                    recentLogs: Array.from({ length: 20 }, (_, i) => ({
+                        fileName: `solve${i}.cpp`,
+                        filePath: `/work/solve${i}.cpp`,
+                        language: 'cpp',
+                        lastModified: Date.now(),
+                    })),
+                },
+            }),
+        ),
+    );
+    await expect(page.getByRole('button', { name: '글 만들기', exact: true })).toBeInViewport();
+    await page.getByText('solve1.cpp', { exact: true }).click();
+    await page.getByRole('button', { name: '글 만들기', exact: true }).click();
+    expect((await messages(page)).at(-1)).toMatchObject({
+        type: 'generateBlog',
+        path: '/work/solve1.cpp',
+    });
+    await expect(page.locator('#main-view')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+    );
+    await page.screenshot({ path: 'test-results/sidebar.png' });
+});
+
+test('AI-filled text and range can generate a complete draft without typing', async ({ page }) => {
+    await open(page);
+    await model(page);
+    await expect(page.getByLabel('전체 설명', { exact: true })).toHaveValue(plan.summary);
+    await expect(page.getByLabel('1단계 설명')).toHaveValue(plan.steps[0].body);
+    await expect(page.locator('#range-info')).toContainText('#1–2');
+    await page.getByRole('button', { name: '이대로 글쓰기' }).click();
+    const request = (await messages(page)).find((m: any) => m.type === 'generate');
+    expect(request.fields.plan).toEqual(plan);
+    await model(page, { title: '완성 제목', markdown: '## 접근\n\n완성한 글입니다.' });
+    await expect(page.locator('#article-view')).toBeVisible();
+    await expect(page.locator('#article-title')).toHaveValue('완성 제목');
+    expect((await messages(page)).some((m: any) => m.type === 'preview')).toBe(true);
+    await page.evaluate(() =>
+        window.dispatchEvent(
+            new MessageEvent('message', {
+                data: { type: 'preview', html: '<h2>접근</h2><p>완성한 글입니다.</p>' },
+            }),
+        ),
+    );
+    await expect(page.locator('#article-preview')).toContainText('완성한 글입니다.');
+    await page.getByRole('button', { name: '본문 수정' }).click();
+    await expect(page.locator('#article-body')).toBeVisible();
+    await page.screenshot({ path: 'test-results/writer.png' });
+});
+
+test('late saves and progress updates preserve input typed while a request is running', async ({
+    page,
+}) => {
+    await open(page);
+    await model(page);
+    await page.locator('#summary').fill('첫 수정');
+    await expect
+        .poll(async () => (await messages(page)).filter((m: any) => m.type === 'save').length)
+        .toBeGreaterThan(0);
+    const first = (await messages(page)).find((m: any) => m.type === 'save');
+    await page.locator('#summary').fill('응답을 기다리는 중 더 고친 문장');
+    await page.evaluate(
+        (id) => window.dispatchEvent(new MessageEvent('message', { data: { type: 'ack', id } })),
+        first.id,
+    );
+    await model(page, { pending: true, running: true, progress: 30 });
+    await expect(page.locator('#summary')).toHaveValue('응답을 기다리는 중 더 고친 문장');
+    expect((await page.evaluate(() => (window as any).__saved)).fields.plan.summary).toBe(
+        '응답을 기다리는 중 더 고친 문장',
+    );
+});
+
+test('single-change ranges remain valid and code containing HTML is rendered as text', async ({
+    page,
+}) => {
+    await open(page);
+    await model(page, {
+        count: 1,
+        times: [1],
+        plan: { ...plan, end: 0, steps: [{ ...plan.steps[0], end: 0 }] },
+    });
+    await page.locator('#range-details > summary').click();
+    expect(
+        await page.locator('#timeline-range').evaluate((e) => e.getAttribute('style')),
+    ).not.toContain('NaN');
+    await page.locator('#steps summary').first().click();
+    await expect
+        .poll(async () => (await messages(page)).some((m: any) => m.type === 'diff'))
+        .toBe(true);
+    await page.evaluate(() =>
+        window.dispatchEvent(
+            new MessageEvent('message', {
+                data: { type: 'diff', index: 0, text: '+<script>window.attacked=true</script>' },
+            }),
+        ),
+    );
+    await expect(page.locator('#steps pre')).toContainText('<script>');
+    expect(await page.evaluate(() => (window as any).attacked)).toBeUndefined();
+});
+
+test('clicking generate flushes the latest explanation even before autosave', async ({ page }) => {
+    await open(page);
+    await model(page);
+    await page.locator('#summary').fill('최종 설명');
+    await page.getByRole('button', { name: '이대로 글쓰기' }).click();
+    expect((await messages(page)).find((m: any) => m.type === 'generate').fields.plan.summary).toBe(
+        '최종 설명',
+    );
+});
+
+test('unsaved input is restored on reopen and candidates require an explicit apply', async ({
+    page,
+}) => {
+    await open(page, false, {
+        filePath: base.filePath,
+        fields: { instructions: '닫기 전에 입력한 내용' },
+    });
+    await model(page, { candidate: true });
+    await expect(page.locator('#instructions')).toHaveValue('닫기 전에 입력한 내용');
+    await expect(page.locator('#summary')).toHaveValue(plan.summary);
+    expect((await messages(page)).some((m: any) => m.type === 'applyCandidate')).toBe(false);
+    await page.getByRole('button', { name: '새 결과 적용' }).click();
+    expect((await messages(page)).some((m: any) => m.type === 'applyCandidate')).toBe(true);
+});
+
+test('narrowing and widening a range preserves edited step explanations', async ({ page }) => {
+    await open(page);
+    await model(page, {
+        plan: {
+            ...plan,
+            steps: [
+                { ...plan.steps[0], end: 0 },
+                { title: '두 번째', body: '둘째 설명', start: 1, end: 1 },
+            ],
+        },
+    });
+    await page.getByLabel('1단계 설명').fill('보존할 수정 문장');
+    await page.locator('#range-details > summary').click();
+    await page.locator('#range-start').fill('1');
+    await expect(page.getByLabel('1단계 설명')).toBeHidden();
+    await page.locator('#range-start').fill('0');
+    await expect(page.getByLabel('1단계 설명')).toHaveValue('보존할 수정 문장');
+});
+
+test('streaming shows a readable preview without replacing an edited article', async ({ page }) => {
+    await open(page);
+    await model(page, { title: '이전 제목', markdown: '사용자가 쓴 본문' });
+    await page.locator('#article-body').fill('작성 중에도 보존할 본문');
+    await model(page, { pending: true, running: true, title: '이전 제목', markdown: '사용자가 쓴 본문', streamHtml: '<h2>새로 생성 중</h2><p>본문이 먼저 보입니다.</p>' });
+    await expect(page.locator('#stream-preview')).toContainText('본문이 먼저 보입니다.');
+    await expect(page.locator('#article-body')).toHaveValue('작성 중에도 보존할 본문');
+    await model(page, { streamHtml: '', candidate: true });
+    await expect(page.locator('#stream-box')).toBeHidden();
+    await expect(page.locator('#candidate-box')).toBeVisible();
+    await expect(page.locator('#article-body')).toHaveValue('작성 중에도 보존할 본문');
+});
+
+test('cancelled initial preparation can restart without closing the writer', async ({ page }) => {
+    await open(page);
+    await model(page, { plan: undefined, pending: true, running: true });
+    await page.locator('#cancel-btn').click();
+    expect((await messages(page)).at(-1).type).toBe('cancel');
+    await model(page, { plan: undefined, pending: false, running: false, status: '작업을 취소했습니다.' });
+    await page.getByRole('button', { name: '풀이 준비', exact: true }).click();
+    expect((await messages(page)).at(-1).type).toBe('prepare');
+});

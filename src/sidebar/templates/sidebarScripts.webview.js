@@ -1,6 +1,12 @@
 const vscode = acquireVsCodeApi();
 
 const rootDisplay = document.getElementById('root-folder-display');
+const rootButton = document.getElementById('root-folder-btn');
+const rootHint = document.getElementById('root-folder-hint');
+const resetRootButton = document.getElementById('clear-folder-btn');
+const pathMenu = document.getElementById('path-menu');
+const currentDirectoryButton = document.getElementById('use-ws-root-btn');
+const currentDirectoryLabel = document.getElementById('current-directory-label');
 const recordingToggle = document.getElementById('recording-toggle');
 const recordingStatusText = document.getElementById('recording-status-text');
 const langStatusText = document.getElementById('lang-status-text');
@@ -125,6 +131,38 @@ class FileActionsMenu {
 }
 
 const fileActions = new FileActionsMenu(document.getElementById('context-menu'));
+
+function closePathMenu(restoreFocus = false) {
+    pathMenu.hidden = true;
+    rootButton.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) rootButton.focus({ preventScroll: true });
+}
+
+function openPathMenu(focus = false, last = false) {
+    fileActions.close();
+    pathMenu.hidden = false;
+    rootButton.setAttribute('aria-expanded', 'true');
+    if (focus) {
+        const items = pathMenu.querySelectorAll('[role="menuitem"]:not(:disabled)');
+        (last ? items[items.length - 1] : items[0]).focus();
+    }
+}
+
+function updateCurrentDirectory(directory) {
+    const suffix = directory.includes('\\') && !directory.includes('/') ? '\\' : '/';
+    const label = directory ? directory + (/[\\/]$/.test(directory) ? '' : suffix) : '열린 작업 폴더 없음';
+    currentDirectoryLabel.textContent = label;
+    currentDirectoryButton.dataset.path = directory;
+    currentDirectoryButton.disabled = !directory;
+    currentDirectoryButton.title = directory ? label + '로 설정' : label;
+    currentDirectoryButton.setAttribute('aria-label', currentDirectoryButton.title);
+    currentDirectoryButton.querySelector('.path-suffix').hidden = !directory;
+}
+
+function closeMenus() {
+    fileActions.close();
+    closePathMenu();
+}
 
 function renderLogs(logs, container = logsContainer) {
     const rows = new Map([...container.querySelectorAll('.log-item')].map(row => [row.dataset.path, row]));
@@ -311,22 +349,41 @@ logsContainer.addEventListener('keydown', event => {
 new ResizeObserver(checkRecentLogsEnd).observe(logsContainer);
 retryLogsButton.addEventListener('click', () => recentLogsNeedsSearch ? requestLogsSearch() : requestMoreRecentLogs());
 
-// One click transition handles opening, dismissal and actions. A dismissing click
-// still selects its row or activates its control, but does not reopen the menu.
+// The current row toggles its menu; another row switches the menu immediately.
+// Outside clicks dismiss it while leaving the clicked control's action intact.
 document.addEventListener('click', event => {
     if (!(event.target instanceof Element)) return;
+    if (rootButton.contains(event.target)) {
+        if (pathMenu.hidden) openPathMenu(event.detail === 0);
+        else closePathMenu();
+        return;
+    }
+    if (pathMenu.contains(event.target)) {
+        const item = event.target.closest('[data-path-action]');
+        if (item && !item.disabled) {
+            closePathMenu(true);
+            vscode.postMessage({ type: item.dataset.pathAction, ...(item.dataset.path ? { path: item.dataset.path } : {}) });
+        }
+        return;
+    }
+    closePathMenu();
+    if (resetRootButton.contains(event.target)) {
+        fileActions.close();
+        vscode.postMessage({ type: 'clearRootFolder' });
+        return;
+    }
     if (fileActions.element.contains(event.target)) {
         const action = event.target.closest('[data-action]');
         if (action) fileActions.activate(action.dataset.action);
         return;
     }
-    const wasOpen = fileActions.isOpen;
+    const previousOwner = fileActions.owner;
     fileActions.close();
     const row = event.target.closest('.log-item');
     if (!row) return;
     selectPath(row.dataset.path);
     // Native click counts respect the user's double-click settings; no delay timer.
-    if (!wasOpen && event.detail < 2) {
+    if (previousOwner !== row && event.detail < 2) {
         fileActions.open(row, {
             point: event.detail > 0 ? { x: event.clientX, y: event.clientY } : null,
             focus: event.detail === 0,
@@ -343,6 +400,7 @@ document.addEventListener('dblclick', event => {
 });
 
 document.addEventListener('contextmenu', event => {
+    closePathMenu();
     const row = event.target instanceof Element && event.target.closest('.log-item');
     if (!row) { fileActions.close(); return; }
     event.preventDefault();
@@ -351,6 +409,24 @@ document.addEventListener('contextmenu', event => {
 });
 
 document.addEventListener('keydown', event => {
+    if (!pathMenu.hidden) {
+        if (event.key === 'Escape') { event.preventDefault(); closePathMenu(true); return; }
+        if (event.key === 'Tab') { closePathMenu(pathMenu.contains(event.target)); return; }
+        if (pathMenu.contains(event.target) && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+            event.preventDefault();
+            const items = [...pathMenu.querySelectorAll('[role="menuitem"]:not(:disabled)')];
+            const current = items.indexOf(document.activeElement);
+            const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+                : (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+            items[index].focus();
+            return;
+        }
+    }
+    if (rootButton.contains(event.target) && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
+        event.preventDefault();
+        openPathMenu(true, event.key === 'ArrowUp');
+        return;
+    }
     if (fileActions.isOpen && event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
@@ -376,13 +452,14 @@ document.addEventListener('keydown', event => {
 
 document.addEventListener('scroll', event => {
     if (!fileActions.element.contains(event.target)) fileActions.close();
+    if (!pathMenu.contains(event.target)) closePathMenu();
 }, true);
-window.addEventListener('resize', () => fileActions.close());
-window.addEventListener('blur', () => fileActions.close());
-document.addEventListener('visibilitychange', () => { if (document.hidden) fileActions.close(); });
+window.addEventListener('resize', closeMenus);
+window.addEventListener('blur', closeMenus);
+document.addEventListener('visibilitychange', () => { if (document.hidden) closeMenus(); });
 
 function showView(view) {
-    fileActions.close();
+    closeMenus();
     for (const candidate of [mainView, fullLogsView]) candidate.classList.toggle('hidden', candidate !== view);
     if (view === mainView) checkRecentLogsEnd();
 }
@@ -408,7 +485,10 @@ window.addEventListener('message', (event) => {
     switch (message.type) {
         case 'updateState':
             document.getElementById('connect-server-btn').textContent = message.accountLabel || '로그인';
-            rootDisplay.textContent = message.root || '전체 워크스페이스';
+            rootDisplay.textContent = message.root || '현재 열려있는 모든 파일';
+            rootButton.title = rootDisplay.textContent;
+            rootHint.hidden = !message.root;
+            if (typeof message.currentDirectory === 'string') updateCurrentDirectory(message.currentDirectory);
             recordingToggle.checked = message.isRecording;
             recordingStatusText.textContent = message.isRecording ? '실시간 기록 중' : '중지됨';
             recordingStatusText.style.color = message.isRecording
@@ -443,6 +523,9 @@ window.addEventListener('message', (event) => {
                     manageBtnSpan.textContent = `전체 기록 (${message.totalLogSize})`;
                 }
             }
+            break;
+        case 'currentDirectory':
+            updateCurrentDirectory(message.path);
             break;
         case 'recentLogsPage': {
             if ((message.recentLogsSearchId ?? 0) !== recentLogsSearchId) break;
@@ -480,18 +563,6 @@ langChips.forEach((chip) => {
             value: chip.getAttribute('data-lang'),
         });
     });
-});
-
-document.getElementById('use-ws-root-btn').addEventListener('click', () => {
-    vscode.postMessage({ type: 'useWorkspaceRoot' });
-});
-
-document.getElementById('select-folder-btn').addEventListener('click', () => {
-    vscode.postMessage({ type: 'selectRootFolder' });
-});
-
-document.getElementById('clear-folder-btn').addEventListener('click', () => {
-    vscode.postMessage({ type: 'clearRootFolder' });
 });
 
 document.getElementById('generate-blog-btn').addEventListener('click', () => {

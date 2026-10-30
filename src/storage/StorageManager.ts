@@ -4,6 +4,11 @@ import * as fs from 'fs/promises';
 import { FileHistory, Snapshot, RequestLog, SessionIndexItem, SnapshotDiff } from '../types';
 import { getHash, generateUUID, computeDiff } from './utils';
 import { Logger } from '../services/logger';
+import { atomicWrite, observeFile, withFileLock } from './SharedFiles';
+
+export class HistoryConflict extends Error {
+    constructor() { super('다른 창에서 수정 기록이 변경되었습니다. 최신 기록을 확인해 주세요.'); }
+}
 
 export class StorageManager {
     private static _instance: StorageManager;
@@ -30,6 +35,7 @@ export class StorageManager {
         this._historyDir = vscode.Uri.joinPath(this._globalStorageUri, 'history');
         // globalStorage/ps-blogself/session-index.json
         this._indexFileUri = vscode.Uri.joinPath(this._globalStorageUri, 'session-index.json');
+        context.subscriptions?.push(observeFile(this._indexFileUri.fsPath, () => this._onDidUpdateIndex.fire()));
     }
 
     private async _ensureStorageInit(): Promise<void> {
@@ -90,7 +96,7 @@ export class StorageManager {
 
     public saveSnapshot(document: vscode.TextDocument): Promise<void> {
         const content = document.getText();
-        const write = this._saveQueue.then(() => this._saveSnapshot(document, content));
+        const write = this._saveQueue.then(() => withFileLock(this._indexFileUri!.fsPath, () => this._saveSnapshot(document, content)));
         this._saveQueue = write.catch(() => {});
         return write;
     }
@@ -102,7 +108,7 @@ export class StorageManager {
     public async installSampleHistory(): Promise<string> {
         if (!this._globalStorageUri) throw new Error('저장 공간을 준비하지 못했습니다.');
         const filePath = path.join(this._globalStorageUri.fsPath, 'samples', '샘플-중복제거.py');
-        const write = this._saveQueue.then(async () => {
+        const write = this._saveQueue.then(() => withFileLock(this._indexFileUri!.fsPath, async () => {
             await this._ensureStorageInit();
             const hash = getHash(filePath);
             const historyPath = path.join(this._historyDir!.fsPath, hash + '.json');
@@ -117,9 +123,9 @@ export class StorageManager {
             const history: FileHistory = { id: generateUUID(), filePath, language: 'python', startedAt: now - 180000, lastModified: now, requestLogs: [], snapshots: versions.map((content, i) => ({ content, timestamp: now - (3 - i) * 60000, hash: getHash(content) })) };
             await fs.mkdir(path.dirname(filePath), { recursive: true });
             await fs.writeFile(filePath, versions[3]);
-            await fs.writeFile(historyPath, JSON.stringify(history));
+            await atomicWrite(historyPath, history);
             await this._updateSessionIndex({ uri: vscode.Uri.file(filePath), languageId: 'python' } as vscode.TextDocument, now, hash);
-        });
+        }));
         this._saveQueue = write.catch(() => {});
         await write;
         return filePath;
@@ -148,6 +154,7 @@ export class StorageManager {
                 const existingData = await fs.readFile(historyFileUri.fsPath, 'utf-8');
                 history = JSON.parse(existingData);
             } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
                 // Create new history
                 history = {
                     id: generateUUID(),
@@ -192,7 +199,7 @@ export class StorageManager {
             history.lastModified = timestamp;
 
             // Save history file
-            await fs.writeFile(historyFileUri.fsPath, JSON.stringify(history, null, 2), 'utf-8');
+            await atomicWrite(historyFileUri.fsPath, history);
             Logger.info(`[StorageManager] Saved snapshot for ${absolutePath}`);
 
             // Update Session Index
@@ -216,7 +223,7 @@ export class StorageManager {
             const indexData = await fs.readFile(this._indexFileUri.fsPath, 'utf-8');
             index = JSON.parse(indexData);
         } catch (error) {
-            // Index doesn't exist yet
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         }
 
         const absolutePath = document.uri.fsPath;
@@ -240,7 +247,7 @@ export class StorageManager {
         //     index = index.slice(0, 20);
         // }
 
-        await fs.writeFile(this._indexFileUri.fsPath, JSON.stringify(index, null, 2), 'utf-8');
+        await atomicWrite(this._indexFileUri.fsPath, index);
 
         // Notify listeners
         this._onDidUpdateIndex.fire();
@@ -265,6 +272,12 @@ export class StorageManager {
     }
 
     public async rebuildIndex(): Promise<void> {
+        if (!this._indexFileUri) return;
+        await this._saveQueue;
+        await withFileLock(this._indexFileUri.fsPath, () => this._rebuildIndex());
+    }
+
+    private async _rebuildIndex(): Promise<void> {
         if (!this._historyDir || !this._indexFileUri) return;
 
         try {
@@ -302,13 +315,22 @@ export class StorageManager {
             // Sort by lastModified desc
             index.sort((a, b) => b.lastModified - a.lastModified);
 
-            await fs.writeFile(this._indexFileUri.fsPath, JSON.stringify(index, null, 2), 'utf-8');
+            await atomicWrite(this._indexFileUri.fsPath, index);
         } catch (error) {
             Logger.error('[StorageManager] Failed to rebuild index:', error);
         }
     }
 
     public async addRequestLog(
+        document: vscode.TextDocument,
+        promptType: string,
+        snapshotIndexRange: [number, number],
+    ): Promise<void> {
+        if (!this._indexFileUri) return;
+        await withFileLock(this._indexFileUri.fsPath, () => this._addRequestLog(document, promptType, snapshotIndexRange));
+    }
+
+    private async _addRequestLog(
         document: vscode.TextDocument,
         promptType: string,
         snapshotIndexRange: [number, number],
@@ -333,7 +355,7 @@ export class StorageManager {
             };
 
             history.requestLogs.push(newLog);
-            await fs.writeFile(historyFileUri.fsPath, JSON.stringify(history, null, 2), 'utf-8');
+            await atomicWrite(historyFileUri.fsPath, history);
             Logger.info(`[StorageManager] Added request log for ${absolutePath}`);
         } catch (error) {
             Logger.error(`[StorageManager] Failed to add request log:`, error);
@@ -351,6 +373,7 @@ export class StorageManager {
             let totalBytes = 0;
 
             for (const file of files) {
+                if (!file.endsWith('.json')) continue;
                 const filePath = path.join(this._historyDir.fsPath, file);
                 const stats = await fs.stat(filePath);
                 totalBytes += stats.size;
@@ -383,13 +406,13 @@ export class StorageManager {
             return null;
         }
     }
-    public deleteSnapshot(filePath: string, index: number): Promise<void> {
-        const write = this._saveQueue.then(() => this._deleteSnapshot(filePath, index));
+    public deleteSnapshot(filePath: string, index: number, expectedVersion: string): Promise<void> {
+        const write = this._saveQueue.then(() => withFileLock(this._indexFileUri!.fsPath, () => this._deleteSnapshot(filePath, index, expectedVersion)));
         this._saveQueue = write.catch(() => {});
         return write;
     }
 
-    private async _deleteSnapshot(filePath: string, index: number): Promise<void> {
+    private async _deleteSnapshot(filePath: string, index: number, expectedVersion: string): Promise<void> {
         if (!this._historyDir) {
             return;
         }
@@ -410,6 +433,8 @@ export class StorageManager {
             Logger.error('[StorageManager] Failed to load history for deletion:', error);
             return;
         }
+
+        if (getHash(JSON.stringify(history.snapshots)) !== expectedVersion) throw new HistoryConflict();
 
         if (index >= history.snapshots.length) {
             Logger.warn('[StorageManager] Invalid snapshot index for deletion');
@@ -466,7 +491,8 @@ export class StorageManager {
 
         history.lastModified = Date.now();
 
-        await fs.writeFile(historyFileUri.fsPath, JSON.stringify(history, null, 2), 'utf-8');
+        await atomicWrite(historyFileUri.fsPath, history);
+        await this._updateSessionIndex({ uri: vscode.Uri.file(filePath), languageId: history.language } as vscode.TextDocument, history.lastModified, fileHash);
         Logger.info(`[StorageManager] Deleted snapshot at index ${index} for ${filePath}`);
     }
 

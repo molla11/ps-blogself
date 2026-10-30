@@ -19,7 +19,7 @@ test.beforeEach(async ({ page }) => {
     await update(page);
 });
 
-test('one click opens actions, another row dismisses and selects without reopening', async ({ page }) => {
+test('one click opens actions, the same row closes them, and another row switches immediately', async ({ page }) => {
     await expect(page.locator('.file-menu')).toHaveCount(0);
     await row(page, 1).click();
     await expect(menu(page)).toBeVisible();
@@ -30,9 +30,11 @@ test('one click opens actions, another row dismisses and selects without reopeni
     await expect(row(page, 1)).toHaveAttribute('aria-expanded', 'false');
     await row(page, 1).click();
     await row(page, 0).click();
-    await expect(menu(page)).toBeHidden();
+    await expect(menu(page)).toBeVisible();
+    await expect(menu(page)).toHaveAttribute('aria-label', 'solve0.cpp 작업');
+    await expect(row(page, 1)).toHaveAttribute('aria-expanded', 'false');
+    await expect(row(page, 0)).toHaveAttribute('aria-expanded', 'true');
     await expect(row(page, 0)).toHaveAttribute('aria-pressed', 'true');
-    await row(page, 0).click();
     await page.getByRole('menuitem', { name: '파일 열기', exact: true }).click();
     expect((await messages(page)).at(-1)).toEqual({ type: 'openFile', path: '/work/solve0.cpp' });
     await expect(menu(page)).toBeHidden();
@@ -48,6 +50,13 @@ test('native double-click opens the file exactly once from either menu state', a
     await expect(menu(page)).toBeHidden();
     expect((await messages(page)).filter((m: any) => m.type === 'openFile')).toEqual([
         { type: 'openFile', path: '/work/solve1.cpp' }, { type: 'openFile', path: '/work/solve0.cpp' },
+    ]);
+    await row(page, 1).click();
+    await row(page, 0).dblclick();
+    await expect(menu(page)).toBeHidden();
+    expect((await messages(page)).filter((m: any) => m.type === 'openFile')).toEqual([
+        { type: 'openFile', path: '/work/solve1.cpp' }, { type: 'openFile', path: '/work/solve0.cpp' },
+        { type: 'openFile', path: '/work/solve0.cpp' },
     ]);
 });
 

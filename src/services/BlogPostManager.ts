@@ -8,12 +8,14 @@ import { Writer } from '../writing/Writer';
 import { AiConfiguration } from '../writing/AiSettings';
 import { ServiceConnection, ServiceError } from '../writing/ServiceConnection';
 import { JobRouter, JobTarget } from '../writing/JobRouter';
-import { DraftStore } from '../writing/DraftStore';
+import { DraftStore, DraftConflict } from '../writing/DraftStore';
+import { WindowSession } from '../storage/WindowSession';
 import {
     WritingDraft,
     mergeResult,
     newDraft,
     sourceFor,
+    writingSourceFor,
     preparationSource,
     validatePlan,
     historyFingerprint,
@@ -34,6 +36,9 @@ interface View {
     partial?: string;
     watcher?: AbortController;
     announced?: string;
+    editable: boolean;
+    sync?: { dispose(): void };
+    ownerCheck?: NodeJS.Timeout;
 }
 export class BlogPostManager {
     public static readonly viewType = 'psb.blogPost';
@@ -44,6 +49,7 @@ export class BlogPostManager {
     private static ai: AiConfiguration;
     private static connection: ServiceConnection;
     private static loads = new Map<string, Promise<View | undefined>>();
+    private static closing = false;
     private static updates = new vscode.EventEmitter<string>();
     static readonly onDidChange = this.updates.event;
     static init(context: vscode.ExtensionContext) {
@@ -76,10 +82,13 @@ export class BlogPostManager {
         );
     }
     static async flush() {
-        for (const view of this.views.values()) view.watcher?.abort();
+        this.closing = true;
+        for (const view of this.views.values()) {
+            view.sync?.dispose(); clearInterval(view.ownerCheck); view.watcher?.abort();
+        }
         await Promise.all([...this.views.values()].map((view) => view.queue));
-        await this.store?.flush();
         await this.jobs?.close();
+        await this.store?.close();
     }
     static async connect() {
         if (this.jobs.direct) await this.ai.configure();
@@ -97,8 +106,14 @@ export class BlogPostManager {
             const saved = await this.store.read(filePath);
             const history = saved?.history || await storageManager.getFileHistory(filePath);
             if (!history?.snapshots.length) return undefined;
-            const view: View = { draft: saved || newDraft(history), queue: Promise.resolve(), error: '', status: '', progress: 0, ready: false };
+            const draft = await this.store.open(saved || newDraft(history));
+            const view: View = { draft, editable: this.store.owns(draft), queue: Promise.resolve(), error: '', status: '', progress: 0, ready: false };
             this.views.set(filePath, view);
+            view.sync = this.store.watch(filePath, () => { void this.enqueue(view, () => this.refresh(view)).catch(() => {}); });
+            view.ownerCheck = setInterval(() => {
+                if (view.panel && !view.editable) void this.enqueue(view, () => this.refresh(view)).catch(() => {});
+            }, 1500);
+            view.ownerCheck.unref();
             return view;
         })().finally(() => this.loads.delete(filePath));
         this.loads.set(filePath, loading);
@@ -112,6 +127,8 @@ export class BlogPostManager {
             const view = await this.loadView(filePath);
             if (!view) return;
             await this.enqueue(view, async () => {
+                await this.refresh(view, true);
+                if (!view.editable) return;
                 if (view.draft.pending) { this.run(view); return; }
                 const history = await storageManager.getFileHistory(filePath);
                 if (!history?.snapshots.length) return;
@@ -169,6 +186,13 @@ export class BlogPostManager {
             if (current.panel === panel) {
                 current.panel = undefined;
                 current.ready = false;
+                if (!current.draft.pending) {
+                    void this.enqueue(current, async () => {
+                        if (current.panel) return;
+                        await this.store.release(filePath);
+                        await this.refresh(current);
+                    }).catch(() => {});
+                }
             }
         });
         panel.webview.onDidReceiveMessage((message) => {
@@ -177,6 +201,7 @@ export class BlogPostManager {
                     await this.handle(current, message);
                     void panel.webview.postMessage({ type: 'ack', id: message?.id });
                 } catch (error) {
+                    if (error instanceof DraftConflict) await this.refresh(current);
                     current.error = error instanceof Error ? error.message : String(error);
                     void panel.webview.postMessage({
                         type: 'saveError',
@@ -204,6 +229,22 @@ export class BlogPostManager {
         });
         return next;
     }
+    private static async refresh(view: View, claim = false) {
+        if (this.closing) return;
+        let latest = await this.store.read(view.draft.filePath);
+        if (!latest) return;
+        if ((claim || view.panel) && !this.store.owns(latest) && !await WindowSession.alive(latest.editor?.owner)) latest = await this.store.open(latest);
+        if (latest.storageVersion === view.draft.storageVersion && latest.editor?.token === view.draft.editor?.token) return;
+        const ownershipChanged = latest.editor?.token !== view.draft.editor?.token;
+        if (ownershipChanged) {
+            view.watcher?.abort(); view.watcher = undefined; view.task = undefined;
+            view.partial = ''; view.error = '';
+        }
+        view.draft = latest;
+        view.editable = this.store.owns(latest);
+        this.render(view);
+        if (view.draft.pending && (view.editable || view.panel)) this.run(view);
+    }
     private static render(view: View) {
         const announcement = `${!!view.draft.pending}:${!!view.draft.plan}:${view.error}`;
         if (view.announced !== announcement) { view.announced = announcement; this.updates.fire(view.draft.filePath); }
@@ -218,6 +259,8 @@ export class BlogPostManager {
             title: draft.title,
             markdown: draft.markdown,
             revision: draft.revision,
+            editable: view.editable,
+            editToken: draft.editor?.token,
             count: draft.history.snapshots.length,
             times: draft.history.snapshots.map((s) => s.timestamp),
             pending: !!draft.pending,
@@ -274,12 +317,23 @@ export class BlogPostManager {
         ) {
             throw new Error('화면 요청을 확인할 수 없습니다.');
         }
+        await this.refresh(view);
+        const reading = ['ready', 'takeover', 'diff', 'preview', 'export', 'copy', 'openLink', 'connect'].includes(message.type);
+        if (!reading && (!view.editable || message.editToken !== view.draft.editor?.token)) throw new DraftConflict();
         switch (message.type) {
+            case 'takeover': {
+                view.watcher?.abort(); view.watcher = undefined; view.task = undefined;
+                view.draft = await this.store.open(view.draft, true);
+                view.editable = true; view.error = '';
+                if (view.draft.pending) this.run(view);
+                else if (!view.draft.plan) await this.start(view, 'prepare_blog');
+                break;
+            }
             case 'ready':
                 view.ready = true;
                 this.render(view);
                 if (view.draft.pending) this.run(view);
-                else if (!view.draft.plan) await this.start(view, 'prepare_blog');
+                else if (!view.draft.plan && view.editable) await this.start(view, 'prepare_blog');
                 break;
             case 'save':
                 await this.edit(view, message.fields);
@@ -338,13 +392,13 @@ export class BlogPostManager {
                 break;
             }
             case 'preview': {
-                await this.edit(view, message.fields);
+                if (view.editable && message.editToken === view.draft.editor?.token) await this.edit(view, message.fields);
                 const html = new MarkdownIt({ html: false }).render(view.draft.markdown);
                 void view.panel?.webview.postMessage({ type: 'preview', html });
                 break;
             }
             case 'export': {
-                await this.edit(view, message.fields);
+                if (view.editable && message.editToken === view.draft.editor?.token) await this.edit(view, message.fields);
                 const uri = await vscode.window.showSaveDialog({
                     defaultUri: vscode.Uri.file(
                         path.join(
@@ -365,7 +419,7 @@ export class BlogPostManager {
                 break;
             }
             case 'copy':
-                await this.edit(view, message.fields);
+                if (view.editable && message.editToken === view.draft.editor?.token) await this.edit(view, message.fields);
                 await vscode.env.clipboard.writeText(this.markdown(view.draft));
                 view.status = '글을 복사했습니다.';
                 break;
@@ -399,6 +453,7 @@ export class BlogPostManager {
         return `# ${draft.title || draft.plan?.title || '풀이 기록'}\n\n${draft.markdown}\n`;
     }
     private static async start(view: View, kind: 'prepare_blog' | 'write_blog', target?: JobTarget, prefetch = false) {
+        if (!view.editable) return;
         if (view.draft.pending || view.task) return;
         const draft = view.draft;
         const history =
@@ -426,7 +481,7 @@ export class BlogPostManager {
         const source =
             kind === 'prepare_blog'
                 ? preparationSource(history)
-                : sourceFor(history, plan!.start, plan!.end);
+                : writingSourceFor(history, plan!.start, plan!.end, plan!.steps.flatMap((step) => [step.start, step.end]));
         if (JSON.stringify(source).length > 480000) {
             throw new Error('분석할 기록이 너무 큽니다. 기록 범위를 줄여 주세요.');
         }
@@ -449,15 +504,23 @@ export class BlogPostManager {
         this.run(view);
     }
     private static run(view: View, retry = false) {
-        if (view.task || !view.draft.pending) return;
+        if (this.closing || view.task || !view.draft.pending) return;
         const pending = view.draft.pending;
         view.error = '';
         view.partial = '';
         view.watcher = new AbortController();
-        const signal = view.watcher.signal;
+        const controller = view.watcher, signal = controller.signal;
         view.status = pending.request.kind === 'prepare_blog' ? '구간과 풀이 설명을 준비하고 있어요…' : '글을 작성하고 있어요…';
-        view.task = (async () => {
+        view.task = Promise.resolve().then(async () => {
             try {
+                if (!view.editable) {
+                    if (pending.jobId) {
+                        await this.jobs.watch(pending.jobId, pending.target || { kind: 'direct' }, job => {
+                            if (!signal.aborted) { view.progress = job.progress; view.partial = job.partial; this.render(view); }
+                        }, signal);
+                    }
+                    return;
+                }
                 if (pending.apiUrl) {
                     if (!retry && !pending.cancelRequested) throw new Error('이전 버전의 작업입니다. 다시 시도하면 현재 서비스로 새 요청을 보냅니다.');
                     delete pending.apiUrl;
@@ -466,20 +529,23 @@ export class BlogPostManager {
                 }
                 const target = pending.target || { kind: 'direct' as const };
                 if (pending.cancelRequested && !pending.jobId) {
-                    await this.enqueue(view, async () => { delete view.draft.pending; await this.store.save(view.draft); });
+                    await this.enqueue(view, async () => { signal.throwIfAborted(); delete view.draft.pending; await this.store.save(view.draft); });
                     view.status = '작업을 취소했습니다.';
                     return;
                 }
                 let job = pending.jobId ? await this.jobs.job(pending.jobId, target) : await this.jobs.create(pending.request, target);
-                await this.enqueue(view, async () => { pending.jobId = job.id; await this.store.save(view.draft); });
+                signal.throwIfAborted();
+                await this.enqueue(view, async () => { signal.throwIfAborted(); pending.jobId = job.id; await this.store.save(view.draft); });
+                signal.throwIfAborted();
                 if (retry && ['failed', 'cancelled'].includes(job.status) && !pending.cancelRequested) job = await this.jobs.retry(job.id, target);
                 if (pending.cancelRequested && ['queued', 'running', 'failed'].includes(job.status)) job = (await this.jobs.cancel(job.id, target))!;
-                const update = (value: typeof job) => { view.progress = value.progress; view.partial = value.partial; this.render(view); };
+                const update = (value: typeof job) => { if (!signal.aborted) { view.progress = value.progress; view.partial = value.partial; this.render(view); } };
                 update(job);
                 if (['queued', 'running'].includes(job.status)) job = await this.jobs.watch(job.id, target, update, signal);
                 if (job.status === 'completed') {
                     if (!job.result || (pending.request.kind === 'prepare_blog' ? !job.result.plan : typeof job.result.markdown !== 'string')) throw new Error('AI 응답에 글이 없습니다. 다시 시도해 주세요.');
                     await this.enqueue(view, async () => {
+                        signal.throwIfAborted();
                         mergeResult(view.draft, { ...job.result!, ...(pending.history ? { history: pending.history } : {}) }, pending.baseRevision);
                         delete view.draft.pending;
                         await this.store.save(view.draft);
@@ -490,17 +556,25 @@ export class BlogPostManager {
                 } else if (job.status === 'failed') {
                     throw new Error(job.error || '글쓰기에 실패했습니다. 다시 시도할 수 있습니다.');
                 } else if (job.status === 'cancelled') {
-                    await this.enqueue(view, async () => { delete view.draft.pending; await this.store.save(view.draft); });
+                    await this.enqueue(view, async () => { signal.throwIfAborted(); delete view.draft.pending; await this.store.save(view.draft); });
                     view.partial = '';
                     view.status = '작업을 취소했습니다.';
                 }
             } catch (error) {
-                if (!signal.aborted) view.error = error instanceof Error ? error.message : String(error);
+                if (error instanceof DraftConflict) await this.enqueue(view, () => this.refresh(view));
+                else if (!signal.aborted) view.error = error instanceof Error ? error.message : String(error);
             } finally {
-                view.task = undefined;
-                this.render(view);
+                if (view.watcher === controller) {
+                    view.task = undefined;
+                    this.render(view);
+                    if (!this.closing && !view.panel && !view.draft.pending) {
+                        await this.enqueue(view, async () => {
+                            if (!view.panel && !view.draft.pending) await this.store.release(view.draft.filePath);
+                        }).catch(() => {});
+                    }
+                }
             }
-        })();
+        });
         this.render(view);
     }
 }

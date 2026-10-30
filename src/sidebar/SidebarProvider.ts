@@ -16,7 +16,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         private readonly _extensionUri: vscode.Uri,
         private readonly _onSelectRootFolder: () => void,
         private readonly _onClearRootFolder: () => void,
-        private readonly _onUseWorkspaceRoot: () => void,
+        private readonly _onUseWorkspaceRoot: (directory: string) => void,
         private readonly _onToggleRecording: () => void,
         private readonly _onToggleLanguage: (lang: string) => void,
     ) {}
@@ -41,15 +41,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 if (!data || typeof data !== 'object') return;
                 switch (data.type) {
                     case 'selectRootFolder': {
-                        this._onSelectRootFolder();
+                        await this._onSelectRootFolder();
                         break;
                     }
                     case 'clearRootFolder': {
-                        this._onClearRootFolder();
+                        await this._onClearRootFolder();
                         break;
                     }
                     case 'useWorkspaceRoot': {
-                        this._onUseWorkspaceRoot();
+                        if (typeof data.path === 'string' && data.path) await this._onUseWorkspaceRoot(data.path);
                         break;
                     }
                     case 'toggleRecording': {
@@ -83,6 +83,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     case 'openFile': {
                         const document = await vscode.workspace.openTextDocument(data.path);
                         await vscode.window.showTextDocument(document, { preview: false });
+                        // Editor activation may reveal another extension's sidebar.
+                        // Keep this navigation's originating view without taking editor focus.
+                        webviewView.show(true);
+                        await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
                         break;
                     }
                     case 'viewHistory': {
@@ -135,6 +139,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         webviewView.onDidDispose(() => disposable.dispose());
         const accountUpdate = BlogPostManager.onDidChange(file => { if (!file) void this.updateState(); });
         webviewView.onDidDispose(() => accountUpdate.dispose());
+        const settingsUpdate = configManager.onDidChange(() => { void this.updateState(); });
+        webviewView.onDidDispose(() => settingsUpdate.dispose());
+        const updateDirectory = () => webviewView.webview.postMessage({ type: 'currentDirectory', path: configManager.getCurrentDirectory() });
+        const editorUpdate = vscode.window.onDidChangeActiveTextEditor(updateDirectory);
+        const workspaceUpdate = vscode.workspace.onDidChangeWorkspaceFolders(updateDirectory);
+        webviewView.onDidDispose(() => { editorUpdate.dispose(); workspaceUpdate.dispose(); });
         // We can't easily push to context.subscriptions here without passing context properly,
         // but for now, we rely on the webview's lifecycle.
         // Ideally we should dispose this listener when webview is disposed.
@@ -154,6 +164,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 type: 'updateState',
                 activeFile: vscode.window.activeTextEditor?.document.uri.fsPath,
                 root: configManager.getRootFolder(),
+                currentDirectory: configManager.getCurrentDirectory(),
                 isRecording: configManager.isRecording(),
                 languages: configManager.getSupportedLanguages(),
                 ...page,

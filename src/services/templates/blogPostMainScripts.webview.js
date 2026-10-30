@@ -10,6 +10,7 @@ let model,
 const dirty = new Set(),
     sent = new Map();
 const recovered = vscode.getState();
+let localRecovery = recovered?.localRecovery;
 let recoveryApplied = false;
 function height(node) {
     if (node.tagName === 'TEXTAREA' && !node.closest('[hidden]')) {
@@ -20,17 +21,20 @@ function height(node) {
 function stash() {
     vscode.setState({
         filePath: model?.filePath || recovered?.filePath,
+        editToken: model?.editToken || recovered?.editToken,
         fields: Object.fromEntries([...dirty].map((key) => [key, form[key]])),
+        localRecovery,
     });
 }
 function send(type, extra = {}, fields = false) {
     const id = String(++counter),
         payload = fields ? JSON.parse(JSON.stringify(form)) : undefined;
     if (fields) sent.set(id, payload);
-    vscode.postMessage({ type, id, ...(fields ? { fields: payload } : {}), ...extra });
+    vscode.postMessage({ type, id, editToken: model?.editToken, ...(fields ? { fields: payload } : {}), ...extra });
     return id;
 }
 function changed(key) {
+    if (model?.editable === false) return;
     dirty.add(key);
     el('save-status').textContent = '저장 중…';
     stash();
@@ -144,6 +148,10 @@ function switchTab(tab) {
     document.querySelectorAll('textarea').forEach(height);
 }
 function render() {
+    const editable = model.editable !== false;
+    el('ownership-box').hidden = editable;
+    el('recovery-box').hidden = !localRecovery;
+    el('recover-input-btn').disabled = !editable;
     el('stream-box').hidden = !model.streamHtml;
     el('stream-preview').innerHTML = model.streamHtml || '';
     el('file-name').textContent = model.fileName;
@@ -183,6 +191,8 @@ function render() {
         switchTab('article');
         previewMode = true;
         send('preview', {}, true);
+    } else if (form.markdown !== lastMarkdown && previewMode) {
+        send('preview', {}, true);
     }
     lastMarkdown = form.markdown || '';
     if (!form.markdown) switchTab('plan');
@@ -193,28 +203,42 @@ function render() {
         const button = document.createElement('button');
         button.className = 'quiet';
         button.textContent = `${new Date(version.at).toLocaleString()} · ${version.title}`;
+        button.disabled = !editable;
         button.addEventListener('click', () => send('restore', { index }, true));
         versions.appendChild(button);
     });
+    document.querySelectorAll('textarea, input:not([type="range"])').forEach(node => { node.readOnly = !editable; });
+    document.querySelectorAll('input[type="range"]').forEach(node => { node.disabled = !editable; });
+    for (const id of ['generate-btn', 'prepare-btn', 'prepare-empty-btn', 'retry-btn', 'cancel-btn', 'discard-pending-btn', 'apply-candidate-btn', 'discard-candidate-btn']) {
+        if (!editable) el(id).disabled = true;
+        else if (!['generate-btn', 'prepare-btn', 'retry-btn'].includes(id)) el(id).disabled = false;
+    }
     stash();
 }
 window.addEventListener('message', (event) => {
     const message = event.data;
     if (message.type === 'model') {
+        if (message.editable === false || (model?.editToken && message.editToken !== model.editToken)) {
+            if (dirty.size) localRecovery = Object.fromEntries([...dirty].map(key => [key, structuredClone(form[key])]));
+            dirty.clear(); sent.clear(); clearTimeout(editTimer);
+        }
         model = message;
         for (const key of ['plan', 'instructions', 'title', 'markdown']) {
             if (!dirty.has(key)) form[key] = structuredClone(message[key]);
         }
         if (!recoveryApplied) {
             recoveryApplied = true;
-            if (recovered?.filePath === model.filePath && recovered.fields) {
-                for (const [key, val] of Object.entries(recovered.fields)) {
-                    if (['plan', 'instructions', 'title', 'markdown'].includes(key)) {
-                        form[key] = val;
-                        dirty.add(key);
+            if (recovered?.filePath === model.filePath && recovered.fields && Object.keys(recovered.fields).length) {
+                if (model.editable === false || (recovered.editToken && recovered.editToken !== model.editToken)) localRecovery ||= recovered.fields;
+                else {
+                    for (const [key, val] of Object.entries(recovered.fields)) {
+                        if (['plan', 'instructions', 'title', 'markdown'].includes(key)) {
+                            form[key] = val;
+                            dirty.add(key);
+                        }
                     }
+                    if (dirty.size) send('save', {}, true);
                 }
-                if (dirty.size) send('save', {}, true);
             }
         }
         render();
@@ -258,6 +282,14 @@ window.addEventListener('message', (event) => {
             }
         });
     }
+});
+el('takeover-btn').addEventListener('click', () => send('takeover'));
+el('recover-input-btn').addEventListener('click', () => {
+    if (model?.editable === false || !localRecovery) return;
+    for (const [key, value] of Object.entries(localRecovery)) { form[key] = structuredClone(value); dirty.add(key); }
+    localRecovery = undefined;
+    render();
+    action('save');
 });
 for (const [id, key] of [
     ['instructions', 'instructions'],

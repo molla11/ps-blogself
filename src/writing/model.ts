@@ -2,6 +2,7 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import { createTwoFilesPatch } from 'diff';
 import { FileHistory } from '../types';
+import { isCosmeticChange } from './ChangeFilter';
 
 export interface WritingStep {
     title: string;
@@ -41,6 +42,8 @@ export interface WritingJob {
 }
 export interface WritingDraft {
     schemaVersion: 1;
+    storageVersion?: number;
+    editor?: { owner: import('../storage/WindowSession').SessionOwner; token: string };
     filePath: string;
     history: FileHistory;
     fingerprint: string;
@@ -90,6 +93,26 @@ export function sourceFor(
     start = 0,
     end = history.snapshots.length - 1,
 ): WritingSource {
+    return buildSource(history, start, end);
+}
+
+// Keep original indices and all reviewed plan boundaries. Skipped formatting is
+// folded into the next retained diff, so the patch chain still yields finalCode.
+export function writingSourceFor(
+    history: FileHistory,
+    start = 0,
+    end = history.snapshots.length - 1,
+    boundaries: number[] = [],
+): WritingSource {
+    return buildSource(history, start, end, new Set([start, end, ...boundaries]));
+}
+
+function buildSource(
+    history: FileHistory,
+    start: number,
+    end: number,
+    retained?: Set<number>,
+): WritingSource {
     if (
         !Number.isInteger(start) ||
         !Number.isInteger(end) ||
@@ -100,27 +123,26 @@ export function sourceFor(
         throw new Error('글에 사용할 변경 범위를 선택해 주세요.');
     }
     const contents = reconstructContents(history);
+    const language = history.language || 'plaintext';
+    const initialCode = start > 0 ? contents[start - 1] : '';
+    let previous = initialCode;
+    const changes: WritingSource['changes'] = [];
+    for (let index = start; index <= end; index++) {
+        const content = contents[index];
+        if (retained && !retained.has(index) && isCosmeticChange(previous, content, language)) continue;
+        changes.push({
+            index,
+            at: new Date(history.snapshots[index].timestamp).toISOString(),
+            diff: createTwoFilesPatch('before', 'after', previous, content, '', '', { context: 3 }),
+        });
+        previous = content;
+    }
     return {
         fileName: path.basename(history.filePath),
-        language: history.language || 'plaintext',
-        initialCode: start > 0 ? contents[start - 1] : '',
+        language,
+        initialCode,
         finalCode: contents[end],
-        changes: contents.slice(start, end + 1).map((content, offset) => {
-            const index = start + offset;
-            return {
-                index,
-                at: new Date(history.snapshots[index].timestamp).toISOString(),
-                diff: createTwoFilesPatch(
-                    'before',
-                    'after',
-                    index ? contents[index - 1] : '',
-                    content,
-                    '',
-                    '',
-                    { context: 3 },
-                ),
-            };
-        }),
+        changes,
     };
 }
 
@@ -144,7 +166,7 @@ export function preparationSource(history: FileHistory): WritingSource {
     let start = Math.max(0, history.snapshots.length - 400);
     const end = history.snapshots.length - 1;
     while (true) {
-        const source = sourceFor(history, start, end);
+        const source = writingSourceFor(history, start, end);
         if (
             JSON.stringify(source).length <= 450000 &&
             source.initialCode.length <= 250000 &&

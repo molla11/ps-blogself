@@ -19,6 +19,14 @@
             </div>
         </header>
         <main>
+            <div class="notice" id="ownership-box" role="status" hidden>
+                <span>다른 창에서 편집 중입니다. 최신 내용을 함께 보고 있어요.</span>
+                <button class="secondary" id="takeover-btn">이 창에서 편집</button>
+            </div>
+            <div class="notice" id="recovery-box" hidden>
+                <span>이 창의 미저장 입력을 보관하고 있습니다.</span>
+                <button class="secondary" id="recover-input-btn">미저장 입력 적용</button>
+            </div>
             <div class="notice" id="progress-box" role="status">
                 <span id="status-text">기록을 불러오고 있어요…</span
                 ><button class="quiet" id="cancel-btn" hidden>취소</button

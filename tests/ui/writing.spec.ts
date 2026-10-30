@@ -16,6 +16,8 @@ const plan = {
 };
 const base = {
     type: 'model',
+    editable: true,
+    editToken: 'window-a',
     filePath: '/work/solve.cpp',
     fileName: 'solve.cpp',
     plan,
@@ -222,4 +224,48 @@ test('cancelled initial preparation can restart without closing the writer', asy
     await model(page, { plan: undefined, pending: false, running: false, status: '작업을 취소했습니다.' });
     await page.getByRole('button', { name: '풀이 준비', exact: true }).click();
     expect((await messages(page)).at(-1).type).toBe('prepare');
+});
+
+test('another window’s writer is read-only, follows live text, and can request editing ownership', async ({ page }) => {
+    await open(page);
+    await model(page, { editable: false, editToken: 'window-b' });
+    await expect(page.locator('#ownership-box')).toBeVisible();
+    await expect(page.locator('#summary')).toHaveJSProperty('readOnly', true);
+    await expect(page.locator('#generate-btn')).toBeDisabled();
+    await page.locator('#range-details > summary').click();
+    await expect(page.locator('#range-start')).toBeDisabled();
+    await model(page, { editable: false, editToken: 'window-b', plan: { ...plan, summary: '다른 창의 최신 수정' } });
+    await expect(page.locator('#summary')).toHaveValue('다른 창의 최신 수정');
+    await page.getByRole('button', { name: '이 창에서 편집', exact: true }).click();
+    expect((await messages(page)).at(-1)).toMatchObject({ type: 'takeover', editToken: 'window-b' });
+    expect((await messages(page)).at(-1).fields).toBeUndefined();
+    await model(page, { editToken: 'new-window-a' });
+    await expect(page.locator('#ownership-box')).toBeHidden();
+    await expect(page.locator('#summary')).toHaveJSProperty('readOnly', false);
+    await expect(page.locator('#generate-btn')).toBeEnabled();
+});
+
+test('losing ownership preserves unsaved input for explicit recovery', async ({ page }) => {
+    await open(page);
+    await model(page);
+    await page.locator('#summary').fill('아직 저장하지 못한 설명');
+    await model(page, { editable: false, editToken: 'window-b' });
+    await expect(page.locator('#recovery-box')).toBeVisible();
+    await expect(page.locator('#summary')).toHaveValue(plan.summary);
+    await expect(page.locator('#recover-input-btn')).toBeDisabled();
+    expect((await page.evaluate(() => (window as any).__saved)).localRecovery.plan.summary).toBe('아직 저장하지 못한 설명');
+    await model(page, { editToken: 'new-window-a', plan: { ...plan, summary: '다른 창에서 저장한 설명' } });
+    await expect(page.locator('#summary')).toHaveValue('다른 창에서 저장한 설명');
+    await page.locator('#recover-input-btn').click();
+    await expect(page.locator('#summary')).toHaveValue('아직 저장하지 못한 설명');
+    expect((await messages(page)).at(-1)).toMatchObject({ type: 'save', editToken: 'new-window-a' });
+    expect((await messages(page)).at(-1).fields.plan.summary).toBe('아직 저장하지 못한 설명');
+});
+
+test('reopening after an ownership change does not silently overwrite the newer saved draft', async ({ page }) => {
+    await open(page, false, { filePath: base.filePath, editToken: 'old-owner', fields: { instructions: '이전 창의 미저장 입력' } });
+    await model(page, { instructions: '다른 창의 최신 입력' });
+    await expect(page.locator('#instructions')).toHaveValue('다른 창의 최신 입력');
+    await expect(page.locator('#recovery-box')).toBeVisible();
+    expect((await messages(page)).some((m: any) => m.type === 'save')).toBe(false);
 });

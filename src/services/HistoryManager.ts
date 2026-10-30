@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import * as diff from 'diff';
-import { storageManager } from '../storage/StorageManager';
+import { storageManager, HistoryConflict } from '../storage/StorageManager';
+import { historyFingerprint } from '../writing/model';
 import { FileHistory } from '../types';
 import { BlogPostManager } from './BlogPostManager';
 import { randomBytes } from 'crypto';
@@ -32,26 +33,34 @@ export class HistoryManager {
         }).catch(() => { if (!disposed) panel.webview.html = '<p>기록을 불러오지 못했습니다. 다시 열어 주세요.</p>'; });
 
         panel.webview.onDidReceiveMessage(async (message) => {
-            switch (message.type) {
-                case 'ready':
-                    loaded = true;
-                    if (panel.visible) void BlogPostManager.prepareOnReview(filePath);
-                    void panel.webview.postMessage({ type: 'preparation', text: BlogPostManager.preparationStatus(filePath) });
-                    break;
-                case 'write':
-                    await BlogPostManager.openPage(extensionUri, filePath);
-                    break;
-                case 'viewSnapshot':
-                    await this._openSnapshot(filePath, message.index);
-                    break;
-                case 'deleteSnapshot':
-                    await this._handleDeleteRequest(
-                        extensionUri,
-                        panel.webview,
-                        filePath,
-                        message.index,
-                    );
-                    break;
+            try {
+                switch (message.type) {
+                    case 'ready':
+                        loaded = true;
+                        if (panel.visible) void BlogPostManager.prepareOnReview(filePath);
+                        void panel.webview.postMessage({ type: 'preparation', text: BlogPostManager.preparationStatus(filePath) });
+                        break;
+                    case 'write':
+                        await BlogPostManager.openPage(extensionUri, filePath);
+                        break;
+                    case 'viewSnapshot':
+                        await this._openSnapshot(filePath, message.index, message.version);
+                        break;
+                    case 'deleteSnapshot':
+                        await this._handleDeleteRequest(
+                            extensionUri,
+                            panel.webview,
+                            filePath,
+                            message.index,
+                            message.version,
+                        );
+                        break;
+                }
+            } catch (error) {
+                if (error instanceof HistoryConflict) {
+                    void vscode.window.showInformationMessage(error.message);
+                    if (!disposed) panel.webview.html = await this._getHtmlForWebview(panel.webview, filePath, extensionUri);
+                } else void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
             }
         });
         const preparation = BlogPostManager.onDidChange(changed => {
@@ -66,6 +75,7 @@ export class HistoryManager {
         webview: vscode.Webview,
         filePath: string,
         index: number,
+        version: string,
     ) {
         let confirmMessage = '이 로그를 삭제하시겠습니까?';
 
@@ -90,7 +100,7 @@ export class HistoryManager {
         );
 
         if (selection === '삭제') {
-            await storageManager.deleteSnapshot(filePath, index);
+            await storageManager.deleteSnapshot(filePath, index, version);
             // Refresh the view
             webview.html = this._getLoadingHtml(webview);
             webview.html = await this._getHtmlForWebview(webview, filePath, extensionUri);
@@ -142,13 +152,14 @@ export class HistoryManager {
         </html>`;
     }
 
-    private static async _openSnapshot(filePath: string, index: number) {
+    private static async _openSnapshot(filePath: string, index: number, version: string) {
         const history = await storageManager.getFileHistory(filePath);
         if (!history) {
             vscode.window.showErrorMessage('History not found.');
             return;
         }
 
+        if (historyFingerprint(history) !== version) throw new HistoryConflict();
         let content = storageManager.reconstructFileContent(history, index);
         if (content === null) {
             vscode.window.showErrorMessage('Failed to reconstruct snapshot content.');
@@ -415,6 +426,7 @@ export class HistoryManager {
 
             <script nonce="${nonce}">
                 const vscode = acquireVsCodeApi();
+                const version = '${historyFingerprint(history)}';
                 document.getElementById('write-btn').addEventListener('click', () => vscode.postMessage({ type: 'write' }));
                 window.addEventListener('message', ({data}) => { if (data.type === 'preparation') document.getElementById('preparation-status').textContent = data.text; });
                 vscode.postMessage({ type: 'ready' });
@@ -424,6 +436,7 @@ export class HistoryManager {
                         const index = parseInt(e.currentTarget.getAttribute('data-index'));
                         vscode.postMessage({
                             type: 'viewSnapshot',
+                            version,
                             index: index
                         });
                     });
@@ -438,6 +451,7 @@ export class HistoryManager {
                         // Send request to backend immediately
                         vscode.postMessage({
                             type: 'deleteSnapshot',
+                            version,
                             index: index
                         });
                     });

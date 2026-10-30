@@ -82,12 +82,8 @@ export class FileWatcher {
         const rootFolder = configManager.getRootFolder();
         const relative = rootFolder ? path.relative(rootFolder, document.uri.fsPath) : '';
         if (
-            document.uri.scheme !== 'file' ||
-            (rootFolder
-                ? relative === '..' ||
-                  relative.startsWith('..' + path.sep) ||
-                  path.isAbsolute(relative)
-                : !vscode.workspace.getWorkspaceFolder(document.uri))
+            document.isClosed || document.uri.scheme !== 'file' ||
+            (rootFolder && (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)))
         ) {
             return false;
         }

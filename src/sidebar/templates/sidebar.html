@@ -38,29 +38,30 @@
 
                 <div class="current-status">
                     <span class="config-title">활성 경로</span>
-                    <div id="root-folder-display" class="status-value">로딩 중...</div>
-
-                    <div class="hint">
-                        <span>활성 경로 밖의 파일 수정은 기록하지 않습니다.</span>
-                    </div>
-
-                    <details class="path-settings">
-                        <summary>설정</summary>
-                        <div class="button-group">
-                            <button id="use-ws-root-btn" class="secondary">
-                                <span class="icon"> 📂 </span>
-                                <span>현재 디렉토리 (추천)</span>
+                    <div class="path-field">
+                        <div class="path-control">
+                            <button id="root-folder-btn" class="path-trigger" type="button" aria-label="활성 경로 선택" aria-haspopup="menu" aria-expanded="false" aria-controls="path-menu">
+                                <span class="path-ellipsis" dir="rtl"><bdi id="root-folder-display" dir="ltr">현재 열려있는 모든 파일</bdi></span>
+                                <i class="codicon codicon-chevron-down" aria-hidden="true"></i>
                             </button>
-                            <button id="clear-folder-btn" class="secondary">
-                                <span class="icon"> 🌐 </span>
-                                <span>전체 디렉토리</span>
-                            </button>
-                            <button id="select-folder-btn" class="secondary">
-                                <span class="icon">&nbsp;⋯&nbsp;</span>
-                                <span>사용자 지정 디렉토리</span>
+                            <span class="path-reset">
+                                <button id="clear-folder-btn" type="button" aria-label="활성 경로 재설정" aria-describedby="path-reset-tooltip">
+                                    <i class="codicon codicon-discard" aria-hidden="true"></i>
+                                </button>
+                                <span id="path-reset-tooltip" class="path-tooltip" role="tooltip">활성 경로 재설정</span>
+                            </span>
+                        </div>
+                        <div id="path-menu" role="menu" aria-label="활성 경로" hidden>
+                            <button id="select-folder-btn" class="menu-item" type="button" role="menuitem" tabindex="-1" data-path-action="selectRootFolder">디렉토리 직접 선택</button>
+                            <button id="use-ws-root-btn" class="menu-item" type="button" role="menuitem" tabindex="-1" data-path-action="useWorkspaceRoot" disabled>
+                                <span class="path-ellipsis" dir="rtl"><bdi id="current-directory-label" dir="ltr">열린 작업 폴더 없음</bdi></span>
+                                <span class="path-suffix" hidden>로 설정</span>
                             </button>
                         </div>
-                    </details>
+                    </div>
+                    <div id="root-folder-hint" class="hint" hidden>
+                        <span>활성 경로 밖의 파일 수정은 기록하지 않습니다.</span>
+                    </div>
                 </div>
             </div>
 

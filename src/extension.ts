@@ -10,7 +10,7 @@ export async function activate(context: vscode.ExtensionContext) {
     Logger.info(`activate() is executed.`);
 
     // Initialize state
-    configManager.init(context);
+    await configManager.init(context);
     storageManager.init(context);
     fileWatcher.init(context);
     BlogPostManager.init(context);
@@ -19,67 +19,49 @@ export async function activate(context: vscode.ExtensionContext) {
         context.extensionUri,
         () => selectRootFolder(sidebarProvider),
         () => clearRootFolder(sidebarProvider),
-        () => useWorkspaceRoot(sidebarProvider),
+        directory => useCurrentDirectory(sidebarProvider, directory),
         () => toggleRecording(sidebarProvider),
         (lang: string) => toggleLanguage(sidebarProvider, lang),
     );
 
     context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider),
+        vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider, {
+            // Preserve search, loaded rows and scroll position across sidebar switches.
+            webviewOptions: { retainContextWhenHidden: true },
+        }),
     );
 }
 
 async function selectRootFolder(sidebarProvider: SidebarProvider) {
+    const directory = configManager.getCurrentDirectory();
     const result = await vscode.window.showOpenDialog({
         canSelectFiles: false,
         canSelectFolders: true,
         canSelectMany: false,
         openLabel: '선택 완료',
-        defaultUri:
-            vscode.workspace.workspaceFolders?.[0]?.uri ?? vscode.Uri.file(process.env.HOME ?? '/'),
+        defaultUri: directory ? vscode.Uri.file(directory) : undefined,
     });
 
-    if (!result || result.length === 0) {
-        const rootPath = configManager.getRootFolder();
-        vscode.window.showInformationMessage(
-            `현재 트래킹 경로: ${rootPath.length === 0 ? '전체 워크스페이스' : rootPath}`,
-        );
-        return;
-    }
+    if (!result?.length) return;
 
     const path = result[0].fsPath;
     await configManager.setRootFolder(path);
-    sidebarProvider.updateState();
-
-    vscode.window.showInformationMessage(`이제 ${path} 아래의 변경 사항을 기록합니다.`);
+    await sidebarProvider.updateState();
 }
 
 async function clearRootFolder(sidebarProvider: SidebarProvider) {
     await configManager.setRootFolder('');
-    sidebarProvider.updateState();
-
-    vscode.window.showInformationMessage('이제 전체 워크스페이스의 변경 사항을 기록합니다.');
+    await sidebarProvider.updateState();
 }
 
-async function useWorkspaceRoot(sidebarProvider: SidebarProvider) {
-    const wsFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!wsFolder) {
-        vscode.window.showErrorMessage('열려 있는 워크스페이스 폴더가 없습니다.');
-        return;
-    }
-
-    const path = wsFolder.uri.fsPath;
-    await configManager.setRootFolder(path);
-    sidebarProvider.updateState();
-
-    vscode.window.showInformationMessage(
-        `이제 워크스페이스 루트(${path}) 아래의 변경 사항을 기록합니다.`,
-    );
+async function useCurrentDirectory(sidebarProvider: SidebarProvider, directory: string) {
+    await configManager.setRootFolder(directory);
+    await sidebarProvider.updateState();
 }
 
 async function toggleRecording(sidebarProvider: SidebarProvider) {
-    const newState = !configManager.isRecording();
-    await configManager.setRecording(newState);
+    await configManager.toggleRecording();
+    const newState = configManager.isRecording();
     sidebarProvider.updateState();
 
     if (newState) {

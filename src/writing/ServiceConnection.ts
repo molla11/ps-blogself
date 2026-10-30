@@ -1,25 +1,22 @@
 import * as vscode from 'vscode';
 import { createHash, randomBytes } from 'crypto';
+import { ConnectionEnvironment, resolveConnectionSettings, serviceUrl } from './ConnectionSettings';
 
-export const PUBLIC_API = 'https://psb-backend.shinem.dev/api';
 export interface Account { id: string; email: string; usage?: { requests: number; dailyLimit: number } }
 interface Credentials { token: string; user: Account }
 export class ServiceError extends Error { constructor(message: string, readonly status: number) { super(message); } }
-export function serviceUrl(value: string) {
-    const url = new URL(value);
-    if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) || url.username || url.password || url.search || url.hash) {
-        throw new Error('서버 주소는 HTTPS 또는 로컬 HTTP 주소여야 합니다.');
-    }
-    return url.href.replace(/\/$/, '');
-}
 export class ServiceConnection {
     readonly changed = new vscode.EventEmitter<void>();
     private login?: Promise<Credentials>;
-    constructor(private context: vscode.ExtensionContext) {}
-    get base() {
-        const configured = vscode.workspace.getConfiguration('psb').inspect<string>('apiUrl')?.globalValue;
-        return serviceUrl(configured || process.env.PSB_API_URL || PUBLIC_API);
+    constructor(private context: vscode.ExtensionContext, private development: ConnectionEnvironment = {}) {}
+    get settings() {
+        const config = vscode.workspace.getConfiguration('psb');
+        return resolveConnectionSettings({
+            mode: config.inspect<string>('aiMode')?.globalValue,
+            apiUrl: config.inspect<string>('apiUrl')?.globalValue,
+        }, process.env, this.development);
     }
+    get base() { return this.settings.apiUrl; }
     private key(base: string) { return 'psb.account.' + createHash('sha256').update(base).digest('hex'); }
     async saved(base = this.base): Promise<Credentials | undefined> {
         const raw = await this.context.secrets.get(this.key(base));

@@ -20,3 +20,5 @@ test-results/**
 playwright-report/**
 pnpm-workspace.yaml
 pnpm-lock.yaml
+.env
+.env.*

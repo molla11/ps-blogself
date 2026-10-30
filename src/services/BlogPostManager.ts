@@ -11,6 +11,7 @@ import { ServiceConnection, ServiceError } from '../writing/ServiceConnection';
 import { JobRouter, JobTarget } from '../writing/JobRouter';
 import { DraftStore, DraftConflict } from '../writing/DraftStore';
 import { WindowSession } from '../storage/WindowSession';
+import { ConnectionEnvironment } from '../writing/ConnectionSettings';
 import {
     WritingDraft,
     mergeResult,
@@ -53,11 +54,11 @@ export class BlogPostManager {
     private static closing = false;
     private static updates = new vscode.EventEmitter<string>();
     static readonly onDidChange = this.updates.event;
-    static init(context: vscode.ExtensionContext) {
+    static init(context: vscode.ExtensionContext, development: ConnectionEnvironment = {}) {
         this.store = new DraftStore(path.join(context.globalStorageUri.fsPath, 'writing'));
         this.ai = new AiConfiguration(context);
         const writer = new Writer({ settings: () => this.ai.get() });
-        this.connection = new ServiceConnection(context);
+        this.connection = new ServiceConnection(context, development);
         this.jobs = new JobRouter(new LocalJobs(path.join(context.globalStorageUri.fsPath, 'writing-jobs'), (request, signal) => writer.run(request, signal)), this.connection);
         context.subscriptions.push(
             vscode.commands.registerCommand('psb.connect', () => this.connect()),

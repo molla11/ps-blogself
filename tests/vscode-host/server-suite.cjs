@@ -28,7 +28,9 @@ async function surface(browser, selector) {
 }
 exports.run = async () => {
     const sandbox = process.env.PSB_HOST_SANDBOX, stage = process.env.PSB_HOST_STAGE;
-    await vscode.workspace.getConfiguration('psb').update('aiMode', 'server', vscode.ConfigurationTarget.Global);
+    // Explicit local environment must win over settings left from direct/public use.
+    await vscode.workspace.getConfiguration('psb').update('aiMode', 'direct', vscode.ConfigurationTarget.Global);
+    await vscode.workspace.getConfiguration('psb').update('apiUrl', 'https://psb-backend.shinem.dev/api', vscode.ConfigurationTarget.Global);
     const extension = vscode.extensions.all.find(e => e.packageJSON.name === 'ps-blogself');
     await extension.activate();
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${process.env.PSB_CDP_PORT}`);

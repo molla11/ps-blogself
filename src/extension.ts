@@ -5,6 +5,7 @@ import { fileWatcher } from './storage/FileWatcher';
 import { SidebarProvider } from './sidebar/SidebarProvider';
 import { BlogPostManager } from './services/BlogPostManager';
 import { Logger } from './services/logger';
+import { loadConnectionEnvironment } from './writing/ConnectionSettings';
 
 export async function activate(context: vscode.ExtensionContext) {
     Logger.info(`activate() is executed.`);
@@ -13,7 +14,8 @@ export async function activate(context: vscode.ExtensionContext) {
     await configManager.init(context);
     storageManager.init(context);
     fileWatcher.init(context);
-    BlogPostManager.init(context);
+    const development = await loadConnectionEnvironment(context.extensionPath, context.extensionMode === vscode.ExtensionMode.Development);
+    BlogPostManager.init(context, development);
 
     const sidebarProvider = new SidebarProvider(
         context.extensionUri,

@@ -1,4 +1,3 @@
-import * as vscode from 'vscode';
 import { LocalJobs } from './LocalJobs';
 import { ServiceConnection } from './ServiceConnection';
 import { WritingJob, WritingRequest } from './model';
@@ -6,7 +5,7 @@ import { WritingJob, WritingRequest } from './model';
 export interface JobTarget { kind: 'server' | 'direct'; base?: string; owner?: string }
 export class JobRouter {
     constructor(private local: LocalJobs, readonly connection: ServiceConnection) {}
-    get direct() { return vscode.workspace.getConfiguration('psb').get<string>('aiMode', 'server') === 'direct'; }
+    get direct() { return this.connection.settings.mode === 'direct'; }
     async target(interactive = true): Promise<JobTarget> {
         if (this.direct) return { kind: 'direct' };
         const base = this.connection.base, credentials = await this.connection.credentials(interactive, base);

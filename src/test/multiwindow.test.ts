@@ -132,3 +132,9 @@ test('a stale history view cannot delete a different record after another window
     await assert.rejects(b.call('deleteSnapshot', {file, index: 1, version}), /다른 창/);
     assert.deepEqual(reconstructContents(await a.call('history', file)), ['print(2)', 'print(3)', 'print(4)']);
 }));
+
+test('oversized snapshots leave existing history intact and recording resumes after shrinking', {timeout: 20000}, () => windows(async (a, _b, dir) => {
+    const file = path.join(dir, 'large.c');
+    await a.call('snapshots', {file, contents: ['int a;', 'x'.repeat(512 * 1024 + 1), '가'.repeat(200000), 'int b;']});
+    assert.deepEqual(reconstructContents(await a.call('history', file)), ['int a;', 'int b;']);
+}));

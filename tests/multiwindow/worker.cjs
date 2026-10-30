@@ -5,6 +5,7 @@ const original = Module._load;
 const uri = value => ({ fsPath: value, scheme: 'file', toString: () => value });
 Module._load = function(name, ...args) {
     if (name === 'vscode') return {
+        window: { showWarningMessage: async () => undefined },
         Uri: { file: uri, joinPath: (base, ...parts) => uri(path.join(base.fsPath, ...parts)) },
         EventEmitter: class {
             constructor() { this.emitter = new EventEmitter(); this.event = callback => { this.emitter.on('event', callback); return { dispose: () => this.emitter.off('event', callback) }; }; }

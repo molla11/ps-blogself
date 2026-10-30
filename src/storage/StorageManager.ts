@@ -5,6 +5,7 @@ import { FileHistory, Snapshot, RequestLog, SessionIndexItem, SnapshotDiff } fro
 import { getHash, generateUUID, computeDiff } from './utils';
 import { Logger } from '../services/logger';
 import { atomicWrite, observeFile, withFileLock } from './SharedFiles';
+import { limitedSnapshotText } from './SnapshotLimit';
 
 export class HistoryConflict extends Error {
     constructor() { super('다른 창에서 수정 기록이 변경되었습니다. 최신 기록을 확인해 주세요.'); }
@@ -14,6 +15,7 @@ export class StorageManager {
     private static _instance: StorageManager;
     private _globalStorageUri?: vscode.Uri;
     private _saveQueue: Promise<void> = Promise.resolve();
+    private oversized = new Set<string>();
     private _historyDir?: vscode.Uri;
 
     private _indexFileUri?: vscode.Uri;
@@ -95,7 +97,19 @@ export class StorageManager {
     }
 
     public saveSnapshot(document: vscode.TextDocument): Promise<void> {
-        const content = document.getText();
+        const length = typeof document.offsetAt === 'function'
+            ? document.offsetAt(new vscode.Position(document.lineCount - 1, Number.MAX_SAFE_INTEGER)) : undefined;
+        const content = limitedSnapshotText(length, () => document.getText());
+        const key = document.uri.toString();
+        if (content === undefined) {
+            if (!this.oversized.has(key)) {
+                if (this.oversized.size >= 128) this.oversized.delete(this.oversized.values().next().value!);
+                this.oversized.add(key);
+                void vscode.window.showWarningMessage(`${path.basename(document.uri.fsPath)}: 512KiB를 초과해 수정 기록을 저장하지 않았습니다. 파일 저장과 기존 기록은 유지됩니다.`);
+            }
+            return Promise.resolve();
+        }
+        this.oversized.delete(key);
         const write = this._saveQueue.then(() => withFileLock(this._indexFileUri!.fsPath, () => this._saveSnapshot(document, content)));
         this._saveQueue = write.catch(() => {});
         return write;

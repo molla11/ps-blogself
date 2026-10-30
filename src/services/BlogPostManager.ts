@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import MarkdownIt = require('markdown-it');
+import { checkInputSize } from '../writing/InputLimits';
 import { randomBytes, randomUUID } from 'crypto';
 import { storageManager } from '../storage/StorageManager';
 import { LocalJobs } from '../writing/LocalJobs';
@@ -482,9 +483,7 @@ export class BlogPostManager {
             kind === 'prepare_blog'
                 ? preparationSource(history)
                 : writingSourceFor(history, plan!.start, plan!.end, plan!.steps.flatMap((step) => [step.start, step.end]));
-        if (JSON.stringify(source).length > 480000) {
-            throw new Error('분석할 기록이 너무 큽니다. 기록 범위를 줄여 주세요.');
-        }
+        checkInputSize({ source });
         target ||= await this.jobs.target(!prefetch);
         if (kind === 'prepare_blog') draft.preparationKey = historyFingerprint(history);
         draft.pending = {

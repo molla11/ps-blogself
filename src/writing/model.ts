@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import { createTwoFilesPatch } from 'diff';
 import { FileHistory } from '../types';
 import { isCosmeticChange } from './ChangeFilter';
+import { checkInputSize, MAX_CHANGES, MAX_CODE_BYTES, MAX_RECONSTRUCTED_BYTES, InputSizeError, utf8Bytes } from './InputLimits';
 
 export interface WritingStep {
     title: string;
@@ -37,6 +38,7 @@ export interface WritingJob {
     status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
     progress: number;
     error?: string;
+    errorCode?: string;
     result?: { plan?: WritingPlan; title?: string; markdown?: string };
     partial?: string;
 }
@@ -125,11 +127,17 @@ function buildSource(
     const contents = reconstructContents(history);
     const language = history.language || 'plaintext';
     const initialCode = start > 0 ? contents[start - 1] : '';
-    let previous = initialCode;
+    if (retained && [initialCode, ...contents.slice(start, end + 1)].some(code => utf8Bytes(code) > MAX_CODE_BYTES)) {
+        throw new InputSizeError('코드 파일은 UTF-8 기준 512KiB 이하여야 합니다. 파일 크기나 선택한 기록을 확인해 주세요.');
+    }
+    let previous = initialCode, reconstructedBytes = 0;
     const changes: WritingSource['changes'] = [];
     for (let index = start; index <= end; index++) {
         const content = contents[index];
         if (retained && !retained.has(index) && isCosmeticChange(previous, content, language)) continue;
+        if (retained && (reconstructedBytes += utf8Bytes(content)) > MAX_RECONSTRUCTED_BYTES) {
+            throw new InputSizeError('복원할 기록이 너무 큽니다. 더 짧은 구간을 선택해 주세요.');
+        }
         changes.push({
             index,
             at: new Date(history.snapshots[index].timestamp).toISOString(),
@@ -163,21 +171,17 @@ export function newDraft(history: FileHistory): WritingDraft {
 
 export function preparationSource(history: FileHistory): WritingSource {
     // Keep the UI's complete history. Only bound the material in one model request.
-    let start = Math.max(0, history.snapshots.length - 400);
+    let start = Math.max(0, history.snapshots.length - MAX_CHANGES);
     const end = history.snapshots.length - 1;
     while (true) {
-        const source = writingSourceFor(history, start, end);
-        if (
-            JSON.stringify(source).length <= 450000 &&
-            source.initialCode.length <= 250000 &&
-            source.finalCode.length <= 250000 &&
-            source.changes.every((change) => change.diff.length <= 250000)
-        ) {
+        try {
+            const source = writingSourceFor(history, start, end);
+            checkInputSize({ source });
             return source;
-        }
+        } catch (error) { if (!(error instanceof InputSizeError)) throw error; }
         if (start === end) {
             throw new Error(
-                '코드가 한 번에 분석하기에는 너무 큽니다. 250,000자 이하의 파일을 선택해 주세요.',
+                '코드가 한 번에 분석하기에는 너무 큽니다. 512KiB 이하의 파일과 더 짧은 기록 범위를 선택해 주세요.',
             );
         }
         start += Math.max(1, Math.ceil((end - start) / 3));

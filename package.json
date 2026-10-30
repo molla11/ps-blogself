@@ -70,7 +70,7 @@
         "check-types": "tsc --noEmit",
         "lint": "eslint src",
         "test": "vscode-test",
-        "test:unit": "node --test --require ./scripts/register-typescript.cjs src/test/storage.test.ts src/test/writing.test.ts src/test/change-filter.test.ts src/test/local-writing.test.ts src/test/sidebar.test.ts src/test/multiwindow.test.ts",
+        "test:unit": "node --test --require ./scripts/register-typescript.cjs src/test/storage.test.ts src/test/writing.test.ts src/test/change-filter.test.ts src/test/input-guard.test.ts src/test/local-writing.test.ts src/test/sidebar.test.ts src/test/multiwindow.test.ts",
         "test:ui": "playwright test",
         "dev": "pnpm compile && node scripts/dev.cjs",
         "package:vsix": "vsce package --no-dependencies --allow-missing-repository --skip-license --out dist/ps-blogself.vsix",

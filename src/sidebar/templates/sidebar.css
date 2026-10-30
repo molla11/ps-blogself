@@ -571,6 +571,19 @@ button.action-btn {
     flex-shrink: 0;
 }
 .account-actions { display: flex; flex-direction: row; align-items: center; gap: 8px; flex-shrink: 0; }
+#usage-btn {
+    flex-shrink: 0;
+    display: block;
+    width: 100%;
+    min-width: 0;
+    padding: 3px 0;
+    font-size: 11px;
+    font-weight: 400;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 #connect-server-btn { flex: 1; text-align: left; }
 #sample-btn { flex: 0 0 auto; }
 .account-actions button { display: block; width: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

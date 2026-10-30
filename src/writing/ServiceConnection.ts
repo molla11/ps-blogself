@@ -1,13 +1,20 @@
 import * as vscode from 'vscode';
 import { createHash, randomBytes } from 'crypto';
 import { ConnectionEnvironment, resolveConnectionSettings, serviceUrl } from './ConnectionSettings';
+import { AccountUsage, accountUsage, UsageView, usageView } from './Usage';
 
-export interface Account { id: string; email: string; usage?: { requests: number; dailyLimit: number } }
+export interface Account {
+    id: string; email: string;
+    usage?: AccountUsage;
+}
 interface Credentials { token: string; user: Account }
 export class ServiceError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 export class ServiceConnection {
     readonly changed = new vscode.EventEmitter<void>();
     private login?: Promise<Credentials>;
+    private usageSnapshot?: { base: string; token: string; view: UsageView };
+    private usageRequest?: { base: string; token: string; promise: Promise<void> };
+    private usageRevision = 0;
     constructor(private context: vscode.ExtensionContext, private development: ConnectionEnvironment = {}) {}
     get settings() {
         const config = vscode.workspace.getConfiguration('psb');
@@ -24,8 +31,57 @@ export class ServiceConnection {
         try { const data = JSON.parse(raw); return typeof data.token === 'string' && data.user?.id ? data : undefined; } catch { return undefined; }
     }
     async account() { return (await this.saved())?.user; }
+    async usage(): Promise<UsageView | undefined> {
+        if (this.settings.mode === 'direct') return;
+        const base = this.base, saved = await this.saved(base);
+        if (!saved) return;
+        if (this.usageSnapshot?.base === base && this.usageSnapshot.token === saved.token) return this.usageSnapshot.view;
+        return { status: 'loading', label: '사용량 불러오는 중…', detail: '서버의 사용량을 확인합니다.' };
+    }
+    private async rememberUsage(base: string, token: string, view: UsageView, expectedRevision?: number) {
+        const saved = await this.saved(base);
+        if (this.settings.mode !== 'server' || this.base !== base || saved?.token !== token
+            || (expectedRevision !== undefined && expectedRevision !== this.usageRevision)) return;
+        this.usageRevision++;
+        this.usageSnapshot = { base, token, view };
+        this.changed.fire();
+    }
+    async refreshUsage(afterCurrent = false): Promise<void> {
+        if (this.settings.mode !== 'server') return;
+        const base = this.base, saved = await this.saved(base);
+        if (!saved) return;
+        if (this.usageRequest?.base === base && this.usageRequest.token === saved.token) {
+            await this.usageRequest.promise;
+            if (afterCurrent) await this.refreshUsage();
+            return;
+        }
+        const revision = this.usageRevision;
+        const request = { base, token: saved.token, promise: Promise.resolve() };
+        request.promise = (async () => {
+            try {
+                const user = await this.fetchJson<Account>(base, '/me', 'GET', undefined, saved.token);
+                if (user.id !== saved.user.id) throw new Error('사용량을 조회한 계정이 변경되었습니다.');
+                await this.rememberUsage(base, saved.token, usageView(accountUsage(user.usage)), revision);
+            } catch (error) {
+                await this.rememberUsage(base, saved.token, {
+                    status: 'error', label: '사용량 확인 불가 · 다시 확인',
+                    detail: error instanceof Error ? error.message : '서버의 사용량을 불러오지 못했습니다.',
+                }, revision);
+            } finally { if (this.usageRequest === request) this.usageRequest = undefined; }
+        })();
+        this.usageRequest = request;
+        return request.promise;
+    }
+    async showUsage() {
+        await this.refreshUsage();
+        const usage = await this.usage();
+        if (usage?.status === 'ready') void vscode.window.showInformationMessage(usage.detail);
+        else if (usage?.status === 'error') void vscode.window.showErrorMessage(usage.detail);
+    }
     private async store(base: string, value: Credentials) {
-        await this.context.secrets.store(this.key(base), JSON.stringify(value)); this.changed.fire(); return value;
+        await this.context.secrets.store(this.key(base), JSON.stringify(value)); this.changed.fire();
+        void this.refreshUsage();
+        return value;
     }
     async fetchJson<T>(base: string, route: string, method = 'GET', body?: unknown, token?: string): Promise<T> {
         let response: Response;
@@ -38,7 +94,13 @@ export class ServiceConnection {
         } catch { throw new Error('글쓰기 서비스에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.'); }
         const data = await response.json().catch(() => ({})) as any;
         if (!response.ok) {
-            if (response.status === 401 && token) { await this.context.secrets.delete(this.key(base)); this.changed.fire(); }
+            if (response.status === 401 && token && (await this.saved(base))?.token === token) {
+                await this.context.secrets.delete(this.key(base)); this.changed.fire();
+            }
+            if ([402, 429].includes(response.status) && token && data.usage) {
+                try { await this.rememberUsage(base, token, usageView(accountUsage(data.usage))); }
+                catch { /* Preserve the original server error if usage is unavailable. */ }
+            }
             throw new ServiceError(data.message || `요청을 처리하지 못했습니다 (${response.status}).`, response.status);
         }
         return data as T;
@@ -78,9 +140,7 @@ export class ServiceConnection {
         if (!saved) { await this.credentials(); return; }
         const choice = await vscode.window.showQuickPick(['사용량 확인', '로그아웃'], { title: saved.user.email });
         if (choice === '사용량 확인') {
-            const user = await this.request<Account>('/me');
-            await this.store(this.base, { ...saved, user });
-            void vscode.window.showInformationMessage(`오늘 AI 요청 ${user.usage?.requests || 0} / ${user.usage?.dailyLimit || 0}회`);
+            await this.showUsage();
         } else if (choice === '로그아웃') {
             try { await this.request('/logout', 'POST'); } finally { await this.context.secrets.delete(this.key(this.base)); this.changed.fire(); }
         }

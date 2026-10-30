@@ -62,6 +62,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     }
                     case 'getInitialData': {
                         await this.updateState();
+                        void BlogPostManager.refreshUsage();
                         break;
                     }
                     case 'searchLogs':
@@ -105,6 +106,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         await BlogPostManager.connect();
                         break;
                     }
+                    case 'showUsage': {
+                        await BlogPostManager.showUsage();
+                        break;
+                    }
                     case 'sample':
                         await vscode.commands.executeCommand('psb.sample');
                         break;
@@ -139,6 +144,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         webviewView.onDidDispose(() => disposable.dispose());
         const accountUpdate = BlogPostManager.onDidChange(file => { if (!file) void this.updateState(); });
         webviewView.onDidDispose(() => accountUpdate.dispose());
+        const refreshUsage = () => {
+            if (webviewView.visible && vscode.window.state.focused) void BlogPostManager.refreshUsage();
+        };
+        const usageTimer = setInterval(refreshUsage, 30000);
+        usageTimer.unref();
+        const visibility = webviewView.onDidChangeVisibility(refreshUsage);
+        const focus = vscode.window.onDidChangeWindowState(refreshUsage);
+        const connectionSettings = vscode.workspace.onDidChangeConfiguration(event => {
+            if (event.affectsConfiguration('psb.aiMode') || event.affectsConfiguration('psb.apiUrl')) {
+                void this.updateState(); refreshUsage();
+            }
+        });
+        webviewView.onDidDispose(() => { clearInterval(usageTimer); visibility.dispose(); focus.dispose(); connectionSettings.dispose(); });
         const settingsUpdate = configManager.onDidChange(() => { void this.updateState(); });
         webviewView.onDidDispose(() => settingsUpdate.dispose());
         const updateDirectory = () => webviewView.webview.postMessage({ type: 'currentDirectory', path: configManager.getCurrentDirectory() });
@@ -153,10 +171,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     public async updateState() {
         const view = this._view;
         if (view) {
-            const [page, totalSize, accountLabel] = await Promise.all([
+            const [page, totalSize, accountLabel, usage] = await Promise.all([
                 this._recentLogs.load(),
                 storageManager.calculateTotalSize(),
                 BlogPostManager.accountLabel(),
+                BlogPostManager.usage(),
             ]);
             if (view !== this._view) return;
 
@@ -170,6 +189,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 ...page,
                 totalLogSize: totalSize,
                 accountLabel,
+                usage,
             });
         }
     }

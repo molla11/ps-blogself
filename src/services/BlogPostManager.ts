@@ -97,6 +97,9 @@ export class BlogPostManager {
         else await this.connection.configure();
     }
     static async accountLabel() { return this.jobs.direct ? '직접 호출 · AI 설정' : (await this.connection.account())?.email || '로그인'; }
+    static usage() { return this.connection.usage(); }
+    static refreshUsage() { return this.connection.refreshUsage(); }
+    static showUsage() { return this.connection.showUsage(); }
     static preparationStatus(filePath: string) {
         const view = this.views.get(filePath);
         return view?.error ? '글쓰기 준비를 다시 시도할 수 있어요.' : view?.draft.pending ? 'AI가 글쓰기 내용을 준비하고 있어요…' : view?.draft.plan ? '글쓰기 준비가 끝났어요.' : '글쓰기에서 AI가 풀이를 정리해 드려요.';
@@ -564,6 +567,7 @@ export class BlogPostManager {
                 if (error instanceof DraftConflict) await this.enqueue(view, () => this.refresh(view));
                 else if (!signal.aborted) view.error = error instanceof Error ? error.message : String(error);
             } finally {
+                if (!this.closing) void this.connection.refreshUsage(true);
                 if (view.watcher === controller) {
                     view.task = undefined;
                     this.render(view);

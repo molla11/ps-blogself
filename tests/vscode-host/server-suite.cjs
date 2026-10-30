@@ -95,6 +95,36 @@ exports.run = async () => {
             assert.equal((await requests()).length, 3, 'sample reopening reuses its plan');
             assert.ok((await requests())[2].source.fileName.includes('샘플'));
         }
+        await vscode.commands.executeCommand('psb.sidebar.focus');
+        const usageSidebar = await surface(browser, '#usage-btn');
+        // Headless Linux hosts can restart without an OS keyring. An unsigned
+        // session must hide usage; explicitly connect before comparing amounts.
+        if ((await usageSidebar.frame.locator('#connect-server-btn').innerText()) === '로그인') {
+            assert.equal(await usageSidebar.frame.locator('#usage-btn').isHidden(), true);
+            await usageSidebar.frame.locator('#connect-server-btn').click();
+        }
+        const credentials = await (await fetch(process.env.PSB_API_URL + '/auth/local', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})).json();
+        const usageResponse = await fetch(process.env.PSB_API_URL + '/usage', {headers: {Authorization: 'Bearer ' + credentials.token}});
+        assert.equal(usageResponse.status, 200);
+        const usage = await usageResponse.json();
+        try {
+            await until(async () => (await usageSidebar.frame.locator('#usage-btn').getAttribute('title'))?.includes(`오늘 요청 ${usage.todayRequests}회`), 'sidebar reflects actual server accounting after generation and restart');
+        } catch (error) {
+            await fs.writeFile(path.join(sandbox, stage + '-usage-error.json'), JSON.stringify({
+                expected: usage,
+                label: await usageSidebar.frame.locator('#usage-btn').innerText(),
+                detail: await usageSidebar.frame.locator('#usage-btn').getAttribute('title'),
+                account: await usageSidebar.frame.locator('#connect-server-btn').innerText(),
+            }));
+            await usageSidebar.page.screenshot({path: path.join(sandbox, stage + '-usage-error.png')});
+            throw error;
+        }
+        const label = await usageSidebar.frame.locator('#usage-btn').innerText();
+        const credits = value => new Intl.NumberFormat('ko-KR', {minimumFractionDigits: 0, maximumFractionDigits: 2}).format(value);
+        assert.ok(label.includes(credits(usage.freeHourlyUsedCredits)));
+        assert.ok(label.includes(credits(usage.freeHourlyLimitCredits)));
+        assert.ok(label.includes('유료 ' + credits(usage.creditBalance) + '크레딧'));
+        assert.doesNotMatch(label, /USD|\$|달러/);
         await writer.page.screenshot({ path: path.join(sandbox, stage + '.png') });
         await fs.writeFile(path.join(sandbox, stage + '.json'), JSON.stringify({ stage, passed: true }));
     } finally { await browser.close(); }

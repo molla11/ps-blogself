@@ -485,6 +485,13 @@ window.addEventListener('message', (event) => {
     switch (message.type) {
         case 'updateState':
             document.getElementById('connect-server-btn').textContent = message.accountLabel || '로그인';
+            {
+                const usage = document.getElementById('usage-btn');
+                usage.hidden = !message.usage;
+                usage.textContent = message.usage?.label || '';
+                usage.title = message.usage?.detail || '서버 사용량 확인';
+                usage.disabled = message.usage?.status === 'loading';
+            }
             rootDisplay.textContent = message.root || '현재 열려있는 모든 파일';
             rootButton.title = rootDisplay.textContent;
             rootHint.hidden = !message.root;
@@ -582,3 +589,4 @@ document
     .getElementById('connect-server-btn')
     .addEventListener('click', () => vscode.postMessage({ type: 'connectServer' }));
 document.getElementById('sample-btn').addEventListener('click', () => vscode.postMessage({ type: 'sample' }));
+document.getElementById('usage-btn').addEventListener('click', () => vscode.postMessage({ type: 'showUsage' }));

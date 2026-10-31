@@ -1,5 +1,6 @@
 const esbuild = require('esbuild');
 const fs = require('node:fs/promises');
+const { webviewPlugin } = require('./scripts/build-webview.cjs');
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
@@ -42,13 +43,13 @@ async function main() {
         external: ['vscode'],
         logLevel: 'silent',
         plugins: [
+            webviewPlugin,
             /* add to the end of plugins array */
             esbuildProblemMatcherPlugin,
         ],
         loader: {
             '.html': 'text',
             '.css': 'text',
-            '.webview.js': 'text',
         },
     });
     if (watch) {

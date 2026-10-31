@@ -9,9 +9,10 @@
     </head>
     <body>
         <header class="topbar">
-            <div>
-                <span class="eyebrow" id="file-name">풀이 기록</span>
-                <h1>글 만들기</h1>
+            <div class="document-location">
+                <span id="file-name">풀이 기록</span>
+                <span class="location-divider" aria-hidden="true">/</span>
+                <h1>글쓰기</h1>
             </div>
             <div class="actions">
                 <span id="save-status" role="status"></span
@@ -29,8 +30,7 @@
             </div>
             <div class="notice" id="progress-box" role="status">
                 <span id="status-text">기록을 불러오고 있어요…</span
-                ><button class="quiet" id="cancel-btn" hidden>취소</button
-                ><progress id="progress" max="100" hidden></progress>
+                ><button class="quiet" id="cancel-btn" hidden>취소</button>
             </div>
             <div class="notice error" id="error-box" role="alert" hidden>
                 <span id="error-text"></span>
@@ -61,11 +61,11 @@
                     <p>변경 구간과 풀이 설명을 먼저 채워드릴게요.</p>
                     <button id="prepare-empty-btn" class="secondary" hidden>풀이 준비</button>
                 </div>
-                <div id="plan-content" hidden>
+                <div id="plan-content" class="preparation-content" hidden>
                     <div class="section-heading">
                         <div>
-                            <h2>글에 담을 내용</h2>
-                            <p class="section-description">AI가 채운 내용에서 필요한 부분만 고쳐주세요.</p>
+                            <h2>글의 흐름</h2>
+                            <p class="section-description">제목과 설명을 확인하고 글쓰기를 시작하세요.</p>
                         </div>
                         <button class="quiet" id="prepare-btn">다시 준비</button>
                     </div>
@@ -126,14 +126,28 @@
                 </label>
             </section>
             <section id="article-view" hidden>
-                <div class="section-heading">
-                    <h2>완성된 글</h2>
+                <div class="document-controls">
+                    <button class="quiet" id="outline-toggle" aria-expanded="false" aria-controls="article-outline">목차</button>
                     <div class="actions">
-                        <button class="secondary" id="preview-btn">미리보기</button
-                        ><button class="secondary" id="copy-btn">복사</button
-                        ><button class="secondary" id="export-btn">Markdown 저장</button>
+                        <button class="quiet" id="source-btn" aria-pressed="false">Markdown</button>
+                        <button class="quiet" id="preview-btn" aria-pressed="false">미리보기</button>
+                        <button class="secondary" id="export-menu-btn" popovertarget="export-menu" aria-haspopup="true">
+                            내보내기
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3.14645 5.64645C3.34171 5.45118 3.65829 5.45118 3.85355 5.64645L8 9.79289L12.1464 5.64645C12.3417 5.45118 12.6583 5.45118 12.8536 5.64645C13.0488 5.84171 13.0488 6.15829 12.8536 6.35355L8.35355 10.8536C8.15829 11.0488 7.84171 11.0488 7.64645 10.8536L3.14645 6.35355C2.95118 6.15829 2.95118 5.84171 3.14645 5.64645Z"/></svg>
+                        </button>
                     </div>
                 </div>
+                <div id="export-menu" class="action-menu" popover="auto" aria-label="내보내기">
+                    <button id="ghost-save-btn">Ghost 초안 저장</button>
+                    <button id="ghost-publish-btn">Ghost에 게시…</button>
+                    <button id="ghost-open-btn" hidden>Ghost에서 열기</button>
+                    <button id="ghost-connect-btn">Ghost 연결 설정</button>
+                    <hr>
+                    <button id="export-btn">Markdown 파일 저장</button>
+                    <button id="export-html-btn">HTML 파일 저장</button>
+                    <button id="copy-btn">Markdown 복사</button>
+                </div>
+                <p id="ghost-status" class="ghost-status" role="status" hidden></p>
                 <div class="version-bar" id="versions-box" hidden>
                     <label for="version-select">버전</label>
                     <div class="version-picker">
@@ -143,9 +157,35 @@
                     </div>
                     <button class="secondary" id="restore-version-btn" hidden>이 버전 사용</button>
                 </div>
-                <div id="current-article">
-                    <label class="field">글 제목<input id="article-title" maxlength="300" /></label>
-                    <label class="field" id="body-field"
+                <div class="document-layout" id="document-layout">
+                    <aside id="article-outline" aria-label="글 목차" hidden>
+                        <h2>목차</h2>
+                        <p id="outline-empty" class="muted">본문에 제목을 넣으면 여기에 표시됩니다.</p>
+                        <div id="outline-list"></div>
+                    </aside>
+                    <div class="document-column">
+                        <div class="format-bar" id="format-bar">
+                            <select id="block-type" aria-label="문단 서식">
+                                <option value="paragraph">본문</option>
+                                <option value="1">제목 1</option><option value="2">제목 2</option><option value="3">제목 3</option>
+                                <option value="4">제목 4</option><option value="5">제목 5</option><option value="6">제목 6</option>
+                            </select>
+                            <div id="format-tools" role="group" aria-label="본문 서식"></div>
+                            <select id="code-language" aria-label="코드 언어" hidden>
+                                <option value="">텍스트</option><option value="c">C</option><option value="cpp">C++</option><option value="python">Python</option>
+                                <option value="javascript">JavaScript</option><option value="typescript">TypeScript</option><option value="diff">diff</option><option value="json">JSON</option><option value="bash">Bash</option>
+                            </select>
+                            <button class="quiet" id="insert-block-btn" popovertarget="insert-menu" aria-haspopup="true" title="블록 추가">＋</button>
+                        </div>
+                        <div id="insert-menu" class="action-menu" popover="auto" aria-label="블록 추가">
+                            <button data-insert="paragraph">본문</button><button data-insert="heading">제목</button><button data-insert="code">코드 블록</button>
+                            <button data-insert="list">목록</button><button data-insert="quote">인용</button><button data-insert="table">표</button><button data-insert="image">이미지 주소 삽입</button>
+                        </div>
+                        <div id="block-menu" class="action-menu" popover="auto" aria-label="블록 메뉴"><button data-block-action="up">위로 이동</button><button data-block-action="down">아래로 이동</button><button data-block-action="delete">블록 삭제</button></div>
+                        <div class="document-paper" id="current-article">
+                    <label class="article-title-field"><span class="visually-hidden">글 제목</span><textarea id="article-title" rows="1" maxlength="300" placeholder="글 제목" spellcheck="false"></textarea></label>
+                    <div id="rich-editor"></div>
+                    <label class="field" id="body-field" hidden
                         >본문<textarea
                             id="article-body"
                             rows="18"
@@ -155,10 +195,12 @@
                     </label>
                     <article id="article-preview" class="article-preview" hidden></article>
                 </div>
-                <div id="version-preview" hidden>
+                <div class="document-paper" id="version-preview" hidden>
                     <p class="section-description" id="version-status" role="status">이전 버전 미리보기</p>
                     <h3 id="version-title"></h3>
                     <article id="version-body" class="article-preview" aria-label="선택한 버전 본문"></article>
+                </div>
+                    </div>
                 </div>
             </section>
         </main>
@@ -166,6 +208,19 @@
             <span class="loading-spinner" aria-hidden="true"></span>
             <span id="loading-title"></span>
         </div>
+        <dialog id="url-dialog" aria-labelledby="url-dialog-title">
+            <form id="url-form">
+                <h2 id="url-dialog-title">링크</h2>
+                <label class="field">주소<input id="insert-url" type="url" required placeholder="https://" /></label>
+                <label class="field" id="image-description-field" hidden>이미지 설명<input id="image-description" maxlength="300" /></label>
+                <label class="field" id="image-caption-field" hidden>캡션<input id="image-caption" maxlength="1000" /></label>
+                <div class="actions dialog-actions">
+                    <button type="button" class="quiet" id="remove-link-btn" hidden>링크 제거</button>
+                    <button type="button" class="quiet" id="close-url-btn">취소</button>
+                    <button type="submit">적용</button>
+                </div>
+            </form>
+        </dialog>
         {{script}}
     </body>
 </html>

@@ -104,7 +104,7 @@ test('AI-filled text and range can generate a complete draft without typing', as
         ),
     );
     await expect(page.locator('#article-preview')).toContainText('완성한 글입니다.');
-    await page.getByRole('button', { name: '본문 수정' }).click();
+    await page.locator('#source-btn').click();
     await expect(page.locator('#article-body')).toBeVisible();
     await page.screenshot({ path: 'test-results/writer.png' });
 });
@@ -206,6 +206,7 @@ test('narrowing and widening a range preserves edited step explanations', async 
 test('streaming shows a readable preview without replacing an edited article', async ({ page }) => {
     await open(page);
     await model(page, { title: '이전 제목', markdown: '사용자가 쓴 본문' });
+    await page.locator('#source-btn').click();
     await page.locator('#article-body').fill('작성 중에도 보존할 본문');
     await model(page, { pending: true, running: true, title: '이전 제목', markdown: '사용자가 쓴 본문', streamHtml: '<h2>새로 생성 중</h2><p>본문이 먼저 보입니다.</p>' });
     await expect(page.locator('#stream-preview')).toContainText('본문이 먼저 보입니다.');
@@ -283,6 +284,7 @@ async function versionPreview(page: Page, versionId: string) {
 test('version browsing preserves unsaved work, ignores late previews and restores by stable identity', async ({ page }) => {
     await open(page);
     await model(page, { title: '현재 제목', markdown: '현재 본문', versions });
+    await page.locator('#source-btn').click();
     await page.locator('#article-body').fill('아직 저장 중인 본문');
     await page.locator('#version-older-btn').click();
     await expect(page.locator('#version-select')).toHaveValue('newer');
@@ -316,9 +318,11 @@ test('read-only windows can browse and copy versions without applying or saving 
     await page.getByLabel('글 버전', { exact: true }).selectOption('newer');
     await versionPreview(page, 'newer');
     await expect(page.locator('#restore-version-btn')).toBeDisabled();
+    await page.locator('#export-menu-btn').click();
     await page.locator('#copy-btn').click();
     expect((await messages(page)).at(-1)).toMatchObject({ type: 'copy', versionId: 'newer' });
     expect((await messages(page)).at(-1).fields).toBeUndefined();
+    await page.locator('#export-menu-btn').click();
     await page.locator('#export-btn').click();
     expect((await messages(page)).at(-1)).toMatchObject({ type: 'export', versionId: 'newer' });
     await page.locator('#version-newer-btn').click();

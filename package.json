@@ -74,7 +74,7 @@
         "check-types": "tsc --noEmit",
         "lint": "eslint src",
         "test": "vscode-test",
-        "test:unit": "node --test --require ./scripts/register-typescript.cjs src/test/storage.test.ts src/test/writing.test.ts src/test/change-filter.test.ts src/test/input-guard.test.ts src/test/local-writing.test.ts src/test/sidebar.test.ts src/test/multiwindow.test.ts src/test/connection-settings.test.ts src/test/usage.test.ts",
+        "test:unit": "node --test --require ./scripts/register-typescript.cjs src/test/storage.test.ts src/test/writing.test.ts src/test/writing-style.test.ts src/test/article-export.test.ts src/test/ghost.test.ts src/test/change-filter.test.ts src/test/input-guard.test.ts src/test/local-writing.test.ts src/test/sidebar.test.ts src/test/multiwindow.test.ts src/test/connection-settings.test.ts src/test/usage.test.ts",
         "test:ui": "playwright test",
         "dev": "pnpm compile && node scripts/dev.cjs",
         "package:vsix": "vsce package --no-dependencies --allow-missing-repository --skip-license --out dist/ps-blogself.vsix",
@@ -99,10 +99,23 @@
         "typescript-eslint": "^8.52.0"
     },
     "dependencies": {
+        "@lexical/code-core": "0.53.0",
+        "@lexical/extension": "0.53.0",
+        "@lexical/history": "0.53.0",
+        "@lexical/link": "0.53.0",
+        "@lexical/list": "0.53.0",
+        "@lexical/react": "0.53.0",
+        "@lexical/rich-text": "0.53.0",
+        "@lexical/selection": "0.53.0",
+        "@lexical/table": "0.53.0",
+        "@lexical/utils": "0.53.0",
         "@vscode/codicons": "^0.0.44",
         "diff": "^8.0.3",
+        "lexical": "0.53.0",
         "markdown-it": "^14.1.0",
         "proper-lockfile": "^4.1.2",
+        "react": "19.2.5",
+        "react-dom": "19.2.5",
         "shiki": "^3.22.0"
     },
     "packageManager": "pnpm@11.5.1"

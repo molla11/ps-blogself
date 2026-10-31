@@ -1,6 +1,11 @@
+import { GhostConnection } from '../ghost/GhostConnection';
+import { GhostPublisher, GhostState, articleHash, PublishArticle } from '../ghost/GhostPublisher';
+import { ArticleAssets, imageRefs, mapImages } from '../ghost/ArticleAssets';
+import { documentFromMarkdown, documentHtml, documentMarkdown, validateDocument } from '../writing/ArticleDocument';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import MarkdownIt = require('markdown-it');
+import { articleHtml } from '../writing/ArticleExport';
 import { checkInputSize } from '../writing/InputLimits';
 import { WRITING_STYLES, WritingStyle, writingInstructions } from '../writing/WritingStyle';
 import { randomBytes, randomUUID } from 'crypto';
@@ -44,12 +49,17 @@ interface View {
     editable: boolean;
     sync?: { dispose(): void };
     ownerCheck?: NodeJS.Timeout;
+    ghost?: GhostState;
 }
 export class BlogPostManager {
     public static readonly viewType = 'psb.blogPost';
     private static views = new Map<string, View>();
     private static openings = new Map<string, Promise<void>>();
     private static store: DraftStore;
+    private static ghost: GhostConnection;
+    private static publisher: GhostPublisher;
+    private static assets: ArticleAssets;
+    private static exports = new Set<Promise<void>>();
     private static jobs: JobRouter;
     private static ai: AiConfiguration;
     private static connection: ServiceConnection;
@@ -58,6 +68,10 @@ export class BlogPostManager {
     private static updates = new vscode.EventEmitter<string>();
     static readonly onDidChange = this.updates.event;
     static init(context: vscode.ExtensionContext, development: ConnectionEnvironment = {}) {
+        this.assets = new ArticleAssets(path.join(context.globalStorageUri.fsPath, 'article-assets'));
+        this.ghost = new GhostConnection(context);
+        this.publisher = new GhostPublisher(path.join(context.globalStorageUri.fsPath, 'ghost-publications'), this.assets);
+        context.subscriptions.push(context.secrets.onDidChange(event => { if (event.key === GhostConnection.key) for (const view of this.views.values()) void this.refreshGhost(view); }));
         this.store = new DraftStore(path.join(context.globalStorageUri.fsPath, 'writing'));
         this.ai = new AiConfiguration(context);
         const writer = new Writer({ settings: () => this.ai.get() });
@@ -92,6 +106,8 @@ export class BlogPostManager {
             view.sync?.dispose(); clearInterval(view.ownerCheck); view.watcher?.abort();
         }
         await Promise.all([...this.views.values()].map((view) => view.queue));
+        await Promise.allSettled([...this.exports]);
+        await this.publisher?.close();
         await this.jobs?.close();
         await this.store?.close();
     }
@@ -189,7 +205,7 @@ export class BlogPostManager {
             );
         current.panel = panel;
         current.ready = false;
-        panel.webview.options = { enableScripts: true, localResourceRoots: [] };
+        panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.file(this.assets.directory)] };
         panel.onDidDispose(() => {
             if (current.panel === panel) {
                 current.panel = undefined;
@@ -224,7 +240,7 @@ export class BlogPostManager {
         panel.webview.html = template
             .replace(
                 '{{csp}}',
-                `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data:;`,
+                `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src ${panel.webview.cspSource} https: data:;`,
             )
             .replace('{{styles}}', () => `<style nonce="${nonce}">${css}</style>`)
             .replace('{{script}}', () => `<script nonce="${nonce}">${script}</script>`);
@@ -268,12 +284,16 @@ export class BlogPostManager {
             customStyle: draft.customStyle ?? '',
             title: draft.title,
             markdown: draft.markdown,
+            document: draft.document,
+            images: this.imageSources(view, draft),
+            ghost: this.ghostState(view),
             revision: draft.revision,
             editable: view.editable,
             editToken: draft.editor?.token,
             count: draft.history.snapshots.length,
             times: draft.history.snapshots.map((s) => s.timestamp),
             pending: !!draft.pending,
+            pendingId: draft.pending?.request.requestId,
             pendingKind: draft.pending?.request.kind,
             running: !!view.task,
             progress: view.progress,
@@ -283,6 +303,38 @@ export class BlogPostManager {
             versions: previousArticleVersions(draft).map((v) => ({ id: articleVersionKey(v), at: v.at, title: v.title })),
             streamHtml: view.partial ? new MarkdownIt({ html: false }).render(view.partial) : '',
         });
+    }
+    private static imageSources(view: View, article: PublishArticle): Record<string, string> {
+        if (!view.panel) return {};
+        return Object.fromEntries(imageRefs(article.document || documentFromMarkdown(article.markdown)).filter(src => /^psb-image:[a-f0-9]{64}$/.test(src)).map(src => [src, view.panel!.webview.asWebviewUri(vscode.Uri.file(this.assets.file(src))).toString()]));
+    }
+    private static ghostState(view: View) {
+        return view.ghost && { ...view.ghost, synced: view.ghost.localHash === articleHash(view.draft) };
+    }
+    private static sendGhost(view: View) { void view.panel?.webview.postMessage({ type: 'ghost', state: this.ghostState(view) }); }
+    private static async refreshGhost(view: View) {
+        try { view.ghost = await this.publisher.state(await this.ghost.get(), view.draft.filePath); }
+        catch { view.ghost = { connected: false, error: 'Ghost 연결 정보를 확인해 주세요.' }; }
+        this.sendGhost(view);
+    }
+    private static async exportContent(article: PublishArticle, html: boolean, uri: vscode.Uri) {
+        const doc = article.document || documentFromMarkdown(article.markdown);
+        const refs = imageRefs(doc).filter(src => src.startsWith('psb-image:'));
+        if (html) {
+            const images = Object.fromEntries(await Promise.all(refs.map(async src => [src, await this.assets.dataUrl(src)])));
+            return articleHtml(article.title, article.markdown, documentHtml(doc, images));
+        }
+        if (!refs.length) return this.markdown(article);
+        const folder = path.basename(uri.path, path.extname(uri.path)) + '.assets';
+        const target = vscode.Uri.joinPath(uri, '..', folder);
+        await vscode.workspace.fs.createDirectory(target);
+        const mapped = await mapImages(doc, async src => {
+            if (!src.startsWith('psb-image:')) return src;
+            const { bytes, mime } = await this.assets.read(src), name = src.slice(10) + '.' + mime.split('/')[1];
+            await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(target, name), bytes);
+            return './' + encodeURIComponent(folder) + '/' + name;
+        });
+        return this.markdown({ title: article.title, markdown: documentMarkdown(mapped) });
     }
     private static async edit(view: View, fields: unknown) {
         if (!fields || typeof fields !== 'object') return;
@@ -294,7 +346,7 @@ export class BlogPostManager {
             draft.writingStyle,
             draft.customStyle,
             draft.title,
-            draft.markdown,
+            draft.markdown, draft.document,
         ]);
         const patch: Record<string, unknown> = {};
         for (const [key, limit] of [
@@ -317,9 +369,11 @@ export class BlogPostManager {
         if (value.plan !== undefined) {
             patch.plan = validatePlan(value.plan, draft.history.snapshots.length, true);
         }
+        if (value.document) patch.document = validateDocument(value.document);
+        else if (typeof value.markdown === 'string' && (value.document === null || value.markdown !== draft.markdown)) patch.document = undefined;
         Object.assign(draft, patch);
         if (
-            before !== JSON.stringify([draft.plan, draft.instructions, draft.writingStyle, draft.customStyle, draft.title, draft.markdown])
+            before !== JSON.stringify([draft.plan, draft.instructions, draft.writingStyle, draft.customStyle, draft.title, draft.markdown, draft.document])
         ) {
             draft.revision++;
             draft.updatedAt = Date.now();
@@ -331,12 +385,12 @@ export class BlogPostManager {
             !message ||
             typeof message !== 'object' ||
             typeof message.type !== 'string' ||
-            JSON.stringify(message).length > 400000
+            JSON.stringify(message).length > (message.type === 'importImage' ? 14_100_000 : 1_600_000)
         ) {
             throw new Error('화면 요청을 확인할 수 없습니다.');
         }
         await this.refresh(view);
-        const reading = ['ready', 'takeover', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect'].includes(message.type);
+        const reading = ['ready', 'takeover', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'ghostConnect', 'ghostOpen'].includes(message.type);
         if (!reading && (!view.editable || message.editToken !== view.draft.editor?.token)) throw new DraftConflict();
         switch (message.type) {
             case 'takeover': {
@@ -349,6 +403,7 @@ export class BlogPostManager {
             }
             case 'ready':
                 view.ready = true;
+                await this.refreshGhost(view);
                 this.render(view);
                 if (view.draft.pending) this.run(view);
                 else if (!view.draft.plan && view.editable) await this.start(view, 'prepare_blog');
@@ -411,7 +466,7 @@ export class BlogPostManager {
             }
             case 'preview': {
                 if (view.editable && message.editToken === view.draft.editor?.token) await this.edit(view, message.fields);
-                const html = new MarkdownIt({ html: false }).render(view.draft.markdown);
+                const html = documentHtml(view.draft.document || documentFromMarkdown(view.draft.markdown), this.imageSources(view, view.draft));
                 void view.panel?.webview.postMessage({ type: 'preview', html });
                 break;
             }
@@ -419,29 +474,31 @@ export class BlogPostManager {
                 const version = this.version(view.draft, message.versionId);
                 void view.panel?.webview.postMessage({
                     type: 'versionPreview', versionId: message.versionId, title: version.title,
-                    html: new MarkdownIt({ html: false }).render(version.markdown),
+                    html: documentHtml(version.document || documentFromMarkdown(version.markdown), this.imageSources(view, version)),
                 });
                 break;
             }
             case 'export': {
+                if (message.format && !['markdown', 'html'].includes(message.format)) throw new Error('내보낼 파일 형식을 선택해 주세요.');
                 if (!message.versionId && view.editable && message.editToken === view.draft.editor?.token) await this.edit(view, message.fields);
                 const article = message.versionId ? this.version(view.draft, message.versionId) : view.draft;
+                const html = message.format === 'html';
                 const uri = await vscode.window.showSaveDialog({
                     defaultUri: vscode.Uri.file(
                         path.join(
                             path.dirname(view.draft.filePath),
                             path.basename(view.draft.filePath, path.extname(view.draft.filePath)) +
-                                '.md',
+                                (html ? '.html' : '.md'),
                         ),
                     ),
-                    filters: { Markdown: ['md'] },
+                    filters: html ? { HTML: ['html'] } : { Markdown: ['md'] },
                 });
                 if (uri) {
                     await vscode.workspace.fs.writeFile(
                         uri,
-                        Buffer.from(this.markdown(article)),
+                        Buffer.from(await this.exportContent(article, html, uri)),
                     );
-                    view.status = 'Markdown 파일로 저장했습니다.';
+                    view.status = `${html ? 'HTML' : 'Markdown'} 파일로 저장했습니다.`;
                 }
                 break;
             }
@@ -455,7 +512,7 @@ export class BlogPostManager {
                 await this.edit(view, message.fields);
                 mergeResult(
                     view.draft,
-                    { title: version.title, markdown: version.markdown },
+                    { title: version.title, markdown: version.markdown, document: version.document },
                     view.draft.revision,
                 );
                 await this.store.save(view.draft);
@@ -464,9 +521,44 @@ export class BlogPostManager {
             }
             case 'openLink': {
                 const url = new URL(String(message.url));
-                if (['http:', 'https:'].includes(url.protocol)) {
+                if (['http:', 'https:', 'mailto:'].includes(url.protocol)) {
                     await vscode.env.openExternal(vscode.Uri.parse(url.href));
                 }
+                break;
+            }
+            case 'importImage': {
+                if (typeof message.data !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(message.data)) throw new Error('이미지 데이터를 확인해 주세요.');
+                const src = await this.assets.put(Buffer.from(message.data, 'base64'));
+                void view.panel?.webview.postMessage({ type: 'imageReady', id: message.id, src, preview: view.panel.webview.asWebviewUri(vscode.Uri.file(this.assets.file(src))).toString() });
+                break;
+            }
+            case 'ghostConnect':
+                await this.ghost.configure(); await this.refreshGhost(view); break;
+            case 'ghostOpen': {
+                await this.refreshGhost(view);
+                if (view.ghost?.editorUrl) await vscode.env.openExternal(vscode.Uri.parse(view.ghost.editorUrl));
+                break;
+            }
+            case 'ghostSave': case 'ghostPublish': {
+                await this.edit(view, message.fields);
+                // Capture before any prompt/network request; subsequent edits stay local and responsive.
+                const article = structuredClone({ title: view.draft.title, markdown: view.draft.markdown, document: view.draft.document });
+                const publish = message.type === 'ghostPublish';
+                if (view.ghost?.busy) throw new Error('Ghost에 저장 중입니다.');
+                view.ghost = { ...(view.ghost || { connected: false }), busy: true }; this.sendGhost(view);
+                const operation = (async () => {
+                    try {
+                        const settings = await this.ghost.get() || await this.ghost.configure();
+                        if (!settings) { await this.refreshGhost(view); return; }
+                        if (publish && await vscode.window.showWarningMessage(`“${article.title}”을 ${new URL(settings.url).host}에 공개 게시할까요?`, { modal: true }, '공개 게시') !== '공개 게시') { await this.refreshGhost(view); return; }
+                        view.ghost = { ...await this.publisher.state(settings, view.draft.filePath), busy: true }; this.sendGhost(view);
+                        view.ghost = await this.publisher.publish(settings, view.draft.filePath, article, publish);
+                    } catch (error) {
+                        await this.refreshGhost(view);
+                        view.ghost = { ...(view.ghost || { connected: false }), busy: false, error: error instanceof Error ? error.message : 'Ghost 저장에 실패했습니다.' };
+                    } finally { this.sendGhost(view); }
+                })();
+                this.exports.add(operation); void operation.finally(() => this.exports.delete(operation));
                 break;
             }
             case 'connect':

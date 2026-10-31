@@ -1,3 +1,4 @@
+import { ArticleDocument } from './ArticleDocument';
 import * as path from 'path';
 import { createHash } from 'crypto';
 import { createTwoFilesPatch } from 'diff';
@@ -46,6 +47,7 @@ export interface WritingJob {
 export interface ArticleVersion {
     title: string;
     markdown: string;
+    document?: ArticleDocument;
     at: number;
 }
 export interface WritingDraft extends WritingPreferences {
@@ -59,6 +61,7 @@ export interface WritingDraft extends WritingPreferences {
     instructions: string;
     title: string;
     markdown: string;
+    document?: ArticleDocument;
     revision: number;
     updatedAt: number;
     preparationKey?: string;
@@ -72,7 +75,7 @@ export interface WritingDraft extends WritingPreferences {
         history?: FileHistory;
         cancelRequested?: boolean;
     };
-    candidate?: { plan?: WritingPlan; title?: string; markdown?: string; history?: FileHistory };
+    candidate?: { plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory };
     articleVersions: ArticleVersion[];
 }
 
@@ -270,10 +273,11 @@ export function mergeResult(
     if (typeof result.markdown === 'string' && typeof result.title === 'string') {
         if (articleVersionKey(draft) !== articleVersionKey({ title: result.title, markdown: result.markdown })) {
             if (draft.markdown.trim()) {
-                draft.articleVersions.push({ title: draft.title, markdown: draft.markdown, at: Date.now() });
+                draft.articleVersions.push({ title: draft.title, markdown: draft.markdown, document: draft.document, at: Date.now() });
             }
             draft.title = result.title;
             draft.markdown = result.markdown;
+            draft.document = result.document;
         }
         draft.articleVersions = previousArticleVersions(draft);
     }

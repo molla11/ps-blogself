@@ -1,4 +1,8 @@
+import { createArticleEditor } from './articleEditor.webview.js';
+import { observeCodeHighlighting } from './codeHighlighting.js';
+
 const vscode = acquireVsCodeApi();
+observeCodeHighlighting(document.body);
 const el = (id) => document.getElementById(id);
 let model,
     form = {},
@@ -7,6 +11,8 @@ let model,
     lastMarkdown = '',
     editTimer,
     previewMode = false,
+    sourceMode = false,
+    outlineOpen = false,
     selectedVersion = '',
     readyVersion = '',
     restoreRequest;
@@ -15,10 +21,28 @@ const dirty = new Set(),
 const recovered = vscode.getState();
 let localRecovery = recovered?.localRecovery;
 let recoveryApplied = false;
+const imageRequests = new Map();
+let ghostState = { connected: false };
+const richEditor = createArticleEditor({
+    element: el('rich-editor'), toolbar: el('format-tools'), outline: el('outline-list'),
+    onChange(markdown, document) {
+        form.document = document;
+        changed('document');
+        form.markdown = markdown;
+        value('article-body', markdown);
+        changed('markdown');
+    },
+    onOpenLink(url) { send('openLink', { url }); },
+    onError(message) { el('error-text').textContent = message; el('error-box').hidden = false; },
+    async onImageFile(file) {
+        const data = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result.split(',')[1]); reader.onerror = () => reject(new Error('이미지를 읽을 수 없습니다.')); reader.readAsDataURL(file); });
+        return new Promise((resolve, reject) => { const id = send('importImage', { data }); const timer = setTimeout(() => { imageRequests.delete(id); reject(new Error('이미지 저장 시간이 초과되었습니다. 다시 시도해 주세요.')); }, 30000); imageRequests.set(id, { resolve, reject, timer }); });
+    },
+});
 function height(node) {
     if (node.tagName === 'TEXTAREA' && !node.closest('[hidden]')) {
         node.style.height = 'auto';
-        node.style.height = Math.max(70, node.scrollHeight + 2) + 'px';
+        node.style.height = Math.max(node.id === 'article-title' ? 0 : 70, node.scrollHeight + 2) + 'px';
     }
 }
 function stash() {
@@ -39,6 +63,7 @@ function send(type, extra = {}, fields = false) {
 function changed(key) {
     if (model?.editable === false) return;
     dirty.add(key);
+    renderGhost();
     el('save-status').textContent = '저장 중…';
     stash();
     clearTimeout(editTimer);
@@ -152,7 +177,25 @@ function switchTab(tab) {
     el('article-tab').setAttribute('aria-pressed', String(tab === 'article'));
     document.querySelectorAll('textarea').forEach(height);
 }
+function renderEditorMode() {
+    const browsing = !!selectedVersion;
+    el('rich-editor').hidden = previewMode || sourceMode;
+    el('body-field').hidden = previewMode || !sourceMode;
+    el('article-preview').hidden = !previewMode;
+    el('format-bar').hidden = browsing || previewMode || sourceMode;
+    el('source-btn').hidden = browsing;
+    el('source-btn').setAttribute('aria-pressed', String(sourceMode && !previewMode));
+    el('preview-btn').setAttribute('aria-pressed', String(previewMode));
+    el('preview-btn').textContent = previewMode ? '편집으로 돌아가기' : '미리보기';
+    el('article-outline').hidden = !outlineOpen || browsing || previewMode || sourceMode;
+    el('outline-toggle').setAttribute('aria-expanded', String(!el('article-outline').hidden));
+    el('outline-toggle').disabled = browsing || previewMode || sourceMode;
+    el('insert-block-btn').disabled = model?.editable === false;
+    richEditor.setActive(!browsing && !previewMode && !sourceMode);
+    document.querySelectorAll('textarea').forEach(height);
+}
 function renderVersions() {
+    renderGhost();
     const versions = model.versions || [], select = el('version-select');
     if (selectedVersion && !versions.some(version => version.id === selectedVersion)) {
         selectedVersion = '';
@@ -188,6 +231,8 @@ function renderVersions() {
     el('preview-btn').hidden = browsing;
     el('copy-btn').disabled = loading;
     el('export-btn').disabled = loading;
+    el('export-html-btn').disabled = loading;
+    renderEditorMode();
 }
 function chooseVersion(id) {
     if (restoreRequest || id === selectedVersion) return;
@@ -209,6 +254,7 @@ function renderLoading() {
     return true;
 }
 function render() {
+    renderGhost();
     const busy = renderLoading();
     const editable = model.editable !== false;
     el('ownership-box').hidden = editable;
@@ -222,11 +268,10 @@ function render() {
         (form.plan
             ? '준비된 내용을 그대로 사용하거나 자유롭게 고쳐보세요.'
             : '풀이 흐름을 준비해 주세요.');
+    el('progress-box').hidden = !model.pending && !model.running && !/저장|복사|적용|취소/.test(model.status || '');
     el('error-box').hidden = !model.error;
     el('error-text').textContent = model.error || '';
     el('cancel-btn').hidden = !model.pending;
-    el('progress').hidden = !model.running;
-    el('progress').value = model.progress;
     el('discard-pending-btn').hidden = !model.pending || model.running;
     el('candidate-box').hidden = !model.candidate;
     el('preparing').hidden = !!form.plan || busy;
@@ -255,10 +300,10 @@ function render() {
     }
     value('article-title', form.title);
     value('article-body', form.markdown);
-    el('article-tab').disabled = !form.markdown && !model.versions.length;
+    richEditor.setMarkdown(form.markdown, editable, form.document, model.images);
+    el('article-tab').disabled = !form.markdown && !form.title && !model.versions.length && activeTab !== 'article';
     if (form.markdown && !lastMarkdown) {
         switchTab('article');
-        previewMode = true;
         send('preview');
     } else if (form.markdown !== lastMarkdown && previewMode) {
         send('preview');
@@ -276,13 +321,20 @@ function render() {
 }
 window.addEventListener('message', (event) => {
     const message = event.data;
+    if (message.type === 'imageReady' || message.type === 'saveError' && imageRequests.has(message.id)) {
+        const request = imageRequests.get(message.id); if (request) { clearTimeout(request.timer); imageRequests.delete(message.id); if (message.type === 'imageReady') request.resolve(message); else request.reject(new Error(message.message)); }
+        return;
+    }
+    if (message.type === 'ghost') { ghostState = message.state; renderGhost(); return; }
     if (message.type === 'model') {
+        if (message.ghost) ghostState = message.ghost;
+        renderGhost();
         if (message.editable === false || (model?.editToken && message.editToken !== model.editToken)) {
             if (dirty.size) localRecovery = Object.fromEntries([...dirty].map(key => [key, structuredClone(form[key])]));
             dirty.clear(); sent.clear(); clearTimeout(editTimer);
         }
         model = message;
-        for (const key of ['plan', 'instructions', 'writingStyle', 'customStyle', 'title', 'markdown']) {
+        for (const key of ['plan', 'instructions', 'writingStyle', 'customStyle', 'title', 'markdown', 'document']) {
             if (!dirty.has(key)) form[key] = structuredClone(message[key]);
         }
         if (!recoveryApplied) {
@@ -291,7 +343,7 @@ window.addEventListener('message', (event) => {
                 if (model.editable === false || (recovered.editToken && recovered.editToken !== model.editToken)) localRecovery ||= recovered.fields;
                 else {
                     for (const [key, val] of Object.entries(recovered.fields)) {
-                        if (['plan', 'instructions', 'writingStyle', 'customStyle', 'title', 'markdown'].includes(key)) {
+                        if (['plan', 'instructions', 'writingStyle', 'customStyle', 'title', 'markdown', 'document'].includes(key)) {
                             form[key] = val;
                             dirty.add(key);
                         }
@@ -324,9 +376,7 @@ window.addEventListener('message', (event) => {
         }
     } else if (message.type === 'preview') {
         el('article-preview').innerHTML = message.html;
-        el('article-preview').hidden = !previewMode;
-        el('body-field').hidden = previewMode;
-        el('preview-btn').textContent = previewMode ? '본문 수정' : '미리보기';
+        renderEditorMode();
     } else if (message.type === 'versionPreview') {
         if (!selectedVersion || message.versionId !== selectedVersion) return;
         readyVersion = message.versionId;
@@ -376,6 +426,7 @@ for (const [id, key] of [
         form[key] = event.target.value;
         height(event.target);
         changed(key);
+        if (key === 'markdown') { form.document = null; changed('document'); richEditor.setMarkdown(form.markdown, model?.editable !== false); }
     });
 }
 el('writing-style').addEventListener('change', (event) => {
@@ -441,10 +492,11 @@ for (const [id, type] of [
         action(type);
     });
 }
-for (const [id, type] of [['copy-btn', 'copy'], ['export-btn', 'export']]) {
+for (const [id, type, format] of [['copy-btn', 'copy'], ['export-btn', 'export', 'markdown'], ['export-html-btn', 'export', 'html']]) {
     el(id).addEventListener('click', () => {
-        if (selectedVersion) send(type, { versionId: selectedVersion });
-        else action(type);
+        el('export-menu').hidePopover();
+        if (selectedVersion) send(type, { versionId: selectedVersion, format });
+        else { clearTimeout(editTimer); send(type, { format }, true); }
     });
 }
 for (const [id, type] of [
@@ -465,15 +517,33 @@ send('ready');
 
 el('preview-btn').addEventListener('click', () => {
     previewMode = !previewMode;
-    el('body-field').hidden = previewMode;
-    el('article-preview').hidden = !previewMode;
-    el('preview-btn').textContent = previewMode ? '본문 수정' : '미리보기';
+    renderEditorMode();
     if (previewMode) action('preview');
-    else {
-        height(el('article-body'));
-        el('article-body').focus();
-    }
+    else if (sourceMode) el('article-body').focus({ preventScroll: true });
+    else richEditor.focus({ preventScroll: true });
 });
+el('source-btn').addEventListener('click', () => {
+    sourceMode = !sourceMode; previewMode = false; renderEditorMode();
+    if (sourceMode) el('article-body').focus({ preventScroll: true });
+    else richEditor.focus({ preventScroll: true });
+});
+el('outline-toggle').addEventListener('click', () => { outlineOpen = !outlineOpen; renderEditorMode(); });
+el('export-menu').addEventListener('beforetoggle', event => {
+    if (event.newState !== 'open') return;
+    const rect = el('export-menu-btn').getBoundingClientRect();
+    el('export-menu').style.top = Math.max(8, Math.min(rect.bottom + 5, innerHeight - 300)) + 'px';
+    el('export-menu').style.left = Math.max(8, Math.min(rect.right - 184, innerWidth - 192)) + 'px';
+});
+document.querySelectorAll('.action-menu').forEach(menu => menu.addEventListener('keydown', event => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const buttons = [...menu.querySelectorAll('button:not(:disabled)')].filter(button => !button.hidden);
+    if (!buttons.length) return;
+    event.preventDefault();
+    const current = buttons.indexOf(document.activeElement);
+    const index = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+        : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[index].focus();
+}));
 document.querySelectorAll('.article-preview').forEach(preview => preview.addEventListener('click', (event) => {
     const link = event.target.closest('a');
     if (link) {
@@ -481,3 +551,21 @@ document.querySelectorAll('.article-preview').forEach(preview => preview.addEven
         send('openLink', { url: link.href });
     }
 }));
+
+function renderGhost() {
+    const g = ghostState;
+    el('ghost-save-btn').textContent = g.busy ? 'Ghost 저장 중…' : g.status === 'published' ? 'Ghost 변경 사항 저장' : 'Ghost 초안 저장';
+    el('ghost-save-btn').disabled = el('ghost-publish-btn').disabled = !!g.busy || model?.editable === false || !!selectedVersion;
+    el('ghost-connect-btn').disabled = !!g.busy;
+    el('ghost-open-btn').hidden = !g.editorUrl;
+    el('ghost-publish-btn').hidden = g.status === 'published';
+    el('ghost-status').hidden = !g.connected && !g.error;
+    if (!g.connected && !g.busy && !g.error) {
+        el('ghost-status').textContent = '';
+        return;
+    }
+    el('ghost-status').textContent = g.error || (g.busy ? 'Ghost에 저장하고 있어요. 계속 편집해도 됩니다.' : g.postId ? `${new URL(g.site).host} · ${g.status === 'published' ? '게시됨' : '초안'}${g.synced && !dirty.has('markdown') && !dirty.has('title') && !dirty.has('document') ? ' · 최신 내용 저장됨' : ' · 변경 사항을 저장해 주세요'}` : `${new URL(g.site).host} · Ghost에 연결됨`);
+}
+for (const [id, type] of [['ghost-save-btn', 'ghostSave'], ['ghost-publish-btn', 'ghostPublish'], ['ghost-connect-btn', 'ghostConnect'], ['ghost-open-btn', 'ghostOpen']]) {
+    el(id).onclick = () => { el('export-menu').hidePopover(); clearTimeout(editTimer); send(type, {}, type === 'ghostSave' || type === 'ghostPublish'); };
+}

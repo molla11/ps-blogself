@@ -70,7 +70,7 @@ exports.run = async () => {
             assert.ok(await writer.frame.locator('#generate-btn').isDisabled());
             await writer.page.screenshot({ path: path.join(sandbox, 'streaming.png') });
             await until(async () => (await writer.frame.locator('#article-preview').innerText()).includes('서버 경로에서 수정한 의도'), 'server respects edited intent');
-            await writer.frame.getByRole('button', { name: '본문 수정', exact: true }).click();
+            await writer.frame.locator('#source-btn').click();
             await writer.frame.locator('#article-body').fill('## 재시작\n\n서버와 무관하게 보존된 로컬 본문');
             await until(async () => (await writer.frame.locator('#save-status').innerText()) === '저장됨', 'draft persisted');
         }

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import MarkdownIt = require('markdown-it');
 import { checkInputSize } from '../writing/InputLimits';
+import { WRITING_STYLES, WritingStyle, writingInstructions } from '../writing/WritingStyle';
 import { randomBytes, randomUUID } from 'crypto';
 import { storageManager } from '../storage/StorageManager';
 import { LocalJobs } from '../writing/LocalJobs';
@@ -261,6 +262,8 @@ export class BlogPostManager {
             fileName: path.basename(draft.filePath),
             plan: draft.plan,
             instructions: draft.instructions,
+            writingStyle: draft.writingStyle ?? 'plain',
+            customStyle: draft.customStyle ?? '',
             title: draft.title,
             markdown: draft.markdown,
             revision: draft.revision,
@@ -285,12 +288,15 @@ export class BlogPostManager {
         const before = JSON.stringify([
             draft.plan,
             draft.instructions,
+            draft.writingStyle,
+            draft.customStyle,
             draft.title,
             draft.markdown,
         ]);
         const patch: Record<string, unknown> = {};
         for (const [key, limit] of [
             ['instructions', 12000],
+            ['customStyle', 2000],
             ['title', 300],
             ['markdown', 150000],
         ] as const) {
@@ -301,12 +307,16 @@ export class BlogPostManager {
                 patch[key] = value[key];
             }
         }
+        if (value.writingStyle !== undefined) {
+            if (!WRITING_STYLES.includes(value.writingStyle as WritingStyle)) throw new Error('글의 문체를 선택해 주세요.');
+            patch.writingStyle = value.writingStyle;
+        }
         if (value.plan !== undefined) {
             patch.plan = validatePlan(value.plan, draft.history.snapshots.length, true);
         }
         Object.assign(draft, patch);
         if (
-            before !== JSON.stringify([draft.plan, draft.instructions, draft.title, draft.markdown])
+            before !== JSON.stringify([draft.plan, draft.instructions, draft.writingStyle, draft.customStyle, draft.title, draft.markdown])
         ) {
             draft.revision++;
             draft.updatedAt = Date.now();
@@ -488,6 +498,7 @@ export class BlogPostManager {
                 ? preparationSource(history)
                 : writingSourceFor(history, plan!.start, plan!.end, plan!.steps.flatMap((step) => [step.start, step.end]));
         checkInputSize({ source });
+        const instructions = writingInstructions(draft);
         target ||= await this.jobs.target(!prefetch);
         if (kind === 'prepare_blog') draft.preparationKey = historyFingerprint(history);
         draft.pending = {
@@ -498,7 +509,7 @@ export class BlogPostManager {
                 requestId: randomUUID(),
                 source,
                 ...(kind === 'write_blog' ? { plan: structuredClone(plan!) } : {}),
-                instructions: draft.instructions,
+                instructions,
             },
             baseRevision: kind === 'prepare_blog' && plan ? -1 : draft.revision,
             ...(kind === 'prepare_blog' ? { history: structuredClone(history) } : {}),

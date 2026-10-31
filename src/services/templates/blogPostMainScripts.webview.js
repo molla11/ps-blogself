@@ -178,6 +178,11 @@ function render() {
     el('prepare-btn').disabled = model.pending;
     el('retry-btn').disabled = model.running;
     value('instructions', form.instructions);
+    value('writing-style', form.writingStyle || 'plain');
+    value('custom-style', form.customStyle);
+    el('custom-style-field').hidden = form.writingStyle !== 'custom';
+    el('writing-style').disabled = !editable;
+    height(el('custom-style'));
     if (form.plan) {
         value('plan-title', form.plan.title);
         value('summary', form.plan.summary);
@@ -223,7 +228,7 @@ window.addEventListener('message', (event) => {
             dirty.clear(); sent.clear(); clearTimeout(editTimer);
         }
         model = message;
-        for (const key of ['plan', 'instructions', 'title', 'markdown']) {
+        for (const key of ['plan', 'instructions', 'writingStyle', 'customStyle', 'title', 'markdown']) {
             if (!dirty.has(key)) form[key] = structuredClone(message[key]);
         }
         if (!recoveryApplied) {
@@ -232,7 +237,7 @@ window.addEventListener('message', (event) => {
                 if (model.editable === false || (recovered.editToken && recovered.editToken !== model.editToken)) localRecovery ||= recovered.fields;
                 else {
                     for (const [key, val] of Object.entries(recovered.fields)) {
-                        if (['plan', 'instructions', 'title', 'markdown'].includes(key)) {
+                        if (['plan', 'instructions', 'writingStyle', 'customStyle', 'title', 'markdown'].includes(key)) {
                             form[key] = val;
                             dirty.add(key);
                         }
@@ -293,6 +298,7 @@ el('recover-input-btn').addEventListener('click', () => {
 });
 for (const [id, key] of [
     ['instructions', 'instructions'],
+    ['custom-style', 'customStyle'],
     ['article-title', 'title'],
     ['article-body', 'markdown'],
 ]) {
@@ -302,6 +308,12 @@ for (const [id, key] of [
         changed(key);
     });
 }
+el('writing-style').addEventListener('change', (event) => {
+    form.writingStyle = event.target.value;
+    changed('writingStyle');
+    el('custom-style-field').hidden = form.writingStyle !== 'custom';
+    height(el('custom-style'));
+});
 el('plan-title').addEventListener('input', (event) => {
     form.plan.title = event.target.value;
     changed('plan');

@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import { createTwoFilesPatch } from 'diff';
 import { FileHistory } from '../types';
 import { isCosmeticChange } from './ChangeFilter';
+import { WritingPreferences } from './WritingStyle';
 import { checkInputSize, MAX_CHANGES, MAX_CODE_BYTES, MAX_RECONSTRUCTED_BYTES, InputSizeError, utf8Bytes } from './InputLimits';
 
 export interface WritingStep {
@@ -42,7 +43,7 @@ export interface WritingJob {
     result?: { plan?: WritingPlan; title?: string; markdown?: string };
     partial?: string;
 }
-export interface WritingDraft {
+export interface WritingDraft extends WritingPreferences {
     schemaVersion: 1;
     storageVersion?: number;
     editor?: { owner: import('../storage/WindowSession').SessionOwner; token: string };
@@ -161,6 +162,8 @@ export function newDraft(history: FileHistory): WritingDraft {
         history: structuredClone(history),
         fingerprint: historyFingerprint(history),
         instructions: '',
+        writingStyle: 'plain',
+        customStyle: '',
         title: '',
         markdown: '',
         revision: 0,

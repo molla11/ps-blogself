@@ -100,6 +100,19 @@
                     </label>
                     <div id="steps"></div>
                 </div>
+                <label class="field" for="writing-style">문체
+                    <select id="writing-style">
+                        <option value="plain">했다/이다체 (기본)</option>
+                        <option value="formal">합니다체</option>
+                        <option value="friendly">해요체</option>
+                        <option value="notes">간결한 메모체</option>
+                        <option value="custom">사용자 지정</option>
+                    </select>
+                </label>
+                <label class="field" id="custom-style-field" hidden>원하는 문체
+                    <textarea id="custom-style" rows="2" maxlength="2000"
+                        placeholder="예: 짧고 담백한 했다체로, 처음 배우는 사람도 이해할 수 있게. 비워두면 했다/이다체를 사용해요."></textarea>
+                </label>
                 <label class="field extra"
                     >추가로 담고 싶은 내용 <span class="muted">선택 사항</span
                     ><textarea

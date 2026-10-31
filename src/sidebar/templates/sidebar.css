@@ -457,13 +457,13 @@ button.action-btn {
     padding: 2px 0;
     box-sizing: border-box;
     width: max-content;
-    min-width: min(83.2px, 100vw);
+    min-width: min(92px, 100vw);
     max-width: 100vw;
     max-height: 100vh;
     overflow: auto;
 }
 
-#context-menu .menu-item { padding-inline: 4px; white-space: nowrap; }
+#context-menu .menu-item { padding-inline: 8px; white-space: nowrap; }
 
 .menu-item {
     height: auto;

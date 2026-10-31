@@ -75,11 +75,19 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; }
 input:not([type=range]):not([type=checkbox]), textarea { display: block; width: 100%; margin-top: 7px; border: 1px solid var(--vscode-input-border, #d0d9d3); border-radius: 4px; padding: 8px 10px; color: var(--vscode-input-foreground, #24342c); background: var(--vscode-input-background, #fff); font-weight: 400; line-height: 1.75; }
 textarea { resize: vertical; min-height: 70px; overflow: hidden; }
 select { min-width: 0; color: var(--vscode-dropdown-foreground, #24342c); background: var(--vscode-dropdown-background, #fff); border: 1px solid var(--vscode-dropdown-border, #d0d9d3); border-radius: 4px; padding: 4px 8px; }
-.model-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 12px 0; font-size: 12px; }
-.model-picker label { font-weight: 600; }
-.model-picker select { max-width: 100%; }
-#writing-model-help { flex: 1 1 210px; }
-.model-picker button { padding: 4px 8px; }
+.model-picker { display: flex; align-items: center; gap: 10px; margin: 10px 24px; font-size: 12px; }
+#writing-model-label { color: var(--muted); }
+.model-select { position: relative; min-width: 0; }
+#writing-model { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-width: 100px; max-width: 100%; padding: 6px 10px; border-color: var(--line); background: var(--paper); color: var(--ink); }
+#writing-model:hover, #writing-model[aria-expanded=true] { background: var(--hover); filter: none; }
+#writing-model-value { overflow: hidden; text-overflow: ellipsis; }
+#writing-model svg { flex: 0 0 auto; color: var(--muted); }
+.model-options { position: absolute; z-index: 25; top: calc(100% + 5px); left: 0; width: 220px; max-width: calc(100vw - 76px); padding: 4px; border: 1px solid var(--vscode-menu-border, var(--line)); border-radius: 6px; background: var(--vscode-menu-background, var(--paper)); color: var(--vscode-menu-foreground, var(--ink)); box-shadow: 0 4px 14px var(--vscode-widget-shadow, #0002); }
+.model-options [role=option] { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 7px 10px; background: transparent; color: inherit; text-align: left; }
+.model-options [role=option]::after { content: ''; flex: 0 0 auto; width: 9px; height: 5px; border-left: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); visibility: hidden; }
+.model-options [aria-selected=true]::after { visibility: visible; }
+.model-options [role=option]:hover, .model-options [role=option]:focus-visible { background: var(--vscode-list-hoverBackground, var(--hover)); filter: none; }
+.model-options [role=option]:focus-visible { outline: 1px solid var(--vscode-focusBorder, #527c67); outline-offset: -1px; }
 #writing-mode, #writing-style { display: block; margin-top: 7px; min-height: 32px; width: min(100%, 280px); }
 #writing-mode-help { margin: -12px 0 20px; font-size: 12px; line-height: 1.6; }
 .step { padding: 18px 0; border-top: 1px solid var(--line); }

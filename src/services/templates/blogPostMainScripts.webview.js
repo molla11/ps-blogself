@@ -24,7 +24,7 @@ let localRecovery = recovered?.localRecovery;
 let recoveryApplied = false;
 const imageRequests = new Map();
 let ghostState = { connected: false };
-let modelAccess;
+const modelOptions = [...el('writing-model-options').querySelectorAll('[role=option]')];
 const richEditor = createArticleEditor({
     element: el('rich-editor'), toolbar: el('format-tools'), outline: el('outline-list'),
     onChange(markdown, document) {
@@ -265,18 +265,22 @@ function renderWritingMode() {
     }[mode];
 }
 function renderWritingModel() {
-    const selected = form.writingModel || DEFAULT_WRITING_MODEL;
-    value('writing-model', selected);
+    const selected = modelOptions.some(option => option.value === form.writingModel) ? form.writingModel : DEFAULT_WRITING_MODEL;
+    for (const option of modelOptions) option.setAttribute('aria-selected', String(option.value === selected));
+    el('writing-model-value').textContent = modelOptions.find(option => option.value === selected).textContent;
     el('writing-model').disabled = model.editable === false || !!model.pending || !!model.running;
-    const access = modelAccess?.find(item => item.id === selected);
-    const paidOnly = selected === 'opus5.5' || selected === 'astra';
-    el('writing-model-help').textContent = access?.available === false
-        ? paidOnly ? '유료 크레딧이 필요합니다. 충전하거나 standard를 선택해 주세요.' : '사용 가능한 크레딧이 없습니다. 크레딧을 확인해 주세요.'
-        : paidOnly ? '유료 크레딧 전용입니다.'
-        : access?.nextFunding === 'credit' ? '무료 크레딧을 모두 사용해 유료 크레딧을 사용합니다.' : '무료 크레딧을 먼저 사용합니다.';
-    if (access?.available === false && !model.pending) {
-        for (const id of ['generate-btn', 'prepare-btn', 'prepare-empty-btn', 'retry-btn']) el(id).disabled = true;
-    }
+    if (el('writing-model').disabled) closeModelOptions();
+}
+function closeModelOptions(restoreFocus = false) {
+    el('writing-model-options').hidden = true;
+    el('writing-model').setAttribute('aria-expanded', 'false');
+    if (restoreFocus) el('writing-model').focus();
+}
+function openModelOptions() {
+    if (el('writing-model').disabled) return;
+    el('writing-model-options').hidden = false;
+    el('writing-model').setAttribute('aria-expanded', 'true');
+    modelOptions.find(option => option.getAttribute('aria-selected') === 'true').focus();
 }
 function render() {
     renderGhost();
@@ -349,7 +353,6 @@ function render() {
 }
 window.addEventListener('message', (event) => {
     const message = event.data;
-    if (message.type === 'modelAccess') { modelAccess = message.models; if (model) render(); return; }
     if (message.type === 'imageReady' || message.type === 'saveError' && imageRequests.has(message.id)) {
         const request = imageRequests.get(message.id); if (request) { clearTimeout(request.timer); imageRequests.delete(message.id); if (message.type === 'imageReady') request.resolve(message); else request.reject(new Error(message.message)); }
         return;
@@ -463,13 +466,45 @@ el('writing-mode').addEventListener('change', (event) => {
     changed('writingMode');
     renderWritingMode();
 });
-el('writing-model').addEventListener('change', (event) => {
-    form.writingModel = event.target.value;
-    changed('writingModel');
-    render();
-    send('refreshModels');
+el('writing-model').addEventListener('click', () => {
+    if (el('writing-model-options').hidden) openModelOptions();
+    else closeModelOptions();
 });
-el('model-usage-btn').addEventListener('click', () => send('refreshModels'));
+el('writing-model').addEventListener('keydown', event => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); openModelOptions(); }
+});
+for (const option of modelOptions) {
+    option.addEventListener('click', () => {
+        if (el('writing-model').disabled) return;
+        if (form.writingModel !== option.value) {
+            form.writingModel = option.value;
+            changed('writingModel');
+            render();
+        }
+        closeModelOptions(true);
+    });
+}
+el('writing-model-options').addEventListener('keydown', event => {
+    const index = modelOptions.indexOf(document.activeElement);
+    let next;
+    if (event.key === 'ArrowDown') next = (index + 1) % modelOptions.length;
+    else if (event.key === 'ArrowUp') next = (index + modelOptions.length - 1) % modelOptions.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = modelOptions.length - 1;
+    else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeModelOptions(true); }
+    else if (event.key === 'Tab') closeModelOptions(true);
+    else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        const match = modelOptions.findIndex(option => option.textContent.toLowerCase().startsWith(event.key.toLowerCase()));
+        if (match >= 0) next = match;
+    }
+    if (next !== undefined) { event.preventDefault(); modelOptions[next].focus(); }
+});
+document.addEventListener('pointerdown', event => {
+    if (!el('model-select').contains(event.target)) closeModelOptions();
+});
+el('model-select').addEventListener('focusout', event => {
+    if (!el('model-select').contains(event.relatedTarget)) closeModelOptions();
+});
 el('writing-style').addEventListener('change', (event) => {
     form.writingStyle = event.target.value;
     changed('writingStyle');

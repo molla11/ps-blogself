@@ -75,10 +75,7 @@ export class BlogPostManager {
         context.subscriptions.push(
             vscode.commands.registerCommand('psb.connect', () => this.connect()),
             vscode.commands.registerCommand('psb.sample', async () => this.openPage(context.extensionUri, await storageManager.installSampleHistory())),
-            this.connection.changed.event(() => {
-                this.updates.fire('');
-                for (const view of this.views.values()) void this.refreshModelAccess(view);
-            }),
+            this.connection.changed.event(() => this.updates.fire('')),
             this.connection.changed,
         );
         context.subscriptions.push(
@@ -269,11 +266,6 @@ export class BlogPostManager {
         this.render(view);
         if (view.draft.pending && (view.editable || view.panel)) this.run(view);
     }
-    private static async refreshModelAccess(view: View) {
-        if (!view.ready || !view.panel) return;
-        const usage = await this.connection.usage();
-        await view.panel?.webview.postMessage({ type: 'modelAccess', models: usage?.models });
-    }
     private static render(view: View) {
         const announcement = `${!!view.draft.pending}:${!!view.draft.plan}:${view.error}`;
         if (view.announced !== announcement) { view.announced = announcement; this.updates.fire(view.draft.filePath); }
@@ -412,7 +404,7 @@ export class BlogPostManager {
             throw new Error('화면 요청을 확인할 수 없습니다.');
         }
         await this.refresh(view);
-        const reading = ['ready', 'refreshModels', 'takeover', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'ghostConnect', 'ghostOpen'].includes(message.type);
+        const reading = ['ready', 'takeover', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'ghostConnect', 'ghostOpen'].includes(message.type);
         if (!reading && (!view.editable || message.editToken !== view.draft.editor?.token)) throw new DraftConflict();
         switch (message.type) {
             case 'takeover': {
@@ -425,16 +417,11 @@ export class BlogPostManager {
             }
             case 'ready':
                 view.ready = true;
-                void this.refreshModelAccess(view);
                 void this.connection.refreshUsage();
                 await this.refreshGhost(view);
                 this.render(view);
                 if (view.draft.pending) this.run(view);
                 else if (!view.draft.plan && view.editable) await this.start(view, 'prepare_blog');
-                break;
-            case 'refreshModels':
-                await this.connection.refreshUsage();
-                await this.refreshModelAccess(view);
                 break;
             case 'save':
                 await this.edit(view, message.fields);

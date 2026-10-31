@@ -48,15 +48,19 @@
                 </div>
             </div>
             <div class="model-picker">
-                <label for="writing-model">모델</label>
-                <select id="writing-model" aria-describedby="writing-model-help">
-                    <option value="standard">standard</option>
-                    <option value="standard-high" selected>standard-high</option>
-                    <option value="opus5.5">opus5.5</option>
-                    <option value="astra">astra</option>
-                </select>
-                <span id="writing-model-help" class="muted" role="status">무료 크레딧을 먼저 사용합니다.</span>
-                <button class="quiet" id="model-usage-btn" title="크레딧과 모델 사용 가능 여부 새로고침">크레딧 확인</button>
+                <span id="writing-model-label">모델</span>
+                <div class="model-select" id="model-select">
+                    <button id="writing-model" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="writing-model-options" aria-labelledby="writing-model-label writing-model-value" disabled>
+                        <span id="writing-model-value">high</span>
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </button>
+                    <div id="writing-model-options" class="model-options" role="listbox" aria-labelledby="writing-model-label" hidden>
+                        <button type="button" role="option" value="standard" aria-selected="false" tabindex="-1">standard</button>
+                        <button type="button" role="option" value="standard-high" aria-selected="true" tabindex="-1">high</button>
+                        <button type="button" role="option" value="opus5.5" aria-selected="false" tabindex="-1">Claude Opus 5.5</button>
+                        <button type="button" role="option" value="astra" aria-selected="false" tabindex="-1">GPT 6 Astra</button>
+                    </div>
+                </div>
             </div>
             <nav id="view-tabs" aria-label="글 작성 화면">
                 <button class="tab active" id="plan-tab" aria-pressed="true">글 준비</button

@@ -15,7 +15,7 @@ moduleLoader._load = originalLoad;
 const sample: AccountUsage = { unit: 'credits', windowSeconds: 3600, hourlyUsedCredits: 6000, freeHourlyUsedCredits: 2469.12, freeHourlyLimitCredits: 5000, freeRemainingCredits: 2530.88, creditBalance: 24000, canStart: true, nextFunding: 'free', totalUsedCredits: 25000, todayRequests: 7, retryAt: null };
 function harness() {
     const secrets = new Map<string, string>();
-    const settings = { mode: 'server', apiUrl: 'http://127.0.0.1:4000/api' };
+    const settings = { apiUrl: 'http://127.0.0.1:4000/api' };
     const key = (base: string) => 'psb.account.' + createHash('sha256').update(base).digest('hex');
     const seed = (base = settings.apiUrl, token = 'test-token', owner = 'test-user') => secrets.set(key(base), JSON.stringify({token, user: {id: owner, email: owner + '@example.test'}}));
     const connection = new class extends ServiceConnection { get settings() { return settings; } }({ secrets: {
@@ -87,11 +87,7 @@ test('usage responses from an old server, account or signed-out session cannot r
     const changing = connection.refreshUsage(); seed(settings.apiUrl, 'new-token', 'new-user');
     await changing; assert.equal((await connection.usage())?.status, 'loading');
     secrets.clear(); await connection.refreshUsage(); assert.equal(await connection.usage(), undefined);
-    settings.mode = 'direct'; seed();
-    let directCalls = 0;
-    globalThis.fetch = async () => { directCalls++; return response(); };
-    await connection.refreshUsage(); assert.equal(await connection.usage(), undefined);
-    assert.equal(directCalls, 0);
+
 }));
 
 test('a backend 429 usage snapshot takes priority over an older in-flight balance response', () => withFetch(async () => {

@@ -1,3 +1,4 @@
+import { describe as suite, test } from 'node:test';
 import * as assert from 'assert';
 import { computeDiff } from '../storage/utils';
 

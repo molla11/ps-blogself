@@ -15,12 +15,10 @@ Module._load = function(name, ...args) {
     return original.call(this, name, ...args);
 };
 const { DraftStore } = require('../../src/writing/DraftStore.ts');
-const { LocalJobs } = require('../../src/writing/LocalJobs.ts');
 const { newDraft } = require('../../src/writing/model.ts');
 const { WorkspaceSettings } = require('../../src/storage/WorkspaceSettings.ts');
 const { storageManager } = require('../../src/storage/StorageManager.ts');
-let store, jobs, draft, settings, started = 0, running = 0, peak = 0, updates = 0;
-const finishes = new Map();
+let store, draft, settings, updates = 0;
 const subscriptions = [];
 process.on('message', async ({ id, action, data }) => {
     try {
@@ -28,16 +26,6 @@ process.on('message', async ({ id, action, data }) => {
         switch (action) {
             case 'init':
                 store = new DraftStore(path.join(data.directory, data.draftDirectory || 'drafts'));
-                jobs = new LocalJobs(path.join(data.directory, data.jobDirectory || 'jobs'), async (request, signal) => {
-                    started++; running++; peak = Math.max(peak, running);
-                    try {
-                        await new Promise((resolve, reject) => {
-                            finishes.set(request.requestId, resolve);
-                            signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
-                        });
-                        return { title: 'completed', markdown: request.instructions };
-                    } finally { running--; }
-                });
                 settings = new WorkspaceSettings(path.join(data.workspace, 'settings.json'));
                 await settings.init();
                 subscriptions.push(settings.watch(() => { updates++; }));
@@ -51,12 +39,6 @@ process.on('message', async ({ id, action, data }) => {
             case 'workspace':
                 settings = new WorkspaceSettings(path.join(data, 'settings.json'));
                 await settings.init(); subscriptions.push(settings.watch(() => { updates++; })); break;
-            case 'create': value = await jobs.create(data); break;
-            case 'job': value = await jobs.job(data); break;
-            case 'retry': value = await jobs.retry(data); break;
-            case 'cancel': value = await jobs.cancel(data); break;
-            case 'finish': finishes.get(data)?.(); break;
-            case 'stats': value = { started, running, peak }; break;
             case 'settings':
                 if (data) await settings.update(value => Object.assign(value, data));
                 await settings.init(); value = settings.value; break;
@@ -68,7 +50,7 @@ process.on('message', async ({ id, action, data }) => {
             case 'index': value = await storageManager.getRecentFiles(); break;
             case 'close':
                 subscriptions.forEach(item => item.dispose());
-                await jobs.close(); await store.close(); break;
+                await store.close(); break;
         }
         process.send({ id, value });
     } catch (error) { process.send({ id, error: error.message }); }

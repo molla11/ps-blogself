@@ -3,7 +3,7 @@ import * as assert from 'node:assert/strict';
 import { applyPatch } from 'diff';
 import { isCosmeticChange } from '../writing/ChangeFilter';
 import { sourceFor, writingSourceFor, preparationSource } from '../writing/model';
-import { validateRequest } from '../writing/Writer';
+import { validateRequest } from '../writing/RequestValidation';
 import { FileHistory } from '../types';
 
 const preserved: [string, string, string, string][] = [

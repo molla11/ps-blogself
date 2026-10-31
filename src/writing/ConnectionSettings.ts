@@ -3,8 +3,8 @@ import * as path from 'node:path';
 import { parseEnv } from 'node:util';
 
 export const PUBLIC_API = 'https://psb-backend.shinem.dev/api';
-export interface ConnectionEnvironment { [name: string]: string | undefined; PSB_AI_MODE?: string; PSB_API_URL?: string }
-export interface ConnectionPreferences { mode?: string; apiUrl?: string }
+export interface ConnectionEnvironment { [name: string]: string | undefined; PSB_API_URL?: string }
+
 
 export function serviceUrl(value: string) {
     const url = new URL(value);
@@ -19,18 +19,24 @@ export async function loadConnectionEnvironment(extensionPath: string, developme
     if (!development) return {};
     try {
         const values = parseEnv(await readFile(path.join(extensionPath, '.env'), 'utf8'));
-        return { PSB_AI_MODE: values.PSB_AI_MODE, PSB_API_URL: values.PSB_API_URL };
+        return { PSB_API_URL: values.PSB_API_URL };
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
         throw new Error('확장 루트의 .env 파일을 읽을 수 없습니다.');
     }
 }
 
-export function resolveConnectionSettings(preferences: ConnectionPreferences, environment: ConnectionEnvironment = process.env, development: ConnectionEnvironment = {}) {
-    const mode = environment.PSB_AI_MODE?.trim() || development.PSB_AI_MODE?.trim() || preferences.mode || 'server';
-    if (mode !== 'server' && mode !== 'direct') throw new Error('PSB_AI_MODE는 server 또는 direct여야 합니다.');
-    return {
-        mode,
-        apiUrl: serviceUrl(environment.PSB_API_URL?.trim() || development.PSB_API_URL?.trim() || preferences.apiUrl || PUBLIC_API),
-    };
+export function resolveConnectionSettings(environment: ConnectionEnvironment = process.env, development: ConnectionEnvironment = {}) {
+    return { apiUrl: serviceUrl(environment.PSB_API_URL?.trim() || development.PSB_API_URL?.trim() || PUBLIC_API) };
+}
+
+/** Development and integration runs require a reachable, compatible backend. */
+export async function requireBackend(base: string, request: typeof fetch = fetch): Promise<void> {
+    const url = serviceUrl(base);
+    let response: Response;
+    try {
+        response = await request(url + '/config', { redirect: 'error', signal: AbortSignal.timeout(5000) });
+    } catch { throw new Error(`백엔드에 연결할 수 없습니다: ${url}. 서버를 실행하고 PSB_API_URL을 확인해 주세요.`); }
+    const config = await response.json().catch(() => ({})) as { protocol?: string };
+    if (!response.ok || config.protocol !== 'file-writing-v2') throw new Error('호환되는 PS-Blogself 백엔드가 필요합니다. 서버 주소와 버전을 확인해 주세요.');
 }

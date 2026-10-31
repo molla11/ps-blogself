@@ -151,12 +151,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         usageTimer.unref();
         const visibility = webviewView.onDidChangeVisibility(refreshUsage);
         const focus = vscode.window.onDidChangeWindowState(refreshUsage);
-        const connectionSettings = vscode.workspace.onDidChangeConfiguration(event => {
-            if (event.affectsConfiguration('psb.aiMode') || event.affectsConfiguration('psb.apiUrl')) {
-                void this.updateState(); refreshUsage();
-            }
-        });
-        webviewView.onDidDispose(() => { clearInterval(usageTimer); visibility.dispose(); focus.dispose(); connectionSettings.dispose(); });
+        webviewView.onDidDispose(() => { clearInterval(usageTimer); visibility.dispose(); focus.dispose(); });
         const settingsUpdate = configManager.onDidChange(() => { void this.updateState(); });
         webviewView.onDidDispose(() => settingsUpdate.dispose());
         const updateDirectory = () => webviewView.webview.postMessage({ type: 'currentDirectory', path: configManager.getCurrentDirectory() });

@@ -10,11 +10,8 @@ import { checkInputSize } from '../writing/InputLimits';
 import { WRITING_MODES, WritingMode, WRITING_STYLES, WritingStyle, writingInstructions } from '../writing/WritingStyle';
 import { randomBytes, randomUUID } from 'crypto';
 import { storageManager } from '../storage/StorageManager';
-import { LocalJobs } from '../writing/LocalJobs';
-import { Writer } from '../writing/Writer';
-import { AiConfiguration } from '../writing/AiSettings';
 import { ServiceConnection, ServiceError } from '../writing/ServiceConnection';
-import { JobRouter, JobTarget } from '../writing/JobRouter';
+import { JobRouter, JobTarget, isServerTarget } from '../writing/JobRouter';
 import { DraftStore, DraftConflict } from '../writing/DraftStore';
 import { WindowSession } from '../storage/WindowSession';
 import { ConnectionEnvironment } from '../writing/ConnectionSettings';
@@ -61,7 +58,6 @@ export class BlogPostManager {
     private static assets: ArticleAssets;
     private static exports = new Set<Promise<void>>();
     private static jobs: JobRouter;
-    private static ai: AiConfiguration;
     private static connection: ServiceConnection;
     private static loads = new Map<string, Promise<View | undefined>>();
     private static closing = false;
@@ -73,10 +69,8 @@ export class BlogPostManager {
         this.publisher = new GhostPublisher(path.join(context.globalStorageUri.fsPath, 'ghost-publications'), this.assets);
         context.subscriptions.push(context.secrets.onDidChange(event => { if (event.key === GhostConnection.key) for (const view of this.views.values()) void this.refreshGhost(view); }));
         this.store = new DraftStore(path.join(context.globalStorageUri.fsPath, 'writing'));
-        this.ai = new AiConfiguration(context);
-        const writer = new Writer({ settings: () => this.ai.get() });
         this.connection = new ServiceConnection(context, development);
-        this.jobs = new JobRouter(new LocalJobs(path.join(context.globalStorageUri.fsPath, 'writing-jobs'), (request, signal) => writer.run(request, signal)), this.connection);
+        this.jobs = new JobRouter(this.connection);
         context.subscriptions.push(
             vscode.commands.registerCommand('psb.connect', () => this.connect()),
             vscode.commands.registerCommand('psb.sample', async () => this.openPage(context.extensionUri, await storageManager.installSampleHistory())),
@@ -108,14 +102,12 @@ export class BlogPostManager {
         await Promise.all([...this.views.values()].map((view) => view.queue));
         await Promise.allSettled([...this.exports]);
         await this.publisher?.close();
-        await this.jobs?.close();
         await this.store?.close();
     }
     static async connect() {
-        if (this.jobs.direct) await this.ai.configure();
-        else await this.connection.configure();
+        await this.connection.configure();
     }
-    static async accountLabel() { return this.jobs.direct ? '직접 호출 · AI 설정' : (await this.connection.account())?.email || '로그인'; }
+    static async accountLabel() { return (await this.connection.account())?.email || '로그인'; }
     static usage() { return this.connection.usage(); }
     static refreshUsage() { return this.connection.refreshUsage(); }
     static showUsage() { return this.connection.showUsage(); }
@@ -146,7 +138,6 @@ export class BlogPostManager {
     static async prepareOnReview(filePath: string) {
         if (!vscode.workspace.getConfiguration('psb').get('prepareOnReview', true)) return;
         try {
-            if (this.jobs.direct && !await this.ai.available()) return;
             const target = await this.jobs.target(false); // Reviewing never opens a login prompt.
             const view = await this.loadView(filePath);
             if (!view) return;
@@ -434,14 +425,14 @@ export class BlogPostManager {
                 if (view.draft.pending) {
                     view.draft.pending.cancelRequested = true;
                     await this.store.save(view.draft);
-                    if (view.draft.pending.jobId) await this.jobs.cancel(view.draft.pending.jobId, view.draft.pending.target || { kind: 'direct' });
+                    if (view.draft.pending.jobId && isServerTarget(view.draft.pending.target)) await this.jobs.cancel(view.draft.pending.jobId, view.draft.pending.target);
                     this.run(view);
                 }
                 break;
             case 'discardPending':
                 if (view.task) throw new Error('작업을 취소한 뒤 다시 시도해 주세요.');
-                if (view.draft.pending?.jobId && !view.draft.pending.apiUrl) {
-                    try { await this.jobs.cancel(view.draft.pending.jobId, view.draft.pending.target || { kind: 'direct' }); }
+                if (view.draft.pending?.jobId && isServerTarget(view.draft.pending.target) && !view.draft.pending.apiUrl) {
+                    try { await this.jobs.cancel(view.draft.pending.jobId, view.draft.pending.target); }
                     catch (error) { if (!(error instanceof ServiceError && error.status === 404)) throw error; }
                 }
                 delete view.draft.pending;
@@ -642,21 +633,30 @@ export class BlogPostManager {
         view.status = pending.request.kind === 'prepare_blog' ? '구간과 풀이 설명을 준비하고 있어요…' : '글을 작성하고 있어요…';
         view.task = Promise.resolve().then(async () => {
             try {
+                if (pending.apiUrl || !isServerTarget(pending.target)) {
+                    if (!view.editable) return;
+                    if (pending.cancelRequested) {
+                        await this.enqueue(view, async () => { signal.throwIfAborted(); delete view.draft.pending; await this.store.save(view.draft); });
+                        view.status = '작업을 취소했습니다.';
+                        return;
+                    }
+                    if (!retry) throw new Error('이전 실행 방식의 작업입니다. 다시 시도하면 현재 서비스로 새 요청을 보냅니다.');
+                    const target = await this.jobs.target();
+                    delete pending.apiUrl;
+                    delete pending.jobId;
+                    pending.request.requestId = randomUUID();
+                    pending.target = target;
+                    await this.enqueue(view, async () => { signal.throwIfAborted(); await this.store.save(view.draft); });
+                }
+                const target = pending.target;
                 if (!view.editable) {
                     if (pending.jobId) {
-                        await this.jobs.watch(pending.jobId, pending.target || { kind: 'direct' }, job => {
+                        await this.jobs.watch(pending.jobId, target, job => {
                             if (!signal.aborted) { view.progress = job.progress; view.partial = job.partial; this.render(view); }
                         }, signal);
                     }
                     return;
                 }
-                if (pending.apiUrl) {
-                    if (!retry && !pending.cancelRequested) throw new Error('이전 버전의 작업입니다. 다시 시도하면 현재 서비스로 새 요청을 보냅니다.');
-                    delete pending.apiUrl;
-                    delete pending.jobId;
-                    pending.target = await this.jobs.target();
-                }
-                const target = pending.target || { kind: 'direct' as const };
                 if (pending.cancelRequested && !pending.jobId) {
                     await this.enqueue(view, async () => { signal.throwIfAborted(); delete view.draft.pending; await this.store.save(view.draft); });
                     view.status = '작업을 취소했습니다.';

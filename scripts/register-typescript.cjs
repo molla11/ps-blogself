@@ -11,7 +11,3 @@ require.extensions['.ts'] = (module, filename) => {
     });
     module._compile(output.outputText, filename);
 };
-
-// Run the existing storage suite with Node's test runner as well as the VS Code runner.
-global.suite = require('node:test').describe;
-global.test = require('node:test').test;

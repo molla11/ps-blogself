@@ -67,7 +67,7 @@ export interface WritingDraft extends WritingPreferences {
     preparationKey?: string;
     pending?: {
         request: WritingRequest;
-        /** Only retained to detect unfinished requests from the server-based version. */
+        /** Retained only to detect unfinished requests from an older client. */
         apiUrl?: string;
         target?: import('./JobRouter').JobTarget;
         jobId?: string;

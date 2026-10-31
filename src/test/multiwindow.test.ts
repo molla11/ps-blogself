@@ -6,10 +6,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { FileHistory } from '../types';
-import { historyFingerprint, reconstructContents, WritingRequest } from '../writing/model';
+import { historyFingerprint, reconstructContents } from '../writing/model';
 
 const history: FileHistory = { id: 'test', filePath: '/work/solve.py', language: 'python', startedAt: 1, lastModified: 1, requestLogs: [], snapshots: [{ timestamp: 1, hash: 'a', content: 'print(1)' }] };
-const request = (id: string): WritingRequest => ({ kind: 'write_blog', requestId: id, instructions: id, source: {fileName: 'solve.py', language: 'python', initialCode: '', finalCode: 'print(1)', changes: [{index: 0, at: new Date(1).toISOString(), diff: '+print(1)'}]}, plan: {title: 'test', summary: '', start: 0, end: 0, steps: []} });
 function worker() {
     const child = fork(path.resolve('tests/multiwindow/worker.cjs'), [], { execArgv: ['--require', path.resolve('scripts/register-typescript.cjs')], stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
     let id = 0;
@@ -59,40 +58,8 @@ test('two hosts share the latest draft; takeover fences stale saves and owner de
     await a.call('edit', {title: 'recovered'});
 }));
 
-test('shared jobs execute once, stay running in another host, and unrelated jobs run concurrently', {timeout: 20000}, () => windows(async (a, b) => {
-    await Promise.all([a.call('create', request('shared')), b.call('create', request('shared'))]);
-    await until(async () => (await a.call('stats')).started + (await b.call('stats')).started === 1);
-    assert.equal((await a.call('job', 'shared')).status, 'running');
-    assert.equal((await b.call('retry', 'shared')).status, 'running');
-    await a.call('create', request('another'));
-    await until(async () => (await a.call('stats')).running + (await b.call('stats')).running === 2);
-    await Promise.all([a.call('finish', 'shared'), b.call('finish', 'shared'), a.call('finish', 'another')]);
-    await until(async () => (await b.call('job', 'shared')).status === 'completed' && (await b.call('job', 'another')).status === 'completed');
-    assert.equal((await a.call('stats')).started + (await b.call('stats')).started, 2);
-}));
 
-test('a dead execution owner requires explicit retry in the remaining window', {timeout: 20000}, () => windows(async (a, b) => {
-    await a.call('create', request('survives'));
-    await until(async () => (await a.call('stats')).started === 1);
-    assert.equal((await b.call('job', 'survives')).status, 'running');
-    await a.kill();
-    assert.equal((await b.call('job', 'survives')).status, 'failed');
-    assert.equal((await b.call('stats')).started, 0);
-    await b.call('retry', 'survives');
-    await until(async () => (await b.call('stats')).started === 1);
-    await b.call('finish', 'survives');
-    await until(async () => (await b.call('job', 'survives')).status === 'completed');
-}));
 
-test('closing an observing host leaves another host’s live job running', {timeout: 20000}, () => windows(async (a, b) => {
-    await a.call('create', request('keep-running'));
-    await until(async () => (await a.call('stats')).running === 1);
-    assert.equal((await b.call('job', 'keep-running')).status, 'running');
-    await b.call('close');
-    assert.equal((await a.call('job', 'keep-running')).status, 'running');
-    await a.call('finish', 'keep-running');
-    await until(async () => (await a.call('job', 'keep-running')).status === 'completed');
-}));
 
 test('settings in the same workspace merge simultaneous changes and notify the other host', {timeout: 20000}, () => windows(async (a, b, dir) => {
     await b.call('workspace', path.join(dir, 'workspace-a'));
@@ -104,13 +71,6 @@ test('settings in the same workspace merge simultaneous changes and notify the o
     assert.ok((await a.call('settingsValue')).updates > 0 || (await b.call('settingsValue')).updates > 0);
 }));
 
-test('cancellation in the observing window aborts the worker and keeps cancellation durable', {timeout: 20000}, () => windows(async (a, b) => {
-    await a.call('create', request('cancel'));
-    await until(async () => (await a.call('stats')).running === 1);
-    await b.call('cancel', 'cancel');
-    await until(async () => (await a.call('stats')).running === 0);
-    assert.equal((await a.call('job', 'cancel')).status, 'cancelled');
-}));
 
 test('workspace settings stay separate and concurrent history writes retain both files and all versions', {timeout: 20000}, () => windows(async (a, b, dir) => {
     await a.call('settings', {root: '/only-a', recording: false});

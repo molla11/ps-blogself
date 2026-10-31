@@ -6,16 +6,19 @@ import { fileWatcher } from './storage/FileWatcher';
 import { SidebarProvider } from './sidebar/SidebarProvider';
 import { BlogPostManager } from './services/BlogPostManager';
 import { Logger } from './services/logger';
-import { loadConnectionEnvironment } from './writing/ConnectionSettings';
+import { loadConnectionEnvironment, resolveConnectionSettings, requireBackend } from './writing/ConnectionSettings';
 
 export async function activate(context: vscode.ExtensionContext) {
     Logger.info(`activate() is executed.`);
+
+    const developmentMode = context.extensionMode !== vscode.ExtensionMode.Production;
+    const development = await loadConnectionEnvironment(context.extensionPath, developmentMode);
+    if (developmentMode) await requireBackend(resolveConnectionSettings(process.env, development).apiUrl);
 
     // Initialize state
     await configManager.init(context);
     storageManager.init(context);
     fileWatcher.init(context);
-    const development = await loadConnectionEnvironment(context.extensionPath, context.extensionMode === vscode.ExtensionMode.Development);
     BlogPostManager.init(context, development);
 
     const sidebarProvider = new SidebarProvider(

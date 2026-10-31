@@ -1,4 +1,5 @@
 const vscode = require('vscode');
+const { checkGhostExport, installGhostFixture } = require('./ghost.cjs');
 const { chromium } = require('@playwright/test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -28,9 +29,7 @@ async function surface(browser, selector) {
 }
 exports.run = async () => {
     const sandbox = process.env.PSB_HOST_SANDBOX, stage = process.env.PSB_HOST_STAGE;
-    // Explicit local environment must win over settings left from direct/public use.
-    await vscode.workspace.getConfiguration('psb').update('aiMode', 'direct', vscode.ConfigurationTarget.Global);
-    await vscode.workspace.getConfiguration('psb').update('apiUrl', 'https://psb-backend.shinem.dev/api', vscode.ConfigurationTarget.Global);
+    const restoreFetch = installGhostFixture(sandbox);
     const extension = vscode.extensions.all.find(e => e.packageJSON.name === 'ps-blogself');
     await extension.activate();
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${process.env.PSB_CDP_PORT}`);
@@ -75,6 +74,8 @@ exports.run = async () => {
             await until(async () => (await writer.frame.locator('#save-status').innerText()) === '저장됨', 'draft persisted');
         }
         await until(async () => (await writer.frame.locator('#article-body').inputValue()).includes('서버와 무관하게 보존된 로컬 본문'), 'local draft restored');
+        if ((await writer.frame.locator('#source-btn').getAttribute('aria-pressed')) === 'true') await writer.frame.locator('#source-btn').click();
+        await checkGhostExport(writer, sandbox, stage);
         assert.equal((await requests()).length, stage === 'first' ? 2 : 3, 'reopening must not repeat model work');
         if (stage === 'first') {
             await vscode.commands.executeCommand('psb.sidebar.focus');
@@ -127,5 +128,5 @@ exports.run = async () => {
         assert.doesNotMatch(label, /USD|\$|달러/);
         await writer.page.screenshot({ path: path.join(sandbox, stage + '.png') });
         await fs.writeFile(path.join(sandbox, stage + '.json'), JSON.stringify({ stage, passed: true }));
-    } finally { await browser.close(); }
+    } finally { restoreFetch(); await browser.close(); }
 };

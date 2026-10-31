@@ -17,11 +17,7 @@ export class ServiceConnection {
     private usageRevision = 0;
     constructor(private context: vscode.ExtensionContext, private development: ConnectionEnvironment = {}) {}
     get settings() {
-        const config = vscode.workspace.getConfiguration('psb');
-        return resolveConnectionSettings({
-            mode: config.inspect<string>('aiMode')?.globalValue,
-            apiUrl: config.inspect<string>('apiUrl')?.globalValue,
-        }, process.env, this.development);
+        return resolveConnectionSettings(process.env, this.development);
     }
     get base() { return this.settings.apiUrl; }
     private key(base: string) { return 'psb.account.' + createHash('sha256').update(base).digest('hex'); }
@@ -32,7 +28,6 @@ export class ServiceConnection {
     }
     async account() { return (await this.saved())?.user; }
     async usage(): Promise<UsageView | undefined> {
-        if (this.settings.mode === 'direct') return;
         const base = this.base, saved = await this.saved(base);
         if (!saved) return;
         if (this.usageSnapshot?.base === base && this.usageSnapshot.token === saved.token) return this.usageSnapshot.view;
@@ -40,14 +35,13 @@ export class ServiceConnection {
     }
     private async rememberUsage(base: string, token: string, view: UsageView, expectedRevision?: number) {
         const saved = await this.saved(base);
-        if (this.settings.mode !== 'server' || this.base !== base || saved?.token !== token
+        if (this.base !== base || saved?.token !== token
             || (expectedRevision !== undefined && expectedRevision !== this.usageRevision)) return;
         this.usageRevision++;
         this.usageSnapshot = { base, token, view };
         this.changed.fire();
     }
     async refreshUsage(afterCurrent = false): Promise<void> {
-        if (this.settings.mode !== 'server') return;
         const base = this.base, saved = await this.saved(base);
         if (!saved) return;
         if (this.usageRequest?.base === base && this.usageRequest.token === saved.token) {

@@ -120,7 +120,7 @@ exports.run = async () => {
             throw error;
         }
         const label = await usageSidebar.frame.locator('#usage-btn').innerText();
-        const credits = value => new Intl.NumberFormat('ko-KR', {minimumFractionDigits: 0, maximumFractionDigits: 2}).format(value);
+        const credits = value => new Intl.NumberFormat('ko-KR', {maximumFractionDigits: 0}).format(Math.floor(value));
         assert.ok(label.includes(credits(usage.freeHourlyUsedCredits)));
         assert.ok(label.includes(credits(usage.freeHourlyLimitCredits)));
         assert.ok(label.includes('유료 ' + credits(usage.creditBalance) + '크레딧'));

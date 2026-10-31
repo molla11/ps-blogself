@@ -25,8 +25,8 @@ export function accountUsage(value: unknown): AccountUsage {
 
 export function usageView(usage: AccountUsage): UsageView {
     const credits = (value: number) => new Intl.NumberFormat('ko-KR', {
-        minimumFractionDigits: 0, maximumFractionDigits: 2,
-    }).format(value);
+        maximumFractionDigits: 0,
+    }).format(Math.floor(value));
     const seconds = usage.windowSeconds;
     const window = seconds % 3600 === 0 ? `${seconds / 3600}시간` : seconds % 60 === 0 ? `${seconds / 60}분` : `${seconds}초`;
     const label = `최근 ${window} 무료 ${credits(usage.freeHourlyUsedCredits)} / ${credits(usage.freeHourlyLimitCredits)} · 유료 ${credits(usage.creditBalance)}크레딧`;

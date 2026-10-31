@@ -6,7 +6,10 @@ let model,
     activeTab = 'plan',
     lastMarkdown = '',
     editTimer,
-    previewMode = false;
+    previewMode = false,
+    selectedVersion = '',
+    readyVersion = '',
+    restoreRequest;
 const dirty = new Set(),
     sent = new Map();
 const recovered = vscode.getState();
@@ -145,6 +148,56 @@ function switchTab(tab) {
     el('article-view').hidden = tab !== 'article';
     el('plan-tab').classList.toggle('active', tab === 'plan');
     el('article-tab').classList.toggle('active', tab === 'article');
+    el('plan-tab').setAttribute('aria-pressed', String(tab === 'plan'));
+    el('article-tab').setAttribute('aria-pressed', String(tab === 'article'));
+    document.querySelectorAll('textarea').forEach(height);
+}
+function renderVersions() {
+    const versions = model.versions || [], select = el('version-select');
+    if (selectedVersion && !versions.some(version => version.id === selectedVersion)) {
+        selectedVersion = '';
+        readyVersion = '';
+    }
+    const structure = JSON.stringify(versions);
+    if (select.dataset.structure !== structure) {
+        select.dataset.structure = structure;
+        const current = document.createElement('option');
+        current.value = '';
+        current.textContent = '현재 글';
+        select.replaceChildren(current);
+        versions.slice().reverse().forEach((version, index) => {
+            const option = document.createElement('option');
+            option.value = version.id;
+            const date = new Date(version.at).toLocaleString('ko-KR', {
+                month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
+            });
+            option.textContent = `${index + 1}개 전 · ${date} · ${version.title || '제목 없음'}`;
+            select.appendChild(option);
+        });
+    }
+    select.value = selectedVersion;
+    select.disabled = !!restoreRequest;
+    const browsing = !!selectedVersion, loading = browsing && readyVersion !== selectedVersion;
+    el('versions-box').hidden = !versions.length;
+    el('version-older-btn').disabled = !!restoreRequest || select.selectedIndex >= select.options.length - 1;
+    el('version-newer-btn').disabled = !!restoreRequest || select.selectedIndex <= 0;
+    el('restore-version-btn').hidden = !browsing;
+    el('restore-version-btn').disabled = model.editable === false || loading || !!restoreRequest;
+    el('current-article').hidden = browsing;
+    el('version-preview').hidden = !browsing;
+    el('preview-btn').hidden = browsing;
+    el('copy-btn').disabled = loading;
+    el('export-btn').disabled = loading;
+}
+function chooseVersion(id) {
+    if (restoreRequest || id === selectedVersion) return;
+    selectedVersion = id;
+    readyVersion = '';
+    el('version-title').textContent = '';
+    el('version-body').replaceChildren();
+    el('version-status').textContent = '이전 버전을 불러오는 중…';
+    renderVersions();
+    if (id) send('previewVersion', { versionId: id });
     document.querySelectorAll('textarea').forEach(height);
 }
 function render() {
@@ -168,13 +221,16 @@ function render() {
     el('discard-pending-btn').hidden = !model.pending || model.running;
     el('candidate-box').hidden = !model.candidate;
     el('preparing').hidden = !!form.plan;
+    el('preparing').classList.toggle('is-loading', !!model.pending || !!model.running);
     el('prepare-empty-btn').hidden = !!model.pending || !!model.running || !!model.candidate;
     el('preparing').querySelector('p').textContent = model.error
         ? '안내를 확인한 뒤 다시 시도할 수 있어요.'
         : '변경 구간과 풀이 설명을 먼저 채워드릴게요.';
     el('plan-content').hidden = !form.plan;
     el('generate-btn').disabled = !form.plan || model.pending;
-    el('generate-btn').textContent = form.markdown ? '글 다시 쓰기' : '이대로 글쓰기';
+    el('generate-btn').textContent = model.pending
+        ? (model.pendingKind === 'prepare_blog' || !form.plan ? '준비 중…' : '작성 중…')
+        : form.markdown ? '글 다시 쓰기' : '이대로 글쓰기';
     el('prepare-btn').disabled = model.pending;
     el('retry-btn').disabled = model.running;
     value('instructions', form.instructions);
@@ -191,27 +247,17 @@ function render() {
     }
     value('article-title', form.title);
     value('article-body', form.markdown);
-    el('view-tabs').hidden = !form.markdown;
+    el('article-tab').disabled = !form.markdown && !model.versions.length;
     if (form.markdown && !lastMarkdown) {
         switchTab('article');
         previewMode = true;
-        send('preview', {}, true);
+        send('preview');
     } else if (form.markdown !== lastMarkdown && previewMode) {
-        send('preview', {}, true);
+        send('preview');
     }
     lastMarkdown = form.markdown || '';
-    if (!form.markdown) switchTab('plan');
-    el('versions-box').hidden = !model.versions.length;
-    const versions = el('versions');
-    versions.replaceChildren();
-    model.versions.forEach((version, index) => {
-        const button = document.createElement('button');
-        button.className = 'quiet';
-        button.textContent = `${new Date(version.at).toLocaleString()} · ${version.title}`;
-        button.disabled = !editable;
-        button.addEventListener('click', () => send('restore', { index }, true));
-        versions.appendChild(button);
-    });
+    if (el('article-tab').disabled) switchTab('plan');
+    renderVersions();
     document.querySelectorAll('textarea, input:not([type="range"])').forEach(node => { node.readOnly = !editable; });
     document.querySelectorAll('input[type="range"]').forEach(node => { node.disabled = !editable; });
     for (const id of ['generate-btn', 'prepare-btn', 'prepare-empty-btn', 'retry-btn', 'cancel-btn', 'discard-pending-btn', 'apply-candidate-btn', 'discard-candidate-btn']) {
@@ -257,13 +303,29 @@ window.addEventListener('message', (event) => {
             stash();
             if (!dirty.size) el('save-status').textContent = '저장됨';
         }
+        if (message.id === restoreRequest) {
+            restoreRequest = undefined;
+            selectedVersion = '';
+            renderVersions();
+        }
     } else if (message.type === 'saveError') {
         el('save-status').textContent = '저장 확인 필요';
+        if (message.id === restoreRequest) {
+            restoreRequest = undefined;
+            renderVersions();
+        }
     } else if (message.type === 'preview') {
         el('article-preview').innerHTML = message.html;
         el('article-preview').hidden = !previewMode;
         el('body-field').hidden = previewMode;
         el('preview-btn').textContent = previewMode ? '본문 수정' : '미리보기';
+    } else if (message.type === 'versionPreview') {
+        if (!selectedVersion || message.versionId !== selectedVersion) return;
+        readyVersion = message.versionId;
+        el('version-status').textContent = '이전 버전 미리보기';
+        el('version-title').textContent = message.title || '제목 없음';
+        el('version-body').innerHTML = message.html;
+        renderVersions();
     } else if (message.type === 'diff') {
         document.querySelectorAll(`[data-diff="${message.index}"]`).forEach((pre) => {
             pre.replaceChildren();
@@ -323,7 +385,21 @@ el('summary').addEventListener('input', (event) => {
     height(event.target);
     changed('plan');
 });
-el('prepare-empty-btn').addEventListener('click', () => send('prepare', {}, true));
+el('prepare-empty-btn').addEventListener('click', () => action('prepare'));
+el('version-select').addEventListener('change', event => chooseVersion(event.target.value));
+for (const [id, offset] of [['version-older-btn', 1], ['version-newer-btn', -1]]) {
+    el(id).addEventListener('click', () => {
+        const select = el('version-select');
+        const option = select.options[select.selectedIndex + offset];
+        if (option) chooseVersion(option.value);
+    });
+}
+el('restore-version-btn').addEventListener('click', () => {
+    if (!selectedVersion || model.editable === false || restoreRequest) return;
+    clearTimeout(editTimer);
+    restoreRequest = send('restore', { versionId: selectedVersion }, true);
+    renderVersions();
+});
 for (const key of ['start', 'end']) {
     el('range-' + key).addEventListener('input', (event) => {
         const p = form.plan,
@@ -350,11 +426,18 @@ for (const [id, type] of [
     ['generate-btn', 'generate'],
     ['prepare-btn', 'prepare'],
     ['retry-btn', 'retry'],
-    ['copy-btn', 'copy'],
-    ['export-btn', 'export'],
     ['apply-candidate-btn', 'applyCandidate'],
 ]) {
-    el(id).addEventListener('click', () => action(type));
+    el(id).addEventListener('click', () => {
+        if (type === 'generate') chooseVersion('');
+        action(type);
+    });
+}
+for (const [id, type] of [['copy-btn', 'copy'], ['export-btn', 'export']]) {
+    el(id).addEventListener('click', () => {
+        if (selectedVersion) send(type, { versionId: selectedVersion });
+        else action(type);
+    });
 }
 for (const [id, type] of [
     ['connect-btn', 'connect'],
@@ -383,10 +466,10 @@ el('preview-btn').addEventListener('click', () => {
         el('article-body').focus();
     }
 });
-el('article-preview').addEventListener('click', (event) => {
+document.querySelectorAll('.article-preview').forEach(preview => preview.addEventListener('click', (event) => {
     const link = event.target.closest('a');
     if (link) {
         event.preventDefault();
         send('openLink', { url: link.href });
     }
-});
+}));

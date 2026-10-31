@@ -15,13 +15,14 @@ body {
 }
 button,
 input,
-textarea {
+textarea,
+select {
     font: inherit;
 }
 button {
     border: 1px solid transparent;
     border-radius: 4px;
-    padding: 6px 12px;
+    padding: 5px 10px;
     background: var(--vscode-button-background, #087cb9);
     color: var(--vscode-button-foreground, #fff);
     cursor: pointer;
@@ -38,6 +39,10 @@ button:focus-visible,
 summary:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
+    outline: 2px solid var(--vscode-focusBorder, #007fd4);
+    outline-offset: 2px;
+}
+select:focus-visible {
     outline: 2px solid var(--vscode-focusBorder, #007fd4);
     outline-offset: 2px;
 }
@@ -69,11 +74,11 @@ textarea:focus-visible {
     gap: 16px;
     border-bottom: 1px solid var(--vscode-widget-border, #444);
     padding: 16px 0 12px;
-    max-width: 1060px;
+    max-width: 920px;
     margin: auto;
 }
 h1 {
-    font-size: 20px;
+    font-size: 18px;
     line-height: 1.25;
     margin: 3px 0 0;
 }
@@ -97,7 +102,7 @@ h2 {
     flex-wrap: wrap;
 }
 main {
-    max-width: 1060px;
+    max-width: 920px;
     margin: auto;
 }
 .notice {
@@ -105,8 +110,8 @@ main {
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
-    margin: 14px 0;
-    font-size: 13px;
+    margin: 12px 0;
+    font-size: 12px;
 }
 .notice > span {
     flex: 1;
@@ -129,15 +134,22 @@ progress {
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    margin: 24px 0 12px;
+    margin: 20px 0 12px;
+}
+.section-description {
+    margin: 4px 0 0;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--vscode-descriptionForeground, #aaa);
 }
 nav {
     display: flex;
-    gap: 8px;
+    gap: 4px;
     border-bottom: 1px solid var(--vscode-widget-border, #444);
 }
 .tab {
-    padding: 9px 14px;
+    padding: 8px 12px;
+    color: var(--vscode-descriptionForeground, #aaa);
 }
 .tab.active {
     border-radius: 0;
@@ -146,8 +158,8 @@ nav {
 }
 .field {
     display: block;
-    margin: 18px 0;
-    font-weight: 600;
+    margin: 14px 0;
+    font-weight: 500;
 }
 .field .muted {
     font-weight: 400;
@@ -158,19 +170,19 @@ select#writing-style,
 textarea {
     display: block;
     width: 100%;
-    margin-top: 7px;
+    margin-top: 6px;
     border: 1px solid var(--vscode-input-border, #484848);
     border-radius: 5px;
-    padding: 10px 12px;
+    padding: 7px 10px;
     background: var(--vscode-input-background, #282828);
     color: var(--vscode-input-foreground, #eee);
     font-weight: 400;
-    line-height: 1.85;
+    line-height: 1.7;
 }
 textarea {
     resize: vertical;
     overflow: hidden;
-    min-height: 90px;
+    min-height: 70px;
 }
 textarea:focus,
 input:focus {
@@ -181,8 +193,10 @@ input:focus {
     font-size: 14px;
 }
 .step {
-    border-top: 1px solid var(--vscode-widget-border, #444);
-    padding: 6px 0 16px;
+    border: 1px solid var(--vscode-widget-border, #444);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-top: 12px;
 }
 .step .field {
     margin: 12px 0;
@@ -201,19 +215,21 @@ input:focus {
     background: transparent;
     padding-left: 0;
     font-weight: 600;
+    margin-top: 0;
 }
-.step-title input:focus {
-    padding-left: 10px;
+.step > details {
+    margin-top: 8px;
 }
 .extra {
     border-top: 1px solid var(--vscode-widget-border, #444);
-    padding-top: 18px;
+    padding-top: 14px;
 }
 .range-box {
     background: var(--vscode-textBlockQuote-background, #ffffff05);
     border: 1px solid var(--vscode-widget-border, #444);
     border-radius: 5px;
-    padding: 10px 12px;
+    padding: 8px 10px;
+    font-size: 12px;
 }
 summary {
     cursor: pointer;
@@ -283,21 +299,78 @@ input[type='range'] {
     color: var(--vscode-gitDecoration-deletedResourceForeground, #ef9696);
 }
 .skeleton {
-    height: 90px;
+    height: 48px;
     background: var(--vscode-textBlockQuote-background, #ffffff09);
     border-radius: 5px;
-    margin: 22px 0;
+    margin: 16px 0;
 }
 .skeleton.short {
-    height: 55px;
-    width: 75%;
+    height: 32px;
+    width: 65%;
+}
+#preparing {
+    margin-top: 20px;
+    padding: 18px;
+    border: 1px solid var(--vscode-widget-border, #444);
+    border-radius: 6px;
+}
+#preparing:not(.is-loading) .skeleton {
+    display: none;
 }
 #preparing p {
     color: var(--vscode-descriptionForeground, #aaa);
 }
-#versions button {
-    display: block;
-    margin-top: 8px;
+.version-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--vscode-widget-border, #444);
+}
+.version-bar > label {
+    color: var(--vscode-descriptionForeground, #aaa);
+    font-size: 12px;
+}
+.version-picker {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+}
+#version-select {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+    height: 30px;
+    padding: 3px 8px;
+    color: var(--vscode-dropdown-foreground, #eee);
+    background: var(--vscode-dropdown-background, #282828);
+    border: 1px solid var(--vscode-dropdown-border, #484848);
+    border-radius: 4px;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+.version-arrow {
+    width: 28px;
+    height: 30px;
+    padding: 0;
+    font-size: 22px;
+    line-height: 1;
+    color: inherit;
+}
+#version-preview {
+    margin-top: 18px;
+}
+#version-title {
+    font-size: 20px;
+    margin: 8px 0 0;
+    overflow-wrap: anywhere;
+}
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--vscode-scrollbarSlider-background, #ffffff28) transparent;
 }
 @media (max-width: 650px) {
     body {
@@ -321,6 +394,18 @@ input[type='range'] {
     }
     .notice {
         font-size: 12px;
+    }
+    .section-heading .actions {
+        gap: 6px;
+    }
+    .version-picker {
+        flex-basis: calc(100% - 40px);
+    }
+    #restore-version-btn {
+        margin-left: auto;
+    }
+    .step {
+        padding: 8px 10px;
     }
 }
 .article-preview {

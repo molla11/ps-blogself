@@ -43,6 +43,11 @@ export interface WritingJob {
     result?: { plan?: WritingPlan; title?: string; markdown?: string };
     partial?: string;
 }
+export interface ArticleVersion {
+    title: string;
+    markdown: string;
+    at: number;
+}
 export interface WritingDraft extends WritingPreferences {
     schemaVersion: 1;
     storageVersion?: number;
@@ -68,7 +73,25 @@ export interface WritingDraft extends WritingPreferences {
         cancelRequested?: boolean;
     };
     candidate?: { plan?: WritingPlan; title?: string; markdown?: string; history?: FileHistory };
-    articleVersions: { title: string; markdown: string; at: number }[];
+    articleVersions: ArticleVersion[];
+}
+
+// Compare without changing the stored text: indentation and spaces within a line
+// still matter, but line endings, trailing spaces and final newlines do not.
+export function articleVersionKey(article: Pick<ArticleVersion, 'title' | 'markdown'>): string {
+    const normalize = (text: string) => text.replace(/\r\n?/g, '\n')
+        .split('\n').map(line => line.trimEnd()).join('\n').trimEnd();
+    return createHash('sha256').update(JSON.stringify([normalize(article.title), normalize(article.markdown)])).digest('hex');
+}
+
+export function previousArticleVersions(draft: WritingDraft): ArticleVersion[] {
+    const seen = new Set([articleVersionKey(draft)]);
+    return draft.articleVersions.slice().reverse().filter(version => {
+        const key = articleVersionKey(version);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    }).slice(0, 20).reverse();
 }
 
 export function historyFingerprint(history: FileHistory): string {
@@ -245,14 +268,14 @@ export function mergeResult(
         }
     }
     if (typeof result.markdown === 'string' && typeof result.title === 'string') {
-        if (draft.markdown) {
-            draft.articleVersions = [
-                ...draft.articleVersions,
-                { title: draft.title, markdown: draft.markdown, at: Date.now() },
-            ].slice(-20);
+        if (articleVersionKey(draft) !== articleVersionKey({ title: result.title, markdown: result.markdown })) {
+            if (draft.markdown.trim()) {
+                draft.articleVersions.push({ title: draft.title, markdown: draft.markdown, at: Date.now() });
+            }
+            draft.title = result.title;
+            draft.markdown = result.markdown;
         }
-        draft.title = result.title;
-        draft.markdown = result.markdown;
+        draft.articleVersions = previousArticleVersions(draft);
     }
     draft.revision++;
     draft.updatedAt = Date.now();

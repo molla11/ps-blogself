@@ -47,9 +47,9 @@
                     ><button class="quiet" id="discard-candidate-btn">현재 내용 유지</button>
                 </div>
             </div>
-            <nav id="view-tabs" hidden aria-label="글 작성 화면">
-                <button class="tab active" id="plan-tab">풀이 흐름</button
-                ><button class="tab" id="article-tab">완성된 글</button>
+            <nav id="view-tabs" aria-label="글 작성 화면">
+                <button class="tab active" id="plan-tab" aria-pressed="true">글 준비</button
+                ><button class="tab" id="article-tab" aria-pressed="false" disabled>완성된 글</button>
             </nav>
             <section id="stream-box" hidden>
                 <h2>작성 중인 글</h2>
@@ -57,15 +57,19 @@
             </section>
             <section id="plan-view">
                 <div id="preparing">
-                    <div class="skeleton"></div>
-                    <div class="skeleton short"></div>
+                    <h2>풀이 흐름 준비</h2>
+                    <div class="skeleton" aria-hidden="true"></div>
+                    <div class="skeleton short" aria-hidden="true"></div>
                     <p>변경 구간과 풀이 설명을 먼저 채워드릴게요.</p>
                     <button id="prepare-empty-btn" class="secondary" hidden>풀이 준비</button>
                 </div>
                 <div id="plan-content" hidden>
                     <div class="section-heading">
-                        <h2>글에 담을 흐름</h2>
-                        <button class="quiet" id="prepare-btn">다시 분석</button>
+                        <div>
+                            <h2>글에 담을 내용</h2>
+                            <p class="section-description">AI가 채운 내용에서 필요한 부분만 고쳐주세요.</p>
+                        </div>
+                        <button class="quiet" id="prepare-btn">다시 준비</button>
                     </div>
                     <details class="range-box" id="range-details">
                         <summary>
@@ -129,23 +133,35 @@
                     <div class="actions">
                         <button class="secondary" id="preview-btn">미리보기</button
                         ><button class="secondary" id="copy-btn">복사</button
-                        ><button id="export-btn">Markdown 저장</button>
+                        ><button class="secondary" id="export-btn">Markdown 저장</button>
                     </div>
                 </div>
-                <label class="field">글 제목<input id="article-title" maxlength="300" /></label>
-                <label class="field" id="body-field"
-                    >본문<textarea
-                        id="article-body"
-                        rows="18"
-                        maxlength="150000"
-                        spellcheck="false"
-                    ></textarea>
-                </label>
-                <article id="article-preview" class="article-preview" hidden></article>
-                <details id="versions-box" hidden>
-                    <summary>이전 글</summary>
-                    <div id="versions"></div>
-                </details>
+                <div class="version-bar" id="versions-box" hidden>
+                    <label for="version-select">버전</label>
+                    <div class="version-picker">
+                        <select id="version-select" aria-label="글 버전"></select>
+                        <button class="quiet version-arrow" id="version-older-btn" aria-label="이전 버전" title="이전 버전">‹</button>
+                        <button class="quiet version-arrow" id="version-newer-btn" aria-label="다음 버전" title="다음 버전">›</button>
+                    </div>
+                    <button class="secondary" id="restore-version-btn" hidden>이 버전 사용</button>
+                </div>
+                <div id="current-article">
+                    <label class="field">글 제목<input id="article-title" maxlength="300" /></label>
+                    <label class="field" id="body-field"
+                        >본문<textarea
+                            id="article-body"
+                            rows="18"
+                            maxlength="150000"
+                            spellcheck="false"
+                        ></textarea>
+                    </label>
+                    <article id="article-preview" class="article-preview" hidden></article>
+                </div>
+                <div id="version-preview" hidden>
+                    <p class="section-description" id="version-status" role="status">이전 버전 미리보기</p>
+                    <h3 id="version-title"></h3>
+                    <article id="version-body" class="article-preview" aria-label="선택한 버전 본문"></article>
+                </div>
             </section>
         </main>
         {{script}}

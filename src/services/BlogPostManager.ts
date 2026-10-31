@@ -22,6 +22,8 @@ import {
     preparationSource,
     validatePlan,
     historyFingerprint,
+    articleVersionKey,
+    previousArticleVersions,
 } from '../writing/model';
 import template from './templates/blogPostMain.html';
 import css from './templates/blogPostMain.css';
@@ -272,12 +274,13 @@ export class BlogPostManager {
             count: draft.history.snapshots.length,
             times: draft.history.snapshots.map((s) => s.timestamp),
             pending: !!draft.pending,
+            pendingKind: draft.pending?.request.kind,
             running: !!view.task,
             progress: view.progress,
             status: view.status,
             error: view.error,
             candidate: !!draft.candidate,
-            versions: draft.articleVersions.map((v) => ({ at: v.at, title: v.title })),
+            versions: previousArticleVersions(draft).map((v) => ({ id: articleVersionKey(v), at: v.at, title: v.title })),
             streamHtml: view.partial ? new MarkdownIt({ html: false }).render(view.partial) : '',
         });
     }
@@ -333,7 +336,7 @@ export class BlogPostManager {
             throw new Error('화면 요청을 확인할 수 없습니다.');
         }
         await this.refresh(view);
-        const reading = ['ready', 'takeover', 'diff', 'preview', 'export', 'copy', 'openLink', 'connect'].includes(message.type);
+        const reading = ['ready', 'takeover', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect'].includes(message.type);
         if (!reading && (!view.editable || message.editToken !== view.draft.editor?.token)) throw new DraftConflict();
         switch (message.type) {
             case 'takeover': {
@@ -412,8 +415,17 @@ export class BlogPostManager {
                 void view.panel?.webview.postMessage({ type: 'preview', html });
                 break;
             }
+            case 'previewVersion': {
+                const version = this.version(view.draft, message.versionId);
+                void view.panel?.webview.postMessage({
+                    type: 'versionPreview', versionId: message.versionId, title: version.title,
+                    html: new MarkdownIt({ html: false }).render(version.markdown),
+                });
+                break;
+            }
             case 'export': {
-                if (view.editable && message.editToken === view.draft.editor?.token) await this.edit(view, message.fields);
+                if (!message.versionId && view.editable && message.editToken === view.draft.editor?.token) await this.edit(view, message.fields);
+                const article = message.versionId ? this.version(view.draft, message.versionId) : view.draft;
                 const uri = await vscode.window.showSaveDialog({
                     defaultUri: vscode.Uri.file(
                         path.join(
@@ -427,27 +439,27 @@ export class BlogPostManager {
                 if (uri) {
                     await vscode.workspace.fs.writeFile(
                         uri,
-                        Buffer.from(this.markdown(view.draft)),
+                        Buffer.from(this.markdown(article)),
                     );
                     view.status = 'Markdown 파일로 저장했습니다.';
                 }
                 break;
             }
             case 'copy':
-                if (view.editable && message.editToken === view.draft.editor?.token) await this.edit(view, message.fields);
-                await vscode.env.clipboard.writeText(this.markdown(view.draft));
+                if (!message.versionId && view.editable && message.editToken === view.draft.editor?.token) await this.edit(view, message.fields);
+                await vscode.env.clipboard.writeText(this.markdown(message.versionId ? this.version(view.draft, message.versionId) : view.draft));
                 view.status = '글을 복사했습니다.';
                 break;
             case 'restore': {
+                const version = this.version(view.draft, message.versionId);
                 await this.edit(view, message.fields);
-                const version = view.draft.articleVersions[Number(message.index)];
-                if (!version) throw new Error('이전 글을 찾을 수 없습니다.');
                 mergeResult(
                     view.draft,
                     { title: version.title, markdown: version.markdown },
                     view.draft.revision,
                 );
                 await this.store.save(view.draft);
+                view.status = '선택한 버전을 적용했습니다.';
                 break;
             }
             case 'openLink': {
@@ -464,7 +476,12 @@ export class BlogPostManager {
                 throw new Error('지원하지 않는 화면 요청입니다.');
         }
     }
-    private static markdown(draft: WritingDraft) {
+    private static version(draft: WritingDraft, id: unknown) {
+        const version = typeof id === 'string' && draft.articleVersions.find(v => articleVersionKey(v) === id);
+        if (!version) throw new Error('이전 글을 찾을 수 없습니다. 버전을 다시 선택해 주세요.');
+        return version;
+    }
+    private static markdown(draft: Pick<WritingDraft, 'title' | 'markdown'> & Partial<Pick<WritingDraft, 'plan'>>) {
         return `# ${draft.title || draft.plan?.title || '풀이 기록'}\n\n${draft.markdown}\n`;
     }
     private static async start(view: View, kind: 'prepare_blog' | 'write_blog', target?: JobTarget, prefetch = false) {

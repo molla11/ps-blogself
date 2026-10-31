@@ -13,6 +13,8 @@ import {
     preparationSource,
     mergeResult,
     validatePlan,
+    articleVersionKey,
+    previousArticleVersions,
 } from '../writing/model';
 
 const history: FileHistory = {
@@ -62,6 +64,77 @@ test('a model completion cannot overwrite a newer user explanation or article', 
     mergeResult(draft, draft.candidate!, draft.revision);
     assert.equal(draft.markdown, '새 글');
     assert.equal(draft.articleVersions[0].markdown, '편집 중인 글');
+});
+test('identical articles and trailing whitespace differences do not create a version or rewrite the text', () => {
+    const draft = newDraft(history);
+    const original = { title: '풀이 기록', markdown: '첫 문장\n\n```python\n    print(1)\n```\n' };
+    mergeResult(draft, original, draft.revision);
+    for (const article of [
+        original,
+        { title: original.title + ' \t', markdown: '첫 문장  \r\n \t\r\n```python\r\n    print(1)\t\r\n```\r\n\r\n' },
+        { ...original, markdown: original.markdown.trimEnd() },
+    ]) {
+        mergeResult(draft, article, draft.revision);
+        assert.equal(draft.articleVersions.length, 0);
+        assert.equal(draft.title, original.title);
+        assert.equal(draft.markdown, original.markdown);
+    }
+});
+test('title, words, paragraph boundaries and code indentation still distinguish versions', () => {
+    const original = { title: '제목', markdown: '두 단어\n\n```py\n    print(1)\n```' };
+    for (const changed of [
+        { ...original, title: '새 제목' },
+        { ...original, markdown: original.markdown.replace('두 단어', '두  단어') },
+        { ...original, markdown: original.markdown.replace('\n\n', '\n') },
+        { ...original, markdown: original.markdown.replace('    print', '  print') },
+        { ...original, markdown: original.markdown.replace('1', '2') },
+    ]) {
+        const draft = newDraft(history);
+        mergeResult(draft, original, draft.revision);
+        mergeResult(draft, changed, draft.revision);
+        assert.equal(draft.articleVersions.length, 1);
+        assert.equal(draft.articleVersions[0].markdown, original.markdown);
+        assert.equal(draft.markdown, changed.markdown);
+    }
+});
+test('restoring or regenerating a saved article never accumulates duplicate versions', () => {
+    const draft = newDraft(history);
+    for (const markdown of ['A', 'B', 'A', 'B', 'A  ', 'C', 'B', 'C', 'C\n']) {
+        mergeResult(draft, { title: '제목', markdown }, draft.revision);
+        const keys = [draft, ...draft.articleVersions].map(articleVersionKey);
+        assert.equal(new Set(keys).size, keys.length);
+        assert.ok(draft.articleVersions.length <= 2);
+    }
+    assert.deepEqual(new Set(draft.articleVersions.map(v => v.markdown.trim())), new Set(['A', 'B']));
+});
+test('legacy duplicate versions are collapsed on reopen, keeping the latest timestamp and exact text', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'psb-version-test-'));
+    const store = new DraftStore(directory);
+    try {
+        const draft = newDraft(history);
+        Object.assign(draft, { title: '제목', markdown: '현재' });
+        draft.articleVersions = [
+            { title: '제목', markdown: '이전', at: 1 },
+            { title: '제목', markdown: '현재  ', at: 2 },
+            { title: '제목', markdown: '이전 \t', at: 3 },
+        ];
+        await store.save(draft);
+        const loaded = await store.read(history.filePath);
+        assert.deepEqual(loaded?.articleVersions, [{ title: '제목', markdown: '이전 \t', at: 3 }]);
+        assert.equal(loaded?.markdown, '현재');
+    } finally {
+        await store.close();
+        await rm(directory, { recursive: true, force: true });
+    }
+});
+test('the version limit retains the latest twenty distinct previous articles', () => {
+    const draft = newDraft(history);
+    for (let index = 0; index < 30; index++) {
+        mergeResult(draft, { title: '제목', markdown: `본문 ${index}` }, draft.revision);
+        mergeResult(draft, { title: '제목', markdown: `본문 ${index}  ` }, draft.revision);
+    }
+    assert.deepEqual(previousArticleVersions(draft).map(v => v.markdown),
+        Array.from({ length: 20 }, (_, index) => `본문 ${index + 9}`));
 });
 test('plans reject nonexistent ranges and malformed inputs without changing a draft', () => {
     assert.deepEqual(validatePlan(plan, 3), plan);

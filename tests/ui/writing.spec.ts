@@ -269,3 +269,78 @@ test('reopening after an ownership change does not silently overwrite the newer 
     await expect(page.locator('#recovery-box')).toBeVisible();
     expect((await messages(page)).some((m: any) => m.type === 'save')).toBe(false);
 });
+
+const versions = [
+    { id: 'older', at: 1730000000000, title: '처음 쓴 글' },
+    { id: 'newer', at: 1730000600000, title: '두 번째 글' },
+];
+async function versionPreview(page: Page, versionId: string) {
+    await page.evaluate((id) => window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'versionPreview', versionId: id, title: id + ' 제목', html: `<p>${id} 본문</p>` },
+    })), versionId);
+}
+
+test('version browsing preserves unsaved work, ignores late previews and restores by stable identity', async ({ page }) => {
+    await open(page);
+    await model(page, { title: '현재 제목', markdown: '현재 본문', versions });
+    await page.locator('#article-body').fill('아직 저장 중인 본문');
+    await page.locator('#version-older-btn').click();
+    await expect(page.locator('#version-select')).toHaveValue('newer');
+    expect((await messages(page)).at(-1)).toMatchObject({ type: 'previewVersion', versionId: 'newer' });
+    expect((await messages(page)).at(-1).fields).toBeUndefined();
+    await expect(page.locator('#restore-version-btn')).toBeDisabled();
+    await page.locator('#version-older-btn').click();
+    await versionPreview(page, 'newer');
+    await expect(page.locator('#version-body')).toBeEmpty();
+    await versionPreview(page, 'older');
+    await expect(page.locator('#version-body')).toHaveText('older 본문');
+    await expect(page.locator('#current-article')).toBeHidden();
+    expect((await messages(page)).some((m: any) => m.type === 'restore')).toBe(false);
+    await model(page, { title: '현재 제목', markdown: '현재 본문', versions: [...versions, { id: 'latest', at: 1730000700000, title: '추가된 글' }], pending: true });
+    await expect(page.locator('#version-select')).toHaveValue('older');
+    await expect(page.locator('#version-body')).toHaveText('older 본문');
+    await page.locator('#restore-version-btn').click();
+    const restore = (await messages(page)).find((m: any) => m.type === 'restore');
+    expect(restore).toMatchObject({ versionId: 'older', editToken: 'window-a', fields: { markdown: '아직 저장 중인 본문' } });
+    expect(restore.index).toBeUndefined();
+    await expect(page.locator('#restore-version-btn')).toBeDisabled();
+    await page.evaluate(id => window.dispatchEvent(new MessageEvent('message', { data: { type: 'ack', id } })), restore.id);
+    await model(page, { title: 'older 제목', markdown: 'older 본문', versions: [versions[1]] });
+    await expect(page.locator('#version-select')).toHaveValue('');
+    await expect(page.locator('#article-body')).toHaveValue('older 본문');
+});
+
+test('read-only windows can browse and copy versions without applying or saving them', async ({ page }) => {
+    await open(page);
+    await model(page, { editable: false, title: '현재 제목', markdown: '현재 본문', versions });
+    await page.getByLabel('글 버전', { exact: true }).selectOption('newer');
+    await versionPreview(page, 'newer');
+    await expect(page.locator('#restore-version-btn')).toBeDisabled();
+    await page.locator('#copy-btn').click();
+    expect((await messages(page)).at(-1)).toMatchObject({ type: 'copy', versionId: 'newer' });
+    expect((await messages(page)).at(-1).fields).toBeUndefined();
+    await page.locator('#export-btn').click();
+    expect((await messages(page)).at(-1)).toMatchObject({ type: 'export', versionId: 'newer' });
+    await page.locator('#version-newer-btn').click();
+    await expect(page.locator('#version-select')).toHaveValue('');
+    await expect(page.locator('#current-article')).toBeVisible();
+    await expect(page.locator('#article-body')).toHaveValue('현재 본문');
+    expect((await messages(page)).some((m: any) => m.type === 'restore' || m.type === 'save')).toBe(false);
+});
+
+test('version selection supports keyboard navigation and fits narrow editors with long titles', async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 740 });
+    await open(page);
+    await model(page, { title: '현재 글', markdown: '본문', versions: versions.map(v => ({ ...v, title: v.title.repeat(30) })) });
+    await page.locator('#version-select').focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('#version-select')).toHaveValue('newer');
+    await versionPreview(page, 'newer');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: 'test-results/writer-versions-narrow.png' });
+    await page.locator('#plan-tab').click();
+    await expect(page.locator('#plan-tab')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#article-tab')).toHaveAttribute('aria-pressed', 'false');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: 'test-results/writer-plan-narrow.png' });
+});

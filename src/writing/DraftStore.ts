@@ -1,6 +1,6 @@
 import * as path from 'path';
 import { createHash, randomUUID } from 'crypto';
-import { WritingDraft } from './model';
+import { WritingDraft, previousArticleVersions } from './model';
 import { atomicWrite, observeFile, readJson, withFileLock } from '../storage/SharedFiles';
 import { WindowSession } from '../storage/WindowSession';
 
@@ -19,6 +19,7 @@ export class DraftStore {
         if (draft && (draft.schemaVersion !== 1 || draft.filePath !== filePath || !draft.history?.snapshots || !Array.isArray(draft.articleVersions))) {
             throw new Error('저장된 글 형식을 확인할 수 없습니다.');
         }
+        if (draft) draft.articleVersions = previousArticleVersions(draft);
         return draft;
     }
     owns(draft: WritingDraft) { return draft.editor?.owner.id === this.session.id; }

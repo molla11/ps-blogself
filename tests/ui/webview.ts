@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs';
 const read = (file: string) => readFileSync(file, 'utf8');
 const { buildWebview } = require('../../scripts/build-webview.cjs');
 const bundles = new Map<string, Promise<string>>();
-export async function openWebview(page: Page, sidebar = false, saved: any = {}) {
-    const root = sidebar ? 'src/sidebar/templates/sidebar' : 'src/services/templates/blogPostMain';
+export async function openWebview(page: Page, sidebar: boolean | 'settings' = false, saved: any = {}) {
+    const settings = sidebar === 'settings';
+    const root = settings ? 'src/settings/templates/settings' : sidebar ? 'src/sidebar/templates/sidebar' : 'src/services/templates/blogPostMain';
+    sidebar = sidebar === true;
     const nonce = 'test-nonce';
     const bridge = `window.__messages=[];window.__saved=${JSON.stringify(saved)};window.acquireVsCodeApi=()=>({postMessage:m=>window.__messages.push(m),getState:()=>window.__saved,setState:s=>window.__saved=s});`;
     let html = read(root + '.html').replace(

@@ -53,11 +53,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         break;
                     }
                     case 'toggleRecording': {
-                        this._onToggleRecording();
+                        await this._onToggleRecording();
                         break;
                     }
                     case 'toggleLanguage': {
-                        this._onToggleLanguage(data.value);
+                        await this._onToggleLanguage(data.value);
                         break;
                     }
                     case 'getInitialData': {

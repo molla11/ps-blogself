@@ -405,6 +405,8 @@ button.action-btn {
 }
 
 .log-item.selected {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
     box-shadow: inset 0 -2px 0 var(--vscode-focusBorder, var(--vscode-foreground));
 }
 

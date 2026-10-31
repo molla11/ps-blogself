@@ -1,0 +1,23 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{{csp}}"><title>PS-Blogself 설정</title>{{styles}}</head>
+<body><main>
+    <header><h1>설정</h1><p>현재 작업 공간의 기록과 글쓰기 설정입니다.</p></header>
+    <section aria-labelledby="recording-heading"><h2 id="recording-heading">수정 기록</h2>
+        <label class="check-row"><input id="recording" type="checkbox"><span>파일 변경 기록하기</span></label>
+        <form id="root-form" class="setting">
+            <label for="root">활성 경로</label>
+            <p id="root-description">활성 경로 밖의 파일 수정은 기록하지 않습니다.</p>
+            <div class="input-row"><input id="root" type="text" maxlength="4096" placeholder="현재 열려있는 모든 파일" aria-describedby="root-description" autocomplete="off"><button type="submit" id="save-root">적용</button></div>
+            <div class="path-actions"><button type="button" class="secondary" id="choose-folder">폴더 선택</button><button type="button" class="secondary" id="current-directory">현재 폴더로 설정</button><button type="button" class="quiet" id="reset-root">재설정</button></div>
+        </form>
+        <form id="extensions-form" class="setting">
+            <label for="extensions">대상 확장자</label>
+            <p id="extensions-description">쉼표로 구분해 입력하세요. 비워두면 파일 변경을 기록하지 않습니다.</p>
+            <div class="input-row"><input id="extensions" type="text" maxlength="1500" placeholder=".c, .cpp, .py" aria-describedby="extensions-description" autocomplete="off" spellcheck="false"><button type="submit" id="save-extensions">적용</button></div>
+        </form>
+    </section>
+    <section aria-labelledby="writing-heading"><h2 id="writing-heading">글쓰기</h2>
+        <label class="check-row"><input id="prepare-on-review" type="checkbox" aria-describedby="prepare-description"><span>수정 기록을 볼 때 글쓰기 미리 준비</span></label>
+        <p id="prepare-description">로그인한 상태에서 변경 구간과 설명을 먼저 준비합니다. AI 이용량에 포함됩니다.</p>
+    </section>
+    <p id="status" role="status" aria-live="polite"></p><p id="error" role="alert" hidden></p>
+</main>{{script}}</body></html>

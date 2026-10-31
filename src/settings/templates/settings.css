@@ -1,0 +1,13 @@
+:root { color-scheme: light dark; --background: var(--vscode-editor-background, #1e1e1e); --foreground: var(--vscode-foreground, #cccccc); --muted: var(--vscode-descriptionForeground, #999999); --border: var(--vscode-widget-border, #454545); --focus: var(--vscode-focusBorder, #007fd4); }
+* { box-sizing: border-box; } [hidden] { display: none !important; }
+body { margin: 0; background: var(--background); color: var(--foreground); font: 13px/1.6 var(--vscode-font-family, system-ui, sans-serif); }
+main { max-width: 680px; margin: 0 auto; padding: 32px 28px 48px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0 0 6px; } h2 { font-size: 14px; font-weight: 600; margin: 0 0 20px; }
+p { color: var(--muted); margin: 5px 0 12px; } header { margin-bottom: 28px; }
+section { padding: 24px 0; border-top: 1px solid var(--border); } section:last-of-type { padding-bottom: 16px; }
+.setting { margin-top: 24px; } .setting > label { font-weight: 600; } .input-row, .path-actions { display: flex; align-items: center; gap: 8px; } .path-actions { flex-wrap: wrap; margin-top: 8px; }
+input[type=text] { min-width: 0; width: 100%; height: 30px; padding: 4px 8px; border: 1px solid var(--vscode-input-border, transparent); color: var(--vscode-input-foreground, #cccccc); background: var(--vscode-input-background, #313131); font: inherit; border-radius: 2px; }
+input::placeholder { color: var(--vscode-input-placeholderForeground, #aaaaaa); }.check-row { display: flex; gap: 9px; align-items: center; cursor: pointer; }.check-row input { width: 15px; height: 15px; margin: 0; accent-color: var(--vscode-button-background, #0e639c); }
+button { flex-shrink: 0; padding: 4px 12px; min-height: 28px; border: 1px solid transparent; border-radius: 2px; font: inherit; background: var(--vscode-button-background, #0e639c); color: var(--vscode-button-foreground, #ffffff); cursor: pointer; }button:hover { background: var(--vscode-button-hoverBackground, #1177bb); }button:disabled { opacity: .5; cursor: default; }.secondary { color: var(--vscode-button-secondaryForeground, #cccccc); background: var(--vscode-button-secondaryBackground, #3a3d41); }.secondary:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }.quiet { background: transparent; color: var(--foreground); }.quiet:hover { background: var(--vscode-toolbar-hoverBackground, #ffffff14); }
+input:focus-visible, button:focus-visible { outline: 1px solid var(--focus); outline-offset: 2px; }#error { color: var(--vscode-errorForeground, #f48771); }#status { min-height: 21px; }
+@media (max-width: 440px) { main { padding: 22px 16px; }.path-actions { gap: 6px; }button { padding: 4px 9px; } }

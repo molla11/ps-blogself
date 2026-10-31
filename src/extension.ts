@@ -1,3 +1,4 @@
+import { SettingsPanel } from './settings/SettingsPanel';
 import * as vscode from 'vscode';
 import { configManager } from './config';
 import { storageManager } from './storage/StorageManager';
@@ -27,6 +28,7 @@ export async function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
+        vscode.commands.registerCommand('psb.openSettings', () => SettingsPanel.show()),
         vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider, {
             // Preserve search, loaded rows and scroll position across sidebar switches.
             webviewOptions: { retainContextWhenHidden: true },

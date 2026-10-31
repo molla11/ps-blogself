@@ -1,3 +1,4 @@
+import { normalizeExtensions } from './settings/RecordingInput';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { isValidFolderPath } from './util';
@@ -51,17 +52,14 @@ export class ConfigManager {
     }
 
     public getRootFolder(): string {
-        const folderPath = this.settings.value.root;
-
-        if (folderPath && !isValidFolderPath(folderPath)) {
-            return '';
-        }
-
-        return folderPath.trim();
+        return this.settings.value.root.trim();
     }
 
     public async setRootFolder(folderPath: string): Promise<void> {
-        await this.settings.update(value => { value.root = folderPath; });
+        const input = folderPath.trim();
+        const root = input ? path.resolve(this.getCurrentDirectory() || '.', input) : '';
+        if (root && !isValidFolderPath(root)) throw new Error('존재하는 폴더를 선택해 주세요.');
+        await this.settings.update(value => { value.root = root; });
         this.changed.fire();
     }
 
@@ -83,7 +81,14 @@ export class ConfigManager {
         return [...this.settings.value.languages];
     }
 
+    public async setSupportedLanguages(languages: string[]): Promise<void> {
+        const extensions = normalizeExtensions(languages);
+        await this.settings.update(value => { value.languages = extensions; });
+        this.changed.fire();
+    }
+
     public async toggleLanguage(lang: string): Promise<void> {
+        lang = normalizeExtensions([lang])[0];
         await this.settings.update(value => {
             const index = value.languages.indexOf(lang);
             if (index > -1) value.languages.splice(index, 1); else value.languages.push(lang);

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { createHash, randomBytes } from 'crypto';
 import { ConnectionEnvironment, resolveConnectionSettings, serviceUrl } from './ConnectionSettings';
 import { AccountUsage, accountUsage, UsageView, usageView } from './Usage';
+import { NoticeFeed } from './NoticeFeed';
 
 export interface Account {
     id: string; email: string;
@@ -11,11 +12,18 @@ interface Credentials { token: string; user: Account }
 export class ServiceError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 export class ServiceConnection {
     readonly changed = new vscode.EventEmitter<void>();
+    readonly notices: NoticeFeed;
     private login?: Promise<Credentials>;
     private usageSnapshot?: { base: string; token: string; view: UsageView };
     private usageRequest?: { base: string; token: string; promise: Promise<void> };
     private usageRevision = 0;
-    constructor(private context: vscode.ExtensionContext, private development: ConnectionEnvironment = {}) {}
+    constructor(private context: vscode.ExtensionContext, private development: ConnectionEnvironment = {}) {
+        this.notices = new NoticeFeed(async () => {
+            const base = this.base, saved = await this.saved(base);
+            return { base, token: saved?.token, owner: saved?.user.id };
+        }, (session, route, method = 'GET') => this.fetchJson(session.base, route, method, undefined, session.token),
+        context.globalState, () => this.changed.fire());
+    }
     get settings() {
         return resolveConnectionSettings(process.env, this.development);
     }
@@ -75,6 +83,7 @@ export class ServiceConnection {
     private async store(base: string, value: Credentials) {
         await this.context.secrets.store(this.key(base), JSON.stringify(value)); this.changed.fire();
         void this.refreshUsage();
+        void this.notices.refresh();
         return value;
     }
     async fetchJson<T>(base: string, route: string, method = 'GET', body?: unknown, token?: string): Promise<T> {
@@ -136,7 +145,7 @@ export class ServiceConnection {
         if (choice === '사용량 확인') {
             await this.showUsage();
         } else if (choice === '로그아웃') {
-            try { await this.request('/logout', 'POST'); } finally { await this.context.secrets.delete(this.key(this.base)); this.changed.fire(); }
+            try { await this.request('/logout', 'POST'); } finally { await this.context.secrets.delete(this.key(this.base)); this.changed.fire(); void this.notices.refresh(); }
         }
     }
 }

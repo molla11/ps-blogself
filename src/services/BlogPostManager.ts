@@ -110,6 +110,9 @@ export class BlogPostManager {
     static async accountLabel() { return (await this.connection.account())?.email || '로그인'; }
     static usage() { return this.connection.usage(); }
     static refreshUsage() { return this.connection.refreshUsage(); }
+    static notices() { return this.connection.notices.current(); }
+    static refreshNotices() { return this.connection.notices.refresh(); }
+    static dismissNotice(id: string) { return this.connection.notices.dismiss(id); }
     static showUsage() { return this.connection.showUsage(); }
     static preparationStatus(filePath: string) {
         const view = this.views.get(filePath);

@@ -23,6 +23,14 @@ body {
 }
 
 [hidden] { display: none !important; }
+#service-notices { flex-shrink: 0; max-height: 35vh; overflow: auto; margin-bottom: 10px; }
+.service-notice { border-left: 3px solid var(--vscode-textLink-foreground, #3794ff); background: var(--vscode-editor-background); padding: 9px 10px; margin-bottom: 6px; overflow-wrap: anywhere; }
+.service-notice:last-child { margin-bottom: 0; }
+.service-notice summary { cursor: pointer; line-height: 1.6; }
+.notice-scope { color: var(--vscode-descriptionForeground); font-size: 11px; margin-right: 7px; }
+.service-notice strong { font-size: 12px; font-weight: 600; }
+.service-notice p { white-space: pre-wrap; font-size: 12px; line-height: 1.65; margin: 8px 0; }
+.service-notice .notice-dismiss { width: auto; padding: 3px 7px; font-size: 11px; background: transparent; color: var(--vscode-descriptionForeground); border: 1px solid var(--vscode-widget-border); }
 
 /* Webviews use Chromium: keep scrollbars slim without native arrow buttons. */
 ::-webkit-scrollbar { width: 4px; height: 4px; }

@@ -1,4 +1,24 @@
 const vscode = acquireVsCodeApi();
+let noticesKey = '';
+function renderNotices(notices = []) {
+    const key = JSON.stringify(notices);
+    if (key === noticesKey) return;
+    noticesKey = key;
+    const region = document.getElementById('service-notices');
+    region.replaceChildren(); region.hidden = !notices.length;
+    for (const notice of notices) {
+        const card = document.createElement('details'); card.className = 'service-notice';
+        card.open = notices.length === 1;
+        const summary = document.createElement('summary'), label = document.createElement('span'), title = document.createElement('strong');
+        label.className = 'notice-scope'; label.textContent = notice.audience === 'user' ? '개인 공지' : '전체 공지';
+        title.textContent = notice.title; summary.append(label, title);
+        const body = document.createElement('p'); body.textContent = notice.body;
+        const close = document.createElement('button'); close.type = 'button'; close.className = 'notice-dismiss'; close.textContent = '닫기';
+        close.setAttribute('aria-label', notice.title + ' 공지 닫기');
+        close.onclick = () => vscode.postMessage({ type: 'dismissNotice', id: notice.id });
+        card.append(summary, body, close); region.append(card);
+    }
+}
 
 const rootDisplay = document.getElementById('root-folder-display');
 const rootButton = document.getElementById('root-folder-btn');
@@ -485,6 +505,7 @@ window.addEventListener('message', (event) => {
     switch (message.type) {
         case 'updateState':
             document.getElementById('connect-server-btn').textContent = message.accountLabel || '로그인';
+            renderNotices(message.notices);
             {
                 const usage = document.getElementById('usage-btn');
                 usage.hidden = !message.usage;

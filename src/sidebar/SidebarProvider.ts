@@ -10,6 +10,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'psb.sidebar';
 
     private _view?: vscode.WebviewView;
+    private _stateRevision = 0;
     private _recentLogs = new RecentLogsPager(() => storageManager.getRecentFiles());
 
     constructor(
@@ -63,6 +64,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     case 'getInitialData': {
                         await this.updateState();
                         void BlogPostManager.refreshUsage();
+                        void BlogPostManager.refreshNotices();
                         break;
                     }
                     case 'searchLogs':
@@ -110,6 +112,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         await BlogPostManager.showUsage();
                         break;
                     }
+                    case 'dismissNotice': {
+                        if (typeof data.id === 'string' && /^[a-f0-9-]{36}$/i.test(data.id)) await BlogPostManager.dismissNotice(data.id);
+                        break;
+                    }
                     case 'sample':
                         await vscode.commands.executeCommand('psb.sample');
                         break;
@@ -145,7 +151,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const accountUpdate = BlogPostManager.onDidChange(file => { if (!file) void this.updateState(); });
         webviewView.onDidDispose(() => accountUpdate.dispose());
         const refreshUsage = () => {
-            if (webviewView.visible && vscode.window.state.focused) void BlogPostManager.refreshUsage();
+            if (webviewView.visible && vscode.window.state.focused) {
+                void BlogPostManager.refreshUsage();
+                void BlogPostManager.refreshNotices();
+            }
         };
         const usageTimer = setInterval(refreshUsage, 30000);
         usageTimer.unref();
@@ -164,15 +173,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
     public async updateState() {
+        const revision = ++this._stateRevision;
         const view = this._view;
         if (view) {
-            const [page, totalSize, accountLabel, usage] = await Promise.all([
+            const [page, totalSize, accountLabel, usage, notices] = await Promise.all([
                 this._recentLogs.load(),
                 storageManager.calculateTotalSize(),
                 BlogPostManager.accountLabel(),
                 BlogPostManager.usage(),
+                BlogPostManager.notices(),
             ]);
-            if (view !== this._view) return;
+            if (view !== this._view || revision !== this._stateRevision) return;
 
             await view.webview.postMessage({
                 type: 'updateState',
@@ -185,6 +196,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 totalLogSize: totalSize,
                 accountLabel,
                 usage,
+                notices,
             });
         }
     }

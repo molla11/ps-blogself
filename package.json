@@ -85,7 +85,7 @@
         "check-types": "tsc --noEmit",
         "lint": "eslint src",
         "test": "pnpm test:host",
-        "test:unit": "node --test --require ./scripts/register-typescript.cjs src/test/storage.test.ts src/test/writing.test.ts src/test/writing-style.test.ts src/test/article-export.test.ts src/test/ghost.test.ts src/test/change-filter.test.ts src/test/input-limits.test.ts src/test/sidebar.test.ts src/test/multiwindow.test.ts src/test/connection-settings.test.ts src/test/recording-settings.test.ts src/test/usage.test.ts src/test/service-jobs.test.ts",
+        "test:unit": "node --test --require ./scripts/register-typescript.cjs src/test/storage.test.ts src/test/writing.test.ts src/test/writing-style.test.ts src/test/article-export.test.ts src/test/ghost.test.ts src/test/change-filter.test.ts src/test/input-limits.test.ts src/test/sidebar.test.ts src/test/multiwindow.test.ts src/test/connection-settings.test.ts src/test/recording-settings.test.ts src/test/usage.test.ts src/test/notices.test.ts src/test/service-jobs.test.ts",
         "test:ui": "playwright test",
         "dev": "pnpm check:backend && pnpm compile && node scripts/dev.cjs",
         "package:vsix": "vsce package --no-dependencies --allow-missing-repository --skip-license --out dist/ps-blogself.vsix",

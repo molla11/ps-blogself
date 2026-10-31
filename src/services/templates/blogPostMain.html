@@ -58,8 +58,6 @@
             <section id="plan-view">
                 <div id="preparing">
                     <h2>풀이 흐름 준비</h2>
-                    <div class="skeleton" aria-hidden="true"></div>
-                    <div class="skeleton short" aria-hidden="true"></div>
                     <p>변경 구간과 풀이 설명을 먼저 채워드릴게요.</p>
                     <button id="prepare-empty-btn" class="secondary" hidden>풀이 준비</button>
                 </div>
@@ -164,6 +162,10 @@
                 </div>
             </section>
         </main>
+        <div id="generation-loading" role="status" aria-live="polite" hidden>
+            <span class="loading-spinner" aria-hidden="true"></span>
+            <span id="loading-title"></span>
+        </div>
         {{script}}
     </body>
 </html>

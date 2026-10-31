@@ -200,7 +200,16 @@ function chooseVersion(id) {
     if (id) send('previewVersion', { versionId: id });
     document.querySelectorAll('textarea').forEach(height);
 }
+function renderLoading() {
+    const busy = !!(model.pending || model.running) && !model.error;
+    el('generation-loading').hidden = !busy;
+    if (!busy) return false;
+    const kind = model.pendingKind || (form.plan ? 'write_blog' : 'prepare_blog');
+    el('loading-title').textContent = kind === 'prepare_blog' ? '준비 중…' : '작성 중…';
+    return true;
+}
 function render() {
+    const busy = renderLoading();
     const editable = model.editable !== false;
     el('ownership-box').hidden = editable;
     el('recovery-box').hidden = !localRecovery;
@@ -220,8 +229,7 @@ function render() {
     el('progress').value = model.progress;
     el('discard-pending-btn').hidden = !model.pending || model.running;
     el('candidate-box').hidden = !model.candidate;
-    el('preparing').hidden = !!form.plan;
-    el('preparing').classList.toggle('is-loading', !!model.pending || !!model.running);
+    el('preparing').hidden = !!form.plan || busy;
     el('prepare-empty-btn').hidden = !!model.pending || !!model.running || !!model.candidate;
     el('preparing').querySelector('p').textContent = model.error
         ? '안내를 확인한 뒤 다시 시도할 수 있어요.'

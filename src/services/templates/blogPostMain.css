@@ -298,24 +298,11 @@ input[type='range'] {
 .diff-removed {
     color: var(--vscode-gitDecoration-deletedResourceForeground, #ef9696);
 }
-.skeleton {
-    height: 48px;
-    background: var(--vscode-textBlockQuote-background, #ffffff09);
-    border-radius: 5px;
-    margin: 16px 0;
-}
-.skeleton.short {
-    height: 32px;
-    width: 65%;
-}
 #preparing {
     margin-top: 20px;
     padding: 18px;
     border: 1px solid var(--vscode-widget-border, #444);
     border-radius: 6px;
-}
-#preparing:not(.is-loading) .skeleton {
-    display: none;
 }
 #preparing p {
     color: var(--vscode-descriptionForeground, #aaa);
@@ -451,3 +438,32 @@ input[type='range'] {
 }
 
 #stream-preview { overflow-wrap: anywhere; }
+
+#generation-loading {
+    position: fixed;
+    z-index: 20;
+    right: 16px;
+    bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 8px;
+    border-radius: 4px;
+    background: var(--paper, var(--vscode-editor-background, #1e1e1e));
+    color: var(--muted, var(--vscode-descriptionForeground, #aaa));
+    font-size: 12px;
+    pointer-events: none;
+}
+.loading-spinner {
+    display: block;
+    flex: 0 0 auto;
+    width: 13px;
+    height: 13px;
+    border: 2px solid var(--line, var(--vscode-widget-border, #444));
+    border-top-color: var(--accent, var(--vscode-button-background, #007acc));
+    border-radius: 50%;
+    animation: loading-spin .8s linear infinite;
+}
+#loading-title { white-space: nowrap; }
+@keyframes loading-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .loading-spinner { animation: none; } }

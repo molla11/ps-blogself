@@ -22,6 +22,14 @@ export class JobRouter {
     create(request: WritingRequest, target: JobTarget) {
         requireTarget(target);
         validateRequest(request);
+        if (request.model) {
+            return this.connection.request<{ writingModels?: { id: string }[] }>('/config', 'GET', undefined, target.base, target.owner).then(config => {
+                if (!config.writingModels?.some(model => model.id === request.model)) {
+                    throw new Error('서버가 선택한 모델을 지원하지 않습니다. 서버 업데이트 후 다시 시도해 주세요.');
+                }
+                return this.connection.request<WritingJob>('/jobs', 'POST', request, target.base, target.owner);
+            });
+        }
         return this.connection.request<WritingJob>('/jobs', 'POST', request, target.base, target.owner);
     }
     job(id: string, target: JobTarget) {

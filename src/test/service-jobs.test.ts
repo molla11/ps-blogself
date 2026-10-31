@@ -51,3 +51,25 @@ test('a broken event stream resumes the existing job without submitting it again
         assert.deepEqual(calls.map(call => call.slice(0, 2)), [['/jobs/existing-job', 'GET']]);
     } finally { globalThis.fetch = previousFetch; }
 });
+
+test('selected aliases reach the backend without exposing provider or reasoning settings', async () => {
+    const { jobs, connection, calls } = harness();
+    connection.request = async (...args: unknown[]) => {
+        calls.push(args);
+        if (args[0] === '/config') return { writingModels: [{ id: 'opus5.5' }] } as any;
+        return { id: 'job', status: 'completed', progress: 100 };
+    };
+    await jobs.create({ ...request, model: 'opus5.5' }, await jobs.target());
+    assert.deepEqual(calls.map(call => call.slice(0, 2)), [['/config', 'GET'], ['/jobs', 'POST']]);
+    assert.equal((calls[1][2] as WritingRequest).model, 'opus5.5');
+    assert.doesNotMatch(JSON.stringify(calls[1][2]), /claude|anthropic|reasoning|provider/);
+});
+
+test('an old server cannot silently ignore a selected paid model and generate using its default', async () => {
+    const { jobs, calls } = harness();
+    await assert.rejects(jobs.create({ ...request, model: 'astra' }, await jobs.target()), /서버 업데이트/);
+    assert.equal(calls.length, 1); assert.equal(calls[0][0], '/config');
+    assert.throws(() => jobs.create({ ...request, model: 'openai/gpt-6-astra' as any },
+        { kind: 'server', base: 'http://127.0.0.1:4000/api', owner: 'owner' }), /모델/);
+    assert.equal(calls.length, 1);
+});

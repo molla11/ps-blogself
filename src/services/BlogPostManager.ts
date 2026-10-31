@@ -8,6 +8,7 @@ import MarkdownIt = require('markdown-it');
 import { articleHtml } from '../writing/ArticleExport';
 import { checkInputSize } from '../writing/InputLimits';
 import { WRITING_MODES, WritingMode, WRITING_STYLES, WritingStyle, writingInstructions } from '../writing/WritingStyle';
+import { DEFAULT_WRITING_MODEL, isWritingModel, selectedWritingModel } from '../writing/WritingModels';
 import { randomBytes, randomUUID } from 'crypto';
 import { storageManager } from '../storage/StorageManager';
 import { ServiceConnection, ServiceError } from '../writing/ServiceConnection';
@@ -74,7 +75,10 @@ export class BlogPostManager {
         context.subscriptions.push(
             vscode.commands.registerCommand('psb.connect', () => this.connect()),
             vscode.commands.registerCommand('psb.sample', async () => this.openPage(context.extensionUri, await storageManager.installSampleHistory())),
-            this.connection.changed.event(() => this.updates.fire('')),
+            this.connection.changed.event(() => {
+                this.updates.fire('');
+                for (const view of this.views.values()) void this.refreshModelAccess(view);
+            }),
             this.connection.changed,
         );
         context.subscriptions.push(
@@ -150,8 +154,10 @@ export class BlogPostManager {
                 if (view.draft.pending) { this.run(view); return; }
                 const history = await storageManager.getFileHistory(filePath);
                 if (!history?.snapshots.length) return;
-                const key = historyFingerprint(history);
-                if (view.draft.preparationKey === key || (view.draft.plan && view.draft.fingerprint === key)) return;
+                const fingerprint = historyFingerprint(history), model = selectedWritingModel(view.draft.writingModel);
+                const key = fingerprint + ':' + model;
+                if (view.draft.preparationKey === key || (view.draft.plan && view.draft.fingerprint === fingerprint
+                    && (view.draft.preparationModel ?? DEFAULT_WRITING_MODEL) === model)) return;
                 await this.start(view, 'prepare_blog', target, true);
             });
         } catch { /* Optional preparation must not interrupt history viewing. */ }
@@ -263,6 +269,11 @@ export class BlogPostManager {
         this.render(view);
         if (view.draft.pending && (view.editable || view.panel)) this.run(view);
     }
+    private static async refreshModelAccess(view: View) {
+        if (!view.ready || !view.panel) return;
+        const usage = await this.connection.usage();
+        await view.panel?.webview.postMessage({ type: 'modelAccess', models: usage?.models });
+    }
     private static render(view: View) {
         const announcement = `${!!view.draft.pending}:${!!view.draft.plan}:${view.error}`;
         if (view.announced !== announcement) { view.announced = announcement; this.updates.fire(view.draft.filePath); }
@@ -274,6 +285,7 @@ export class BlogPostManager {
             fileName: path.basename(draft.filePath),
             plan: draft.plan,
             instructions: draft.instructions,
+            writingModel: selectedWritingModel(draft.writingModel),
             writingMode: draft.writingMode ?? 'evolution',
             writingStyle: draft.writingStyle ?? 'plain',
             customStyle: draft.customStyle ?? '',
@@ -338,6 +350,7 @@ export class BlogPostManager {
         const before = JSON.stringify([
             draft.plan,
             draft.instructions,
+            draft.writingModel,
             draft.writingMode,
             draft.writingStyle,
             draft.customStyle,
@@ -345,6 +358,14 @@ export class BlogPostManager {
             draft.markdown, draft.document,
         ]);
         const patch: Record<string, unknown> = {};
+        const modelChanged = value.writingModel !== undefined && value.writingModel !== selectedWritingModel(draft.writingModel);
+        if (value.writingModel !== undefined) {
+            if (!isWritingModel(value.writingModel)) throw new Error('사용할 모델을 선택해 주세요.');
+            if (modelChanged) {
+                if (draft.pending || view.task) throw new Error('진행 중인 요청을 마친 뒤 모델을 변경해 주세요.');
+            }
+            patch.writingModel = value.writingModel;
+        }
         for (const [key, limit] of [
             ['instructions', 12000],
             ['customStyle', 2000],
@@ -372,8 +393,9 @@ export class BlogPostManager {
         if (value.document) patch.document = validateDocument(value.document);
         else if (typeof value.markdown === 'string' && (value.document === null || value.markdown !== draft.markdown)) patch.document = undefined;
         Object.assign(draft, patch);
+        if (modelChanged) delete draft.preparationKey;
         if (
-            before !== JSON.stringify([draft.plan, draft.instructions, draft.writingMode, draft.writingStyle, draft.customStyle, draft.title, draft.markdown, draft.document])
+            before !== JSON.stringify([draft.plan, draft.instructions, draft.writingModel, draft.writingMode, draft.writingStyle, draft.customStyle, draft.title, draft.markdown, draft.document])
         ) {
             draft.revision++;
             draft.updatedAt = Date.now();
@@ -390,7 +412,7 @@ export class BlogPostManager {
             throw new Error('화면 요청을 확인할 수 없습니다.');
         }
         await this.refresh(view);
-        const reading = ['ready', 'takeover', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'ghostConnect', 'ghostOpen'].includes(message.type);
+        const reading = ['ready', 'refreshModels', 'takeover', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'ghostConnect', 'ghostOpen'].includes(message.type);
         if (!reading && (!view.editable || message.editToken !== view.draft.editor?.token)) throw new DraftConflict();
         switch (message.type) {
             case 'takeover': {
@@ -403,10 +425,16 @@ export class BlogPostManager {
             }
             case 'ready':
                 view.ready = true;
+                void this.refreshModelAccess(view);
+                void this.connection.refreshUsage();
                 await this.refreshGhost(view);
                 this.render(view);
                 if (view.draft.pending) this.run(view);
                 else if (!view.draft.plan && view.editable) await this.start(view, 'prepare_blog');
+                break;
+            case 'refreshModels':
+                await this.connection.refreshUsage();
+                await this.refreshModelAccess(view);
                 break;
             case 'save':
                 await this.edit(view, message.fields);
@@ -609,11 +637,13 @@ export class BlogPostManager {
         checkInputSize({ source });
         const instructions = writingInstructions(draft);
         target ||= await this.jobs.target(!prefetch);
-        if (kind === 'prepare_blog') draft.preparationKey = historyFingerprint(history);
+        const model = selectedWritingModel(draft.writingModel);
+        if (kind === 'prepare_blog') draft.preparationKey = historyFingerprint(history) + ':' + model;
         draft.pending = {
             target,
             request: {
                 kind,
+                model,
                 priority: prefetch ? 'prefetch' : 'interactive',
                 requestId: randomUUID(),
                 source,
@@ -678,7 +708,8 @@ export class BlogPostManager {
                     if (!job.result || (pending.request.kind === 'prepare_blog' ? !job.result.plan : typeof job.result.markdown !== 'string')) throw new Error('AI 응답에 글이 없습니다. 다시 시도해 주세요.');
                     await this.enqueue(view, async () => {
                         signal.throwIfAborted();
-                        mergeResult(view.draft, { ...job.result!, ...(pending.history ? { history: pending.history } : {}) }, pending.baseRevision);
+                        mergeResult(view.draft, { ...job.result!, ...(pending.history ? { history: pending.history,
+                            preparationModel: pending.request.model ?? DEFAULT_WRITING_MODEL } : {}) }, pending.baseRevision);
                         delete view.draft.pending;
                         await this.store.save(view.draft);
                     });

@@ -75,6 +75,11 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; }
 input:not([type=range]):not([type=checkbox]), textarea { display: block; width: 100%; margin-top: 7px; border: 1px solid var(--vscode-input-border, #d0d9d3); border-radius: 4px; padding: 8px 10px; color: var(--vscode-input-foreground, #24342c); background: var(--vscode-input-background, #fff); font-weight: 400; line-height: 1.75; }
 textarea { resize: vertical; min-height: 70px; overflow: hidden; }
 select { min-width: 0; color: var(--vscode-dropdown-foreground, #24342c); background: var(--vscode-dropdown-background, #fff); border: 1px solid var(--vscode-dropdown-border, #d0d9d3); border-radius: 4px; padding: 4px 8px; }
+.model-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 12px 0; font-size: 12px; }
+.model-picker label { font-weight: 600; }
+.model-picker select { max-width: 100%; }
+#writing-model-help { flex: 1 1 210px; }
+.model-picker button { padding: 4px 8px; }
 #writing-mode, #writing-style { display: block; margin-top: 7px; min-height: 32px; width: min(100%, 280px); }
 #writing-mode-help { margin: -12px 0 20px; font-size: 12px; line-height: 1.6; }
 .step { padding: 18px 0; border-top: 1px solid var(--line); }

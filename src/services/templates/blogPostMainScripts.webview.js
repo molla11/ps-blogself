@@ -1,5 +1,6 @@
 import { createArticleEditor } from './articleEditor.webview.js';
 import { observeCodeHighlighting } from './codeHighlighting.js';
+import { DEFAULT_WRITING_MODEL } from '../../writing/WritingModels';
 
 const vscode = acquireVsCodeApi();
 observeCodeHighlighting(document.body);
@@ -23,6 +24,7 @@ let localRecovery = recovered?.localRecovery;
 let recoveryApplied = false;
 const imageRequests = new Map();
 let ghostState = { connected: false };
+let modelAccess;
 const richEditor = createArticleEditor({
     element: el('rich-editor'), toolbar: el('format-tools'), outline: el('outline-list'),
     onChange(markdown, document) {
@@ -262,6 +264,20 @@ function renderWritingMode() {
         algorithm: '사용한 알고리즘·자료구조의 원리부터 이 문제에 적용하는 방법까지 설명합니다.',
     }[mode];
 }
+function renderWritingModel() {
+    const selected = form.writingModel || DEFAULT_WRITING_MODEL;
+    value('writing-model', selected);
+    el('writing-model').disabled = model.editable === false || !!model.pending || !!model.running;
+    const access = modelAccess?.find(item => item.id === selected);
+    const paidOnly = selected === 'opus5.5' || selected === 'astra';
+    el('writing-model-help').textContent = access?.available === false
+        ? paidOnly ? '유료 크레딧이 필요합니다. 충전하거나 standard를 선택해 주세요.' : '사용 가능한 크레딧이 없습니다. 크레딧을 확인해 주세요.'
+        : paidOnly ? '유료 크레딧 전용입니다.'
+        : access?.nextFunding === 'credit' ? '무료 크레딧을 모두 사용해 유료 크레딧을 사용합니다.' : '무료 크레딧을 먼저 사용합니다.';
+    if (access?.available === false && !model.pending) {
+        for (const id of ['generate-btn', 'prepare-btn', 'prepare-empty-btn', 'retry-btn']) el(id).disabled = true;
+    }
+}
 function render() {
     renderGhost();
     const busy = renderLoading();
@@ -328,10 +344,12 @@ function render() {
         if (!editable) el(id).disabled = true;
         else if (!['generate-btn', 'prepare-btn', 'retry-btn'].includes(id)) el(id).disabled = false;
     }
+    renderWritingModel();
     stash();
 }
 window.addEventListener('message', (event) => {
     const message = event.data;
+    if (message.type === 'modelAccess') { modelAccess = message.models; if (model) render(); return; }
     if (message.type === 'imageReady' || message.type === 'saveError' && imageRequests.has(message.id)) {
         const request = imageRequests.get(message.id); if (request) { clearTimeout(request.timer); imageRequests.delete(message.id); if (message.type === 'imageReady') request.resolve(message); else request.reject(new Error(message.message)); }
         return;
@@ -345,7 +363,7 @@ window.addEventListener('message', (event) => {
             dirty.clear(); sent.clear(); clearTimeout(editTimer);
         }
         model = message;
-        for (const key of ['plan', 'instructions', 'writingMode', 'writingStyle', 'customStyle', 'title', 'markdown', 'document']) {
+        for (const key of ['plan', 'instructions', 'writingModel', 'writingMode', 'writingStyle', 'customStyle', 'title', 'markdown', 'document']) {
             if (!dirty.has(key)) form[key] = structuredClone(message[key]);
         }
         if (!recoveryApplied) {
@@ -354,7 +372,7 @@ window.addEventListener('message', (event) => {
                 if (model.editable === false || (recovered.editToken && recovered.editToken !== model.editToken)) localRecovery ||= recovered.fields;
                 else {
                     for (const [key, val] of Object.entries(recovered.fields)) {
-                        if (['plan', 'instructions', 'writingMode', 'writingStyle', 'customStyle', 'title', 'markdown', 'document'].includes(key)) {
+                        if (['plan', 'instructions', 'writingModel', 'writingMode', 'writingStyle', 'customStyle', 'title', 'markdown', 'document'].includes(key)) {
                             form[key] = val;
                             dirty.add(key);
                         }
@@ -445,6 +463,13 @@ el('writing-mode').addEventListener('change', (event) => {
     changed('writingMode');
     renderWritingMode();
 });
+el('writing-model').addEventListener('change', (event) => {
+    form.writingModel = event.target.value;
+    changed('writingModel');
+    render();
+    send('refreshModels');
+});
+el('model-usage-btn').addEventListener('click', () => send('refreshModels'));
 el('writing-style').addEventListener('change', (event) => {
     form.writingStyle = event.target.value;
     changed('writingStyle');

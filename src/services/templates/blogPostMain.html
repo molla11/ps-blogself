@@ -47,6 +47,17 @@
                     ><button class="quiet" id="discard-candidate-btn">현재 내용 유지</button>
                 </div>
             </div>
+            <div class="model-picker">
+                <label for="writing-model">모델</label>
+                <select id="writing-model" aria-describedby="writing-model-help">
+                    <option value="standard">standard</option>
+                    <option value="standard-high" selected>standard-high</option>
+                    <option value="opus5.5">opus5.5</option>
+                    <option value="astra">astra</option>
+                </select>
+                <span id="writing-model-help" class="muted" role="status">무료 크레딧을 먼저 사용합니다.</span>
+                <button class="quiet" id="model-usage-btn" title="크레딧과 모델 사용 가능 여부 새로고침">크레딧 확인</button>
+            </div>
             <nav id="view-tabs" aria-label="글 작성 화면">
                 <button class="tab active" id="plan-tab" aria-pressed="true">글 준비</button
                 ><button class="tab" id="article-tab" aria-pressed="false" disabled>완성된 글</button>

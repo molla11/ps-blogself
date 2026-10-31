@@ -5,6 +5,7 @@ import { createTwoFilesPatch } from 'diff';
 import { FileHistory } from '../types';
 import { isCosmeticChange } from './ChangeFilter';
 import { WritingPreferences } from './WritingStyle';
+import { DEFAULT_WRITING_MODEL, WritingModel } from './WritingModels';
 import { checkInputSize, MAX_CHANGES, MAX_CODE_BYTES, MAX_RECONSTRUCTED_BYTES, InputSizeError, utf8Bytes } from './InputLimits';
 
 export interface WritingStep {
@@ -28,6 +29,7 @@ export interface WritingSource {
     finalCode: string;
 }
 export interface WritingRequest {
+    model?: WritingModel;
     kind: 'prepare_blog' | 'write_blog';
     requestId: string;
     source: WritingSource;
@@ -36,6 +38,7 @@ export interface WritingRequest {
     priority?: 'interactive' | 'prefetch';
 }
 export interface WritingJob {
+    model?: WritingModel;
     id: string;
     status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
     progress: number;
@@ -51,6 +54,8 @@ export interface ArticleVersion {
     at: number;
 }
 export interface WritingDraft extends WritingPreferences {
+    writingModel?: WritingModel;
+    preparationModel?: WritingModel;
     schemaVersion: 1;
     storageVersion?: number;
     editor?: { owner: import('../storage/WindowSession').SessionOwner; token: string };
@@ -75,7 +80,7 @@ export interface WritingDraft extends WritingPreferences {
         history?: FileHistory;
         cancelRequested?: boolean;
     };
-    candidate?: { plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory };
+    candidate?: { plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory; preparationModel?: WritingModel };
     articleVersions: ArticleVersion[];
 }
 
@@ -188,6 +193,7 @@ export function newDraft(history: FileHistory): WritingDraft {
         history: structuredClone(history),
         fingerprint: historyFingerprint(history),
         instructions: '',
+        writingModel: DEFAULT_WRITING_MODEL,
         writingMode: 'evolution',
         writingStyle: 'plain',
         customStyle: '',
@@ -266,6 +272,7 @@ export function mergeResult(
     }
     if (result.plan) {
         draft.plan = result.plan;
+        draft.preparationModel = result.preparationModel ?? DEFAULT_WRITING_MODEL;
         if (result.history) {
             draft.history = result.history;
             draft.fingerprint = historyFingerprint(result.history);

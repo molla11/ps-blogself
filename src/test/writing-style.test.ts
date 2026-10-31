@@ -6,6 +6,8 @@ import * as path from 'node:path';
 import { writingInstructions, WRITING_MODES, WRITING_STYLES, WritingMode } from '../writing/WritingStyle';
 import { newDraft } from '../writing/model';
 import { DraftStore } from '../writing/DraftStore';
+import { mergeResult } from '../writing/model';
+import { DEFAULT_WRITING_MODEL, selectedWritingModel } from '../writing/WritingModels';
 
 test('style preferences compose author input without mutating notes or using inactive custom text', () => {
     const legacy = { instructions: '이 예시는 그대로 남겨 줘.' };
@@ -37,12 +39,15 @@ test('draft storage restores selected mode, style and custom prose while legacy 
             lastModified: 1, requestLogs: [], snapshots: [{ timestamp: 1, content: 'int a=1;', hash: 'a' }] });
         assert.equal(draft.writingStyle, 'plain');
         assert.equal(draft.writingMode, 'evolution');
+        assert.equal(draft.writingModel, 'standard-high');
+        draft.writingModel = 'opus5.5';
         draft.writingMode = 'algorithm';
         draft.writingStyle = 'custom'; draft.customStyle = '짧은 해요체로, 비유 없이.';
         await store.save(draft);
         const restored = (await store.read(draft.filePath))!;
         assert.equal(restored.writingStyle, 'custom');
         assert.equal(restored.writingMode, 'algorithm');
+        assert.equal(restored.writingModel, 'opus5.5');
         assert.equal(restored.customStyle, draft.customStyle);
         assert.equal(writingInstructions(restored), writingInstructions(draft));
         delete restored.writingMode; delete restored.writingStyle; delete restored.customStyle;
@@ -50,4 +55,19 @@ test('draft storage restores selected mode, style and custom prose while legacy 
         assert.match(writingInstructions((await store.read(draft.filePath))!), /했다\/이다체/);
         assert.equal(writingInstructions((await store.read(draft.filePath))!), writingInstructions({ instructions: '' }));
     } finally { await store.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('model defaults and preparation provenance survive candidate application', () => {
+    assert.equal(selectedWritingModel(), DEFAULT_WRITING_MODEL);
+    assert.throws(() => selectedWritingModel('unknown' as any), /모델/);
+    const draft = newDraft({ id: 'model', filePath: '/workspace/model.py', language: 'python', startedAt: 1,
+        lastModified: 1, requestLogs: [], snapshots: [{ timestamp: 1, content: 'print(1)', hash: 'a' }] });
+    const plan = { title: '기록', summary: '요약', start: 0, end: 0, steps: [] };
+    mergeResult(draft, { plan, preparationModel: 'standard' }, draft.revision);
+    draft.writingModel = 'astra';
+    mergeResult(draft, { plan, preparationModel: 'astra' }, -1);
+    assert.equal(draft.preparationModel, 'standard');
+    assert.equal(draft.candidate?.preparationModel, 'astra');
+    mergeResult(draft, draft.candidate!, draft.revision);
+    assert.equal(draft.preparationModel, 'astra');
 });

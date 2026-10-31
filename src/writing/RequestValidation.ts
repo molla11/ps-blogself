@@ -1,5 +1,6 @@
 import { WritingPlan, WritingRequest, validatePlan } from './model';
 import { checkInputSize, MAX_CHANGES } from './InputLimits';
+import { selectedWritingModel } from './WritingModels';
 
 export function validateSourcePlan(value: unknown, request: WritingRequest): WritingPlan {
     const indices = new Set(request.source.changes.map((change) => change.index));
@@ -10,6 +11,7 @@ export function validateSourcePlan(value: unknown, request: WritingRequest): Wri
     return plan;
 }
 export function validateRequest(request: WritingRequest): void {
+    selectedWritingModel(request.model);
     const source = request.source;
     if (!['prepare_blog', 'write_blog'].includes(request.kind) ||
         !/^[a-zA-Z0-9_-]{1,100}$/.test(request.requestId) ||

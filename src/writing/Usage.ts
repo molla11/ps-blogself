@@ -1,11 +1,13 @@
+import { isWritingModel, WritingModelAccess } from './WritingModels';
 /** Account usage returned by ps-blogself-backend GET /api/me. */
 export interface AccountUsage {
+    models?: WritingModelAccess[];
     unit: 'credits'; windowSeconds: number;
     hourlyUsedCredits: number; freeHourlyUsedCredits: number; freeHourlyLimitCredits: number; freeRemainingCredits: number;
     creditBalance: number; canStart: boolean; nextFunding: 'free' | 'credit' | null;
     totalUsedCredits: number; todayRequests: number; retryAt: string | null;
 }
-export interface UsageView { status: 'loading' | 'ready' | 'error'; label: string; detail: string }
+export interface UsageView { status: 'loading' | 'ready' | 'error'; label: string; detail: string; models?: WritingModelAccess[] }
 
 export function accountUsage(value: unknown): AccountUsage {
     const usage = value as AccountUsage | undefined;
@@ -19,6 +21,11 @@ export function accountUsage(value: unknown): AccountUsage {
         || !Number.isSafeInteger(usage.todayRequests) || usage.todayRequests < 0
         || !(usage.retryAt === null || (typeof usage.retryAt === 'string' && Number.isFinite(Date.parse(usage.retryAt))))) {
         throw new Error('서버의 사용량 응답을 확인할 수 없습니다. 다시 불러와 주세요.');
+    }
+    if (usage.models !== undefined && (!Array.isArray(usage.models) || usage.models.some(model =>
+        !model || !isWritingModel(model.id) || typeof model.paidOnly !== 'boolean' || typeof model.available !== 'boolean'
+        || !['free', 'credit', null].includes(model.nextFunding)))) {
+        throw new Error('서버의 모델 사용 가능 여부를 확인할 수 없습니다.');
     }
     return usage;
 }
@@ -38,5 +45,5 @@ export function usageView(usage: AccountUsage): UsageView {
         `누적 사용 ${credits(usage.totalUsedCredits)}크레딧 · 오늘 요청 ${usage.todayRequests.toLocaleString('ko-KR')}회`,
         ...(usage.retryAt ? [`다시 요청 가능: ${new Date(usage.retryAt).toLocaleString('ko-KR')}`] : []),
     ];
-    return { status: 'ready', label, detail: details.join('\n') };
+    return { status: 'ready', label, detail: details.join('\n'), ...(usage.models ? { models: usage.models } : {}) };
 }

@@ -102,6 +102,14 @@
                     </label>
                     <div id="steps"></div>
                 </div>
+                <label class="field" for="writing-mode"><span id="writing-mode-label">글 구성</span>
+                    <select id="writing-mode" aria-labelledby="writing-mode-label" aria-describedby="writing-mode-help">
+                        <option value="evolution">수정 과정 중심 (기본)</option>
+                        <option value="solution">풀이 해설 중심</option>
+                        <option value="algorithm">알고리즘 설명 중심</option>
+                    </select>
+                </label>
+                <p id="writing-mode-help" class="muted">이전 코드와 수정 이유, 바뀐 결과를 따라가며 씁니다.</p>
                 <label class="field" for="writing-style">문체
                     <select id="writing-style">
                         <option value="plain">했다/이다체 (기본)</option>

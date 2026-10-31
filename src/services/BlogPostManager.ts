@@ -7,7 +7,7 @@ import * as path from 'path';
 import MarkdownIt = require('markdown-it');
 import { articleHtml } from '../writing/ArticleExport';
 import { checkInputSize } from '../writing/InputLimits';
-import { WRITING_STYLES, WritingStyle, writingInstructions } from '../writing/WritingStyle';
+import { WRITING_MODES, WritingMode, WRITING_STYLES, WritingStyle, writingInstructions } from '../writing/WritingStyle';
 import { randomBytes, randomUUID } from 'crypto';
 import { storageManager } from '../storage/StorageManager';
 import { LocalJobs } from '../writing/LocalJobs';
@@ -280,6 +280,7 @@ export class BlogPostManager {
             fileName: path.basename(draft.filePath),
             plan: draft.plan,
             instructions: draft.instructions,
+            writingMode: draft.writingMode ?? 'evolution',
             writingStyle: draft.writingStyle ?? 'plain',
             customStyle: draft.customStyle ?? '',
             title: draft.title,
@@ -343,6 +344,7 @@ export class BlogPostManager {
         const before = JSON.stringify([
             draft.plan,
             draft.instructions,
+            draft.writingMode,
             draft.writingStyle,
             draft.customStyle,
             draft.title,
@@ -362,6 +364,10 @@ export class BlogPostManager {
                 patch[key] = value[key];
             }
         }
+        if (value.writingMode !== undefined) {
+            if (!WRITING_MODES.includes(value.writingMode as WritingMode)) throw new Error('글 구성 모드를 선택해 주세요.');
+            patch.writingMode = value.writingMode;
+        }
         if (value.writingStyle !== undefined) {
             if (!WRITING_STYLES.includes(value.writingStyle as WritingStyle)) throw new Error('글의 문체를 선택해 주세요.');
             patch.writingStyle = value.writingStyle;
@@ -373,7 +379,7 @@ export class BlogPostManager {
         else if (typeof value.markdown === 'string' && (value.document === null || value.markdown !== draft.markdown)) patch.document = undefined;
         Object.assign(draft, patch);
         if (
-            before !== JSON.stringify([draft.plan, draft.instructions, draft.writingStyle, draft.customStyle, draft.title, draft.markdown, draft.document])
+            before !== JSON.stringify([draft.plan, draft.instructions, draft.writingMode, draft.writingStyle, draft.customStyle, draft.title, draft.markdown, draft.document])
         ) {
             draft.revision++;
             draft.updatedAt = Date.now();

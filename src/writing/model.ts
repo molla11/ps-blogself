@@ -188,6 +188,7 @@ export function newDraft(history: FileHistory): WritingDraft {
         history: structuredClone(history),
         fingerprint: historyFingerprint(history),
         instructions: '',
+        writingMode: 'evolution',
         writingStyle: 'plain',
         customStyle: '',
         title: '',

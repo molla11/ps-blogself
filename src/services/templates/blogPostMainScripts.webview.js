@@ -253,6 +253,15 @@ function renderLoading() {
     el('loading-title').textContent = kind === 'prepare_blog' ? '준비 중…' : '작성 중…';
     return true;
 }
+function renderWritingMode() {
+    const mode = form.writingMode || 'evolution';
+    value('writing-mode', mode);
+    el('writing-mode-help').textContent = {
+        evolution: '이전 코드와 수정 이유, 바뀐 결과를 따라가며 씁니다.',
+        solution: '현재 코드의 핵심 아이디어와 동작 원리를 설명합니다.',
+        algorithm: '사용한 알고리즘·자료구조의 원리부터 이 문제에 적용하는 방법까지 설명합니다.',
+    }[mode];
+}
 function render() {
     renderGhost();
     const busy = renderLoading();
@@ -287,6 +296,8 @@ function render() {
     el('prepare-btn').disabled = model.pending;
     el('retry-btn').disabled = model.running;
     value('instructions', form.instructions);
+    renderWritingMode();
+    el('writing-mode').disabled = !editable;
     value('writing-style', form.writingStyle || 'plain');
     value('custom-style', form.customStyle);
     el('custom-style-field').hidden = form.writingStyle !== 'custom';
@@ -334,7 +345,7 @@ window.addEventListener('message', (event) => {
             dirty.clear(); sent.clear(); clearTimeout(editTimer);
         }
         model = message;
-        for (const key of ['plan', 'instructions', 'writingStyle', 'customStyle', 'title', 'markdown', 'document']) {
+        for (const key of ['plan', 'instructions', 'writingMode', 'writingStyle', 'customStyle', 'title', 'markdown', 'document']) {
             if (!dirty.has(key)) form[key] = structuredClone(message[key]);
         }
         if (!recoveryApplied) {
@@ -343,7 +354,7 @@ window.addEventListener('message', (event) => {
                 if (model.editable === false || (recovered.editToken && recovered.editToken !== model.editToken)) localRecovery ||= recovered.fields;
                 else {
                     for (const [key, val] of Object.entries(recovered.fields)) {
-                        if (['plan', 'instructions', 'writingStyle', 'customStyle', 'title', 'markdown', 'document'].includes(key)) {
+                        if (['plan', 'instructions', 'writingMode', 'writingStyle', 'customStyle', 'title', 'markdown', 'document'].includes(key)) {
                             form[key] = val;
                             dirty.add(key);
                         }
@@ -429,6 +440,11 @@ for (const [id, key] of [
         if (key === 'markdown') { form.document = null; changed('document'); richEditor.setMarkdown(form.markdown, model?.editable !== false); }
     });
 }
+el('writing-mode').addEventListener('change', (event) => {
+    form.writingMode = event.target.value;
+    changed('writingMode');
+    renderWritingMode();
+});
 el('writing-style').addEventListener('change', (event) => {
     form.writingStyle = event.target.value;
     changed('writingStyle');

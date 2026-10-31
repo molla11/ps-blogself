@@ -86,22 +86,23 @@
                 </div>
             </div>
 
-            <!-- Bottom Actions -->
-            <button id="usage-btn" class="secondary" type="button" aria-label="서버 사용량 확인" hidden></button>
-            <div class="button-group account-actions">
-                <button id="connect-server-btn" class="secondary" title="계정 및 사용량">로그인</button>
-                <button id="sample-btn" class="secondary">샘플로 시작</button>
-            </div>
-            <div class="bottom-actions">
-                <button id="manage-logs-btn" class="action-btn secondary">
-                    <span class="icon">📜</span>
-                    <span>전체 기록</span>
-                </button>
-                <button id="generate-blog-btn" class="action-btn">
-                    <span class="icon">✨</span>
-                    <span>글 만들기</span>
-                </button>
-            </div>
+            <footer class="sidebar-actions" aria-label="사용량 및 글쓰기">
+                <button id="usage-btn" class="secondary" type="button" aria-label="서버 사용량 확인" hidden></button>
+                <div class="button-group account-actions">
+                    <button id="connect-server-btn" class="secondary" title="계정 및 사용량"><span class="account-action-label">로그인</span></button>
+                    <button id="sample-btn" class="secondary"><span class="account-action-label">샘플로 시작</span></button>
+                </div>
+                <div class="bottom-actions">
+                    <button id="manage-logs-btn" class="action-btn secondary">
+                        <span class="icon">📜</span>
+                        <span>전체 기록</span>
+                    </button>
+                    <button id="generate-blog-btn" class="action-btn">
+                        <span class="icon">✨</span>
+                        <span>글 만들기</span>
+                    </button>
+                </div>
+            </footer>
         </div>
 
         <!-- Full Logs View -->

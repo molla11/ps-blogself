@@ -2,3 +2,7 @@ allowBuilds:
   esbuild: true
   '@vscode/vsce-sign': false
   keytar: false
+
+overrides:
+  '@humanfs/node@<0.16.8': 0.16.8
+  'picomatch@<4.0.4': 4.0.7

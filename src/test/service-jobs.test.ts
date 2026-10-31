@@ -52,6 +52,16 @@ test('a broken event stream resumes the existing job without submitting it again
     } finally { globalThis.fetch = previousFetch; }
 });
 
+test('an SSE connection limit polls the existing job without resubmitting it', async () => {
+    const { jobs, calls } = harness(), previousFetch = globalThis.fetch;
+    globalThis.fetch = async () => Response.json({ code: 'SSE_LIMIT' }, { status: 429, headers: { 'Retry-After': '3' } });
+    try {
+        const result = await jobs.watch('existing-job', await jobs.target(), () => {}, new AbortController().signal);
+        assert.equal(result.status, 'completed');
+        assert.deepEqual(calls.map(call => call.slice(0, 2)), [['/jobs/existing-job', 'GET']]);
+    } finally { globalThis.fetch = previousFetch; }
+});
+
 test('selected aliases reach the backend without exposing provider or reasoning settings', async () => {
     const { jobs, connection, calls } = harness();
     connection.request = async (...args: unknown[]) => {

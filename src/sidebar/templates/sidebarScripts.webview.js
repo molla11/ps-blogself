@@ -504,7 +504,7 @@ window.addEventListener('message', (event) => {
     const message = event.data;
     switch (message.type) {
         case 'updateState':
-            document.getElementById('connect-server-btn').textContent = message.accountLabel || '로그인';
+            document.querySelector('#connect-server-btn .account-action-label').textContent = message.accountLabel || '로그인';
             renderNotices(message.notices);
             {
                 const usage = document.getElementById('usage-btn');

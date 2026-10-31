@@ -8,10 +8,10 @@ async function state(page: Page, usage?: unknown) {
 test('backend usage fits the compact sidebar, exposes details, and opens the server usage action', async ({page}) => {
     await page.setViewportSize({width: 300, height: 650});
     await openWebview(page, true);
-    await state(page, {status: 'ready', label: '최근 1시간 무료 2,469 / 5,000 · 유료 24,000크레딧', detail: '남은 무료 2,530크레딧\n누적 사용 25,000크레딧'});
+    await state(page, {status: 'ready', label: '최근 1시간 2,469 / 5,000 크레딧 · 유료 24,000 크레딧', detail: '남은 무료 2,530크레딧\n누적 사용 25,000크레딧'});
     const button = page.getByRole('button', {name: '서버 사용량 확인', exact: true});
     await expect(button).toBeInViewport();
-    await expect(button).toHaveText('최근 1시간 무료 2,469 / 5,000 · 유료 24,000크레딧');
+    await expect(button).toHaveText('최근 1시간 2,469 / 5,000 크레딧 · 유료 24,000 크레딧');
     await expect(button).toHaveAttribute('title', /누적 사용 25,000크레딧/);
     await button.click();
     expect(await page.evaluate(() => (window as any).__messages.at(-1))).toEqual({type: 'showUsage'});

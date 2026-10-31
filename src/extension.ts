@@ -1,3 +1,5 @@
+import { WelcomePanel } from './welcome/WelcomePanel';
+import { WelcomeState } from './welcome/WelcomeState';
 import { SettingsPanel } from './settings/SettingsPanel';
 import * as vscode from 'vscode';
 import { configManager } from './config';
@@ -32,11 +34,15 @@ export async function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.commands.registerCommand('psb.openSettings', () => SettingsPanel.show()),
+        vscode.commands.registerCommand('psb.welcome', () => WelcomePanel.show()),
         vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider, {
             // Preserve search, loaded rows and scroll position across sidebar switches.
             webviewOptions: { retainContextWhenHidden: true },
         }),
     );
+
+    try { await new WelcomeState(context.globalStorageUri.fsPath).showOnce(() => WelcomePanel.show()); }
+    catch (error) { Logger.warn('시작 안내 표시 상태를 저장하지 못했습니다.', error); }
 }
 
 async function selectRootFolder(sidebarProvider: SidebarProvider) {

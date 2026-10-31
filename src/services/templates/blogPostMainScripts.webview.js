@@ -301,7 +301,7 @@ function render() {
     el('error-box').hidden = !model.error;
     el('error-text').textContent = model.error || '';
     el('cancel-btn').hidden = !model.pending;
-    el('discard-pending-btn').hidden = !model.pending || model.running;
+    el('discard-pending-btn').hidden = !!model.running;
     el('candidate-box').hidden = !model.candidate;
     el('preparing').hidden = !!form.plan || busy;
     el('prepare-empty-btn').hidden = !!model.pending || !!model.running || !!model.candidate;
@@ -576,7 +576,7 @@ for (const [id, type, format] of [['copy-btn', 'copy'], ['export-btn', 'export',
     });
 }
 for (const [id, type] of [
-    ['connect-btn', 'connect'],
+    ['recharge-credits-btn', 'rechargeCredits'],
     ['cancel-btn', 'cancel'],
     ['discard-candidate-btn', 'discardCandidate'],
     ['discard-pending-btn', 'discardPending'],

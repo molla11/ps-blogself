@@ -448,14 +448,6 @@ button.action-btn {
     padding: 20px 0;
 }
 
-/* Bottom Actions */
-.bottom-actions {
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
 /* Context Menu */
 #context-menu {
     position: fixed;
@@ -545,18 +537,28 @@ button.action-btn {
 }
 
 /* Keep recording, file selection and the primary action in one sidebar. */
+.sidebar-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex-shrink: 0;
+}
+.sidebar-actions button {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 4px 8px;
+    line-height: 16px;
+}
 .bottom-actions {
     display: flex;
     flex-direction: row;
     gap: 6px;
     flex-shrink: 0;
-    padding-top: 10px;
 }
 .bottom-actions .action-btn {
     flex: 1;
     justify-content: center;
     min-width: 0;
-    padding: 8px 5px;
 }
 .bottom-actions .icon {
     display: none;
@@ -580,13 +582,12 @@ button.action-btn {
 .language-group {
     flex-shrink: 0;
 }
-.account-actions { display: flex; flex-direction: row; align-items: center; gap: 8px; flex-shrink: 0; }
+.account-actions { display: flex; flex-direction: row; align-items: center; gap: 6px; flex-shrink: 0; }
 #usage-btn {
     flex-shrink: 0;
     display: block;
     width: 100%;
     min-width: 0;
-    padding: 3px 0;
     font-size: 11px;
     font-weight: 400;
     text-align: left;
@@ -596,4 +597,5 @@ button.action-btn {
 }
 #connect-server-btn { flex: 1; text-align: left; }
 #sample-btn { flex: 0 0 auto; }
-.account-actions button { display: block; width: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-actions button { display: flex; align-items: center; width: auto; min-width: 0; }
+.account-action-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

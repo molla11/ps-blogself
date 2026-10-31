@@ -3,6 +3,13 @@ interface MinimalHighlighter {
     codeToHtml(code: string, options: any): string;
 }
 
+const escapeHtml = (value: string): string => value.replace(
+    /[&<>"']/g,
+    char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!,
+);
+
+const plainCodeHtml = (code: string): string => `<pre><code>${escapeHtml(code)}</code></pre>`;
+
 export class ShikiService {
     private static _instance: ShikiService;
     private _highlighter: MinimalHighlighter | null = null;
@@ -60,7 +67,7 @@ export class ShikiService {
         theme: string = 'github-dark',
     ): Promise<string> {
         await this.init();
-        if (!this._highlighter) return code;
+        if (!this._highlighter) return plainCodeHtml(code);
 
         try {
             return this._highlighter.codeToHtml(code, {
@@ -69,7 +76,7 @@ export class ShikiService {
             });
         } catch (e) {
             console.error('Shiki highlight error:', e);
-            return `<pre><code>${code}</code></pre>`; // Fallback
+            return plainCodeHtml(code);
         }
     }
 }

@@ -46,13 +46,20 @@ export class JobRouter {
     }
     async watch(id: string, target: JobTarget, changed: (job: WritingJob) => void, signal: AbortSignal): Promise<WritingJob> {
         requireTarget(target);
+        let pollIntervalMs = 1000;
         try {
             const credentials = await this.connection.credentials(false, target.base);
             if (credentials.user.id !== target.owner) throw new Error('다른 계정의 작업입니다.');
             const response = await fetch(target.base + '/jobs/' + encodeURIComponent(id) + '/events', {
                 redirect: 'error', signal, headers: { Authorization: 'Bearer ' + credentials.token },
             });
-            if (!response.ok || !response.body) throw new Error('진행 상황 연결을 다시 시도합니다.');
+            if (!response.ok || !response.body) {
+                if (response.status === 429) {
+                    const retrySeconds = Number(response.headers.get('Retry-After'));
+                    pollIntervalMs = Number.isFinite(retrySeconds) && retrySeconds > 0 ? Math.min(30000, retrySeconds * 1000) : 3000;
+                }
+                throw new Error('진행 상황 연결을 다시 시도합니다.');
+            }
             const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = '';
             try {
                 while (true) {
@@ -79,7 +86,7 @@ export class JobRouter {
             if (!['queued', 'running'].includes(job.status)) return job;
             await new Promise<void>((resolve, reject) => {
                 const abort = () => { clearTimeout(timer); reject(signal.reason); };
-                const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, 1000);
+                const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, pollIntervalMs);
                 signal.addEventListener('abort', abort, { once: true });
             });
         }

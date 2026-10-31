@@ -35,6 +35,29 @@ exports.run = async () => {
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${process.env.PSB_CDP_PORT}`);
     const requests = async () => (await fetch(process.env.PSB_API_URL.replace(/\/api$/, '') + '/__test/requests')).json();
     try {
+        const welcomeTabs = () => vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.label === 'Welcome · PS-Blogself');
+        assert.equal(welcomeTabs().length, stage === 'first' ? 1 : 0, 'welcome opens once, not on restart');
+        await vscode.commands.executeCommand('psb.welcome');
+        await until(() => welcomeTabs().length === 1, 'manual welcome tab is created');
+        await vscode.commands.executeCommand('psb.welcome');
+        assert.equal(welcomeTabs().length, 1, 'manual welcome reuses its existing tab');
+        const welcome = await surface(browser, '#welcome');
+        if (stage === 'first') {
+            assert.equal((await requests()).length, 0, 'welcome does not start AI work');
+            await welcome.frame.locator('[data-action="connect"]').click();
+            await until(async () => !(await welcome.frame.locator('[data-action="connect"]').isDisabled()), 'welcome account action completes');
+            assert.equal((await requests()).length, 0, 'login does not start AI work');
+            await welcome.frame.locator('[data-action="settings"]').click();
+            const settings = await surface(browser, '#root-form');
+            await settings.frame.locator('#root').waitFor();
+            await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+            await vscode.commands.executeCommand('psb.welcome');
+            await welcome.frame.locator('[data-action="history"]').click();
+            await surface(browser, '#generate-blog-btn');
+            await welcome.page.screenshot({ path: path.join(sandbox, 'welcome.png') });
+        }
+        await vscode.window.tabGroups.close(welcomeTabs());
+        await until(() => welcomeTabs().length === 0, 'welcome tab closes');
         if (stage === 'first') {
             const doc = await vscode.workspace.openTextDocument(path.join(sandbox, 'workspace/solve.py'));
             const editor = await vscode.window.showTextDocument(doc);
@@ -124,7 +147,7 @@ exports.run = async () => {
         const credits = value => new Intl.NumberFormat('ko-KR', {maximumFractionDigits: 0}).format(Math.floor(value));
         assert.ok(label.includes(credits(usage.freeHourlyUsedCredits)));
         assert.ok(label.includes(credits(usage.freeHourlyLimitCredits)));
-        assert.ok(label.includes('유료 ' + credits(usage.creditBalance) + '크레딧'));
+        assert.ok(label.includes('유료 ' + credits(usage.creditBalance) + ' 크레딧'));
         assert.doesNotMatch(label, /USD|\$|달러/);
         await writer.page.screenshot({ path: path.join(sandbox, stage + '.png') });
         await fs.writeFile(path.join(sandbox, stage + '.json'), JSON.stringify({ stage, passed: true }));

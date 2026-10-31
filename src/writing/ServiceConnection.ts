@@ -80,6 +80,17 @@ export class ServiceConnection {
         if (usage?.status === 'ready') void vscode.window.showInformationMessage(usage.detail);
         else if (usage?.status === 'error') void vscode.window.showErrorMessage(usage.detail);
     }
+    async showCreditRecharge() {
+        const account = await this.account();
+        const copy = '계정 이메일 복사';
+        const choice = await vscode.window.showInformationMessage('크레딧 충전은 관리자에게 요청해 주세요.', {
+            modal: true,
+            detail: account?.email
+                ? `충전할 계정 이메일을 함께 전달해 주세요.\n\n${account.email}`
+                : '충전할 계정의 로그인 이메일을 함께 전달해 주세요.',
+        }, ...(account?.email ? [copy] : []));
+        if (choice === copy && account?.email) await vscode.env.clipboard.writeText(account.email);
+    }
     private async store(base: string, value: Credentials) {
         await this.context.secrets.store(this.key(base), JSON.stringify(value)); this.changed.fire();
         void this.refreshUsage();
@@ -117,7 +128,7 @@ export class ServiceConnection {
         }
         if (!interactive) throw new Error('먼저 로그인해 주세요.');
         if (this.login) return this.login;
-        this.login = Promise.resolve(vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: '브라우저에서 GitHub 로그인을 완료해 주세요.', cancellable: true }, async (_progress, cancellation) => {
+        this.login = Promise.resolve(vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: '브라우저에서 로그인을 완료해 주세요.', cancellable: true }, async (_progress, cancellation) => {
             const verifier = randomBytes(32).toString('base64url');
             const challenge = createHash('sha256').update(verifier).digest('base64url');
             const flow = await this.fetchJson<{ id: string; loginUrl: string }>(base, '/auth/start', 'POST', { challenge });

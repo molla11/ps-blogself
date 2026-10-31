@@ -39,6 +39,7 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; }
 .notice > span { flex: 1; min-width: 180px; }
 #progress-box { color: var(--muted); }
 .error { padding: 10px 12px; border: 1px solid var(--vscode-inputValidation-errorBorder, #b14444); background: var(--vscode-inputValidation-errorBackground, #fff1ef); white-space: pre-wrap; border-radius: 4px; }
+.error-close { display: grid; place-items: center; align-self: stretch; flex: 0 0 32px; padding: 0; }
 #generation-loading {
     position: fixed;
     z-index: 20;

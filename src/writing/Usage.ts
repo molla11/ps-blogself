@@ -36,7 +36,7 @@ export function usageView(usage: AccountUsage): UsageView {
     }).format(Math.floor(value));
     const seconds = usage.windowSeconds;
     const window = seconds % 3600 === 0 ? `${seconds / 3600}시간` : seconds % 60 === 0 ? `${seconds / 60}분` : `${seconds}초`;
-    const label = `최근 ${window} 무료 ${credits(usage.freeHourlyUsedCredits)} / ${credits(usage.freeHourlyLimitCredits)} · 유료 ${credits(usage.creditBalance)}크레딧`;
+    const label = `최근 ${window} ${credits(usage.freeHourlyUsedCredits)} / ${credits(usage.freeHourlyLimitCredits)} 크레딧 · 유료 ${credits(usage.creditBalance)} 크레딧`;
     const details = [
         `최근 ${window} 전체 사용 ${credits(usage.hourlyUsedCredits)}크레딧`,
         `무료 사용 ${credits(usage.freeHourlyUsedCredits)} / ${credits(usage.freeHourlyLimitCredits)}크레딧 · 남은 무료 ${credits(usage.freeRemainingCredits)}크레딧`,

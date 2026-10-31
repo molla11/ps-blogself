@@ -404,7 +404,7 @@ export class BlogPostManager {
             throw new Error('화면 요청을 확인할 수 없습니다.');
         }
         await this.refresh(view);
-        const reading = ['ready', 'takeover', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'ghostConnect', 'ghostOpen'].includes(message.type);
+        const reading = ['ready', 'takeover', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'rechargeCredits', 'ghostConnect', 'ghostOpen'].includes(message.type);
         if (!reading && (!view.editable || message.editToken !== view.draft.editor?.token)) throw new DraftConflict();
         switch (message.type) {
             case 'takeover': {
@@ -576,6 +576,9 @@ export class BlogPostManager {
                 this.exports.add(operation); void operation.finally(() => this.exports.delete(operation));
                 break;
             }
+            case 'rechargeCredits':
+                await this.connection.showCreditRecharge();
+                break;
             case 'connect':
                 await this.connect();
                 break;

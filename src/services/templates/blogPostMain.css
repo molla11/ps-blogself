@@ -151,7 +151,7 @@ input[type=range] { width: 100%; min-width: 0; accent-color: var(--accent); }
 .format-tool[aria-pressed=true] { background: var(--hover); color: var(--ink); }
 .tool-separator { height: 16px; border-left: 1px solid var(--line); margin: 0 6px; }
 #insert-block-btn { width: 28px; height: 29px; padding: 0; }
-.document-paper { --block-gutter: 48px; max-width: 840px; min-height: calc(100vh - 230px); margin: 24px 0 60px; padding: 42px 48px 64px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); }
+.document-paper { --block-gutter: 48px; max-width: 840px; min-height: calc(100vh - 230px); margin: 24px auto 60px; padding: 42px 48px 64px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); }
 .article-title-field { display: block; border-bottom: 1px solid var(--line); margin-bottom: 26px; padding-bottom: 24px; }
 #article-title { min-height: 0; border: 0; border-radius: 0; padding: 0; margin: 0; resize: none; font: 650 clamp(23px, 2.8vw, 32px)/1.4 var(--vscode-font-family, system-ui, sans-serif); background: transparent; color: var(--ink); }
 #article-title:focus-visible { outline-offset: 5px; }
@@ -198,7 +198,7 @@ dialog::backdrop { background: #00000045; }
 .dialog-actions { justify-content: flex-end; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 1050px) {
-    .document-paper { margin: 20px 0; padding: 32px; padding-left: var(--block-gutter); }
+    .document-paper { margin: 20px auto; padding: 32px; padding-left: var(--block-gutter); }
     #plan-view { width: calc(100% - 40px); margin: 20px auto; }
 }
 @media (max-width: 700px) {
@@ -219,7 +219,7 @@ dialog::backdrop { background: #00000045; }
     .version-bar { padding: 8px 14px; flex-wrap: wrap; }
     .version-picker { flex-basis: calc(100% - 40px); }
     #restore-version-btn { margin-left: auto; }
-    .document-paper { margin: 12px 0; padding: 26px 22px; padding-left: var(--block-gutter); }
+    .document-paper { margin: 12px auto; padding: 26px 22px; padding-left: var(--block-gutter); }
     .format-bar { padding: 6px 10px; gap: 2px; }
     #format-tools { gap: 0; }
     .format-tool { width: 27px; }

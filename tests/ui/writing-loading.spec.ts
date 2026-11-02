@@ -57,7 +57,6 @@ test('loading fits a narrow editor, respects reduced motion and keeps explanatio
     await openWebview(page);
     await update(page);
     await expect(page.locator('.loading-spinner')).toHaveCSS('animation-name', 'none');
-    await page.locator('#summary-details > summary').click();
     await page.locator('#summary').fill('생성 중에 고친 설명');
     await update(page, { progress: 80 });
     await expect(page.locator('#summary')).toHaveValue('생성 중에 고친 설명');
@@ -78,7 +77,6 @@ test('model errors offer retry, credits and dismissal without losing the draft',
     await expect(page.getByRole('button', { name: '오류 닫기', exact: true })).toBeVisible();
     await expect(page.locator('#error-box')).not.toContainText('새 요청 준비');
     await expect(page.locator('#writing-model')).toBeDisabled();
-    await page.locator('#summary-details > summary').click();
     await page.locator('#summary').fill('유지할 풀이 설명');
     await page.getByRole('button', { name: '다시 시도', exact: true }).click();
     expect(await page.evaluate(() => (window as any).__messages.at(-1))).toMatchObject({ type: 'retry', fields: { plan: { summary: '유지할 풀이 설명' } } });

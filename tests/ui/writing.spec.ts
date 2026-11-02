@@ -114,7 +114,6 @@ test('late saves and progress updates preserve input typed while a request is ru
 }) => {
     await open(page);
     await model(page);
-    await page.locator('#summary-details > summary').click();
     await page.locator('#summary').fill('첫 수정');
     await expect
         .poll(async () => (await messages(page)).filter((m: any) => m.type === 'save').length)
@@ -163,7 +162,6 @@ test('single-change ranges remain valid and code containing HTML is rendered as 
 test('clicking generate flushes the latest explanation even before autosave', async ({ page }) => {
     await open(page);
     await model(page);
-    await page.locator('#summary-details > summary').click();
     await page.locator('#summary').fill('최종 설명');
     await page.getByRole('button', { name: '이대로 글쓰기' }).click();
     expect((await messages(page)).find((m: any) => m.type === 'generate').fields.plan.summary).toBe(
@@ -251,7 +249,6 @@ test('another window’s writer is read-only, follows live text, and can request
 test('losing ownership preserves unsaved input for explicit recovery', async ({ page }) => {
     await open(page);
     await model(page);
-    await page.locator('#summary-details > summary').click();
     await page.locator('#summary').fill('아직 저장하지 못한 설명');
     await model(page, { editable: false, editToken: 'window-b' });
     await expect(page.locator('#recovery-box')).toBeVisible();

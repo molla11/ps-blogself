@@ -16,16 +16,19 @@ async function choose(page: Page, name: string) {
 test('four public aliases persist and travel with prepare/write without generation on selection', async ({ page }) => {
     await openWebview(page); await model(page);
     await expect(page.getByRole('button', { name: '모델 high', exact: true })).toBeVisible();
+    await expect(page.locator('#writing-model-help')).toBeHidden();
     await page.locator('#writing-model').click();
-    expect(await page.getByRole('listbox', { name: '모델', exact: true }).getByRole('option').allTextContents()).toEqual(['standard', 'high', 'Claude Opus 5.5', 'GPT 6 Astra']);
+    expect(await page.getByRole('listbox', { name: '모델', exact: true }).getByRole('option').allTextContents()).toEqual(['standard', 'high', 'Claude Opus 5.5 (유료)', 'GPT 6 Astra (유료)']);
     await expect(page.getByRole('option', { name: 'high', exact: true })).toHaveAttribute('aria-selected', 'true');
-    await page.getByRole('option', { name: 'Claude Opus 5.5', exact: true }).click();
+    await page.getByRole('option', { name: 'Claude Opus 5.5 (유료)', exact: true }).click();
     await expect(page.locator('#writing-model-options')).toBeHidden();
     await expect(page.locator('#writing-model')).toBeFocused();
-    await expect(page.locator('.model-picker')).not.toContainText(/크레딧|무료|유료|standard-high/);
+    await expect(page.locator('#writing-model-help')).toBeVisible();
+    await expect(page.locator('#writing-model-help')).toHaveText('유료 모델은 유료 크레딧만으로 작동합니다.');
+    await expect(page.locator('#writing-model')).toHaveAccessibleDescription('유료 모델은 유료 크레딧만으로 작동합니다.');
     expect(await page.evaluate(() => (window as any).__messages.filter((m: any) => ['prepare', 'generate'].includes(m.type)))).toEqual([]);
     await model(page, { pending: true, running: true, writingModel: 'standard-high' });
-    await expect(page.locator('#writing-model')).toHaveText('Claude Opus 5.5');
+    await expect(page.locator('#writing-model')).toHaveText('Claude Opus 5.5 (유료)');
     await expect(page.locator('#writing-model')).toBeDisabled();
     await model(page);
     await page.locator('#prepare-btn').click(); await page.locator('#generate-btn').click();
@@ -39,6 +42,9 @@ test('four public aliases persist and travel with prepare/write without generati
     const menu = await page.getByRole('listbox', { name: '모델', exact: true }).boundingBox();
     expect(menu!.x).toBeGreaterThanOrEqual(0);
     expect(menu!.x + menu!.width).toBeLessThanOrEqual(340);
+    await page.keyboard.press('Escape');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: 'test-results/writing-paid-model-narrow.png', fullPage: true });
 });
 
 test('keyboard navigation, dismissal and selection keep the original request aliases', async ({ page }) => {
@@ -51,7 +57,7 @@ test('keyboard navigation, dismissal and selection keep the original request ali
     await expect(trigger).toBeFocused();
     await expect(trigger).toHaveAttribute('aria-expanded', 'false');
     await page.keyboard.press('Space'); await page.keyboard.press('End'); await page.keyboard.press('Enter');
-    await expect(trigger).toHaveText('GPT 6 Astra');
+    await expect(trigger).toHaveText('GPT 6 Astra (유료)');
     await trigger.click(); await page.keyboard.press('Home'); await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowUp'); await page.keyboard.press('Enter');
     await expect(trigger).toHaveText('standard');
@@ -61,8 +67,13 @@ test('keyboard navigation, dismissal and selection keep the original request ali
     await expect(trigger).not.toBeFocused();
     await trigger.click(); await page.locator('#plan-title').click();
     await expect(page.getByRole('listbox', { name: '모델', exact: true })).toBeHidden();
-    for (const [label, alias] of [['standard', 'standard'], ['high', 'standard-high'], ['Claude Opus 5.5', 'opus5.5'], ['GPT 6 Astra', 'astra']]) {
+    for (const [label, alias] of [['standard', 'standard'], ['high', 'standard-high'], ['Claude Opus 5.5 (유료)', 'opus5.5'], ['GPT 6 Astra (유료)', 'astra']]) {
         await choose(page, label);
+        if (label.includes('(유료)')) await expect(page.locator('#writing-model-help')).toBeVisible();
+        else {
+            await expect(page.locator('#writing-model-help')).toBeHidden();
+            await expect(trigger).not.toHaveAttribute('aria-describedby');
+        }
         await page.locator('#generate-btn').click();
         expect(await page.evaluate(() => (window as any).__messages.filter((m: any) => m.type === 'generate').at(-1).fields.writingModel)).toBe(alias);
     }
@@ -71,10 +82,12 @@ test('keyboard navigation, dismissal and selection keep the original request ali
 test('webview recovery restores the selection and another window cannot edit it', async ({ page }) => {
     await openWebview(page, false, { filePath: base.filePath, editToken: base.editToken, fields: { writingModel: 'astra' } });
     await model(page);
-    await expect(page.locator('#writing-model')).toHaveText('GPT 6 Astra');
+    await expect(page.locator('#writing-model')).toHaveText('GPT 6 Astra (유료)');
+    await expect(page.locator('#writing-model-help')).toBeVisible();
     await page.locator('#writing-model').click();
     await model(page, { editable: false, editToken: 'window-b', writingModel: 'standard' });
     await expect(page.locator('#writing-model')).toHaveText('standard');
+    await expect(page.locator('#writing-model-help')).toBeHidden();
     await expect(page.locator('#writing-model')).toBeDisabled();
     await expect(page.getByRole('listbox', { name: '모델', exact: true })).toBeHidden();
 });

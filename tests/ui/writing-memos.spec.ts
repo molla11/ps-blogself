@@ -25,26 +25,29 @@ const remove = (page: Page, number: number) => page.getByRole('button', { name: 
 
 test.beforeEach(async ({ page }) => { await openWebview(page); await model(page); });
 
-test('the compact summary presents a title and numbered memos vertically at wide and narrow widths', async ({ page }) => {
+test('the summary stays visible below the title and separate memos form a thread at wide and narrow widths', async ({ page }) => {
     await expect(page.getByRole('button', { name: '변경사항 요약', exact: true })).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('#summary')).toBeHidden();
+    await expect(page.getByRole('textbox', { name: '전체 설명', exact: true })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: '전체 설명', exact: true })).toHaveValue(plan.summary);
     await expect(page.locator('#steps h3')).toHaveText(['메모 #1', '메모 #2']);
     for (const width of [1050, 500, 360, 320]) {
         await page.setViewportSize({ width, height: 900 });
         const panel = (await page.locator('#plan-view').boundingBox())!;
         expect(panel.width).toBeLessThanOrEqual(640);
         const title = (await page.locator('#plan-title').boundingBox())!;
+        const summary = (await page.locator('#summary').boundingBox())!;
+        const titleCard = (await page.locator('.plan-title-section').boundingBox())!;
         const first = (await page.locator('.step').nth(0).boundingBox())!;
         const second = (await page.locator('.step').nth(1).boundingBox())!;
-        expect(first.y).toBeGreaterThan(title.y + title.height);
+        expect(summary.y).toBeGreaterThan(title.y + title.height);
+        expect(titleCard.y + titleCard.height).toBeGreaterThanOrEqual(summary.y + summary.height);
+        expect(first.y).toBeGreaterThan(titleCard.y + titleCard.height);
         expect(second.y).toBeGreaterThan(first.y + first.height);
         expect(first.x).toBe(second.x);
-        expect(first.x + first.width).toBeLessThan(panel.x + panel.width);
+        expect(first.x + first.width).toBeLessThanOrEqual(panel.x + panel.width);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         if (width === 1050 || width === 320) await page.screenshot({ path: `test-results/writing-memos-${width}.png`, fullPage: true });
     }
-    await page.locator('#summary-details > summary').click();
-    await expect(page.getByRole('textbox', { name: '전체 설명', exact: true })).toHaveValue(plan.summary);
 });
 
 test('inserting at the start, middle and end and deleting memos preserves order in saves and generation', async ({ page }) => {

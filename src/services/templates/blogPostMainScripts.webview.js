@@ -46,7 +46,8 @@ const richEditor = createArticleEditor({
 function height(node) {
     if (node.tagName === 'TEXTAREA' && !node.closest('[hidden]')) {
         node.style.height = 'auto';
-        node.style.height = Math.max(node.id === 'article-title' ? 0 : 70, node.scrollHeight + 2) + 'px';
+        const minimum = node.id === 'article-title' || node.id === 'summary' || node.closest('.step') ? 0 : 70;
+        node.style.height = Math.max(minimum, node.scrollHeight + 2) + 'px';
     }
 }
 function stash() {
@@ -148,6 +149,7 @@ function memoInsertion(index, label) {
     button.type = 'button';
     button.className = 'quiet memo-add';
     button.textContent = '메모 추가';
+    button.title = label;
     button.setAttribute('aria-label', label);
     button.addEventListener('click', () => insertMemo(index));
     row.appendChild(button);
@@ -167,7 +169,7 @@ function renderSteps() {
         visible.forEach(({ step, index }, position) => {
             const label = `메모 #${position + 1}`;
             const section = document.createElement('section');
-            section.className = 'step process-node';
+            section.className = 'step';
             section.setAttribute('aria-labelledby', 'memo-label-' + index);
             const row = document.createElement('div');
             row.className = 'step-heading';
@@ -199,7 +201,7 @@ function renderSteps() {
             });
             const body = document.createElement('textarea');
             body.id = 'step-body-' + index;
-            body.rows = 3;
+            body.rows = 1;
             body.maxLength = 12000;
             body.placeholder = '바꾼 내용과 이유를 적어보세요.';
             body.setAttribute('aria-label', `${label} 내용`);
@@ -324,7 +326,12 @@ function renderWritingMode() {
 function renderWritingModel() {
     const selected = modelOptions.some(option => option.value === form.writingModel) ? form.writingModel : DEFAULT_WRITING_MODEL;
     for (const option of modelOptions) option.setAttribute('aria-selected', String(option.value === selected));
-    el('writing-model-value').textContent = modelOptions.find(option => option.value === selected).textContent;
+    const selectedOption = modelOptions.find(option => option.value === selected);
+    el('writing-model-value').textContent = selectedOption.textContent;
+    const paidOnly = selectedOption.dataset.paidOnly === 'true';
+    el('writing-model-help').hidden = !paidOnly;
+    if (paidOnly) el('writing-model').setAttribute('aria-describedby', 'writing-model-help');
+    else el('writing-model').removeAttribute('aria-describedby');
     el('writing-model').disabled = model.editable === false || !!model.pending || !!model.running;
     if (el('writing-model').disabled) closeModelOptions();
 }
@@ -577,7 +584,6 @@ el('summary').addEventListener('input', (event) => {
     height(event.target);
     changed('plan');
 });
-el('summary-details').addEventListener('toggle', () => height(el('summary')));
 el('prepare-empty-btn').addEventListener('click', () => action('prepare'));
 el('version-select').addEventListener('change', event => chooseVersion(event.target.value));
 for (const [id, offset] of [['version-older-btn', 1], ['version-newer-btn', -1]]) {

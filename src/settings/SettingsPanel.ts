@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
 import { configManager } from '../config';
+import { normalizeExportTags } from './ExportTags';
+import { SUPPORT_EMAIL } from '../support';
 import template from './templates/settings.html';
 import css from './templates/settings.css';
 import script from './templates/settingsScripts.webview.js';
@@ -17,7 +19,7 @@ export class SettingsPanel {
             .replace('{{script}}', () => `<script nonce="${nonce}">${script}</script>`);
         const subscriptions = [
             configManager.onDidChange(() => this.render()),
-            vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('psb.prepareOnReview')) this.render(); }),
+            vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('psb')) this.render(); }),
             vscode.window.onDidChangeActiveTextEditor(() => this.render()),
             vscode.workspace.onDidChangeWorkspaceFolders(() => this.render()),
             panel.webview.onDidReceiveMessage(message => {
@@ -46,6 +48,10 @@ export class SettingsPanel {
             root: configManager.getRootFolder(), currentDirectory: configManager.getCurrentDirectory(), windowRoot: configManager.isWindowRoot(),
             recording: configManager.isRecording(), extensions: configManager.getSupportedLanguages(),
             prepareOnReview: vscode.workspace.getConfiguration('psb').get('prepareOnReview', true),
+            exportTags: vscode.workspace.getConfiguration('psb').get('exportTags', []),
+            ghostAutoUpload: vscode.workspace.getConfiguration('psb').get('ghostAutoUpload', false),
+            ghostAutoUploadMode: vscode.workspace.getConfiguration('psb').get('ghostAutoUploadMode', 'draft'),
+            supportEmail: SUPPORT_EMAIL,
         });
     }
     private async handle(message: any) {
@@ -64,6 +70,12 @@ export class SettingsPanel {
                 break;
             }
             case 'resetRoot': await configManager.setRootFolder(''); break;
+            case 'contact':
+                await vscode.env.openExternal(vscode.Uri.parse('mailto:' + SUPPORT_EMAIL));
+                break;
+            case 'connectGhost':
+                await vscode.commands.executeCommand('psb.connectGhost');
+                break;
             case 'save':
                 switch (message.field) {
                     case 'root':
@@ -76,6 +88,17 @@ export class SettingsPanel {
                     case 'prepareOnReview':
                         if (typeof message.value !== 'boolean') throw new Error('미리 준비 여부를 확인해 주세요.');
                         await vscode.workspace.getConfiguration('psb').update('prepareOnReview', message.value, vscode.workspace.workspaceFolders?.length ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);
+                        break;
+                    case 'exportTags':
+                        await vscode.workspace.getConfiguration('psb').update('exportTags', normalizeExportTags(message.value), vscode.workspace.workspaceFolders?.length ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);
+                        break;
+                    case 'ghostAutoUpload':
+                        if (typeof message.value !== 'boolean') throw new Error('자동 업로드 여부를 확인해 주세요.');
+                        await vscode.workspace.getConfiguration('psb').update('ghostAutoUpload', message.value, vscode.ConfigurationTarget.Global);
+                        break;
+                    case 'ghostAutoUploadMode':
+                        if (!['draft', 'publish'].includes(message.value)) throw new Error('자동 업로드 방식을 선택해 주세요.');
+                        await vscode.workspace.getConfiguration('psb').update('ghostAutoUploadMode', message.value, vscode.ConfigurationTarget.Global);
                         break;
                     default: throw new Error('지원하지 않는 설정입니다.');
                 }

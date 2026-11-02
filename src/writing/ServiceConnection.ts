@@ -4,6 +4,8 @@ import { ConnectionEnvironment, resolveConnectionSettings, serviceUrl, loginUrl 
 import { AccountUsage, accountUsage, UsageView, usageView } from './Usage';
 import { NoticeFeed } from './NoticeFeed';
 import { LOGIN_BRIDGE_URL, startLoginBridge } from './LoginBridge';
+import { SUPPORT_EMAIL } from '../support';
+import { WritingModel } from './WritingModels';
 
 export interface Account {
     id: string; email: string;
@@ -75,6 +77,20 @@ export class ServiceConnection {
         this.usageRequest = request;
         return request.promise;
     }
+    async checkWritingModel(model: WritingModel): Promise<{ allowed: boolean; message?: string }> {
+        const base = this.base, saved = await this.saved(base);
+        if (!saved) return { allowed: false, message: '로그인 후 유료 크레딧을 확인해 주세요.' };
+        await this.refreshUsage(true);
+        const current = await this.saved(base), usage = await this.usage();
+        const access = usage?.status === 'ready' ? usage.models?.find(item => item.id === model) : undefined;
+        if (base !== this.base || current?.token !== saved.token || !access) {
+            return { allowed: false, message: '사용 가능 여부를 확인하지 못해 이전 모델을 유지했습니다. 다시 선택해 주세요.' };
+        }
+        return access.available ? { allowed: true } : {
+            allowed: false,
+            message: access.paidOnly ? '유료 크레딧이 없어 이전 모델을 유지했습니다.' : '현재 사용할 수 없어 이전 모델을 유지했습니다.',
+        };
+    }
     async showUsage() {
         await this.refreshUsage();
         const usage = await this.usage();
@@ -87,8 +103,8 @@ export class ServiceConnection {
         const choice = await vscode.window.showInformationMessage('크레딧 충전은 관리자에게 요청해 주세요.', {
             modal: true,
             detail: account?.email
-                ? `충전할 계정 이메일을 함께 전달해 주세요.\n\n${account.email}`
-                : '충전할 계정의 로그인 이메일을 함께 전달해 주세요.',
+                ? `문의: ${SUPPORT_EMAIL}\n충전할 계정 이메일을 함께 전달해 주세요.\n\n${account.email}`
+                : `문의: ${SUPPORT_EMAIL}\n충전할 계정의 로그인 이메일을 함께 전달해 주세요.`,
         }, ...(account?.email ? [copy] : []));
         if (choice === copy && account?.email) await vscode.env.clipboard.writeText(account.email);
     }

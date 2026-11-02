@@ -183,8 +183,8 @@ export function createArticleEditor({ element, toolbar, outline, onChange, onOpe
     tool('글머리 목록', icons.bullet, () => insert('list')); tool('번호 목록', icons.ordered, () => insert('ordered'));
     tool('인용', icons.quote, () => insert('quote')); tool('코드 블록', icons.code, () => insert('code'));
     tool('링크', icons.link, () => openUrl('link')); tool('이미지 주소 삽입', icons.image, () => openUrl('image'));
-    tool('실행 취소', icons.undo, () => { editor.dispatchCommand(UNDO_COMMAND); focus({ preventScroll: true }); });
-    tool('다시 실행', icons.redo, () => { editor.dispatchCommand(REDO_COMMAND); focus({ preventScroll: true }); });
+    tool('실행 취소', icons.undo, () => { editor.dispatchCommand(UNDO_COMMAND); editor.getRootElement()?.focus({ preventScroll: true }); });
+    tool('다시 실행', icons.redo, () => { editor.dispatchCommand(REDO_COMMAND); editor.getRootElement()?.focus({ preventScroll: true }); });
     el('block-type').onchange = event => update(() => { const selection = $getSelection(); if ($isRangeSelection(selection)) $setBlocksType(selection, () => event.target.value === 'paragraph' ? $createParagraphNode() : $createHeadingNode('h' + event.target.value)); });
     el('code-language').onchange = event => {
         const language = event.target.value;

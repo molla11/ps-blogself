@@ -1,5 +1,6 @@
 {
     "name": "ps-blogself",
+    "publisher": "Shinem-dev",
     "displayName": "ps-blogself",
     "description": "Generate problem-solving blog from code evolution",
     "version": "0.0.1",
@@ -75,6 +76,28 @@
                     "default": true,
                     "scope": "window",
                     "description": "로그인한 상태에서 수정 이력을 열면 코드 변경을 AI 서비스로 보내 구간과 설명을 미리 준비합니다. 동일 이력은 재사용하며 AI 이용 횟수에 포함됩니다."
+                },
+                "psb.exportTags": {
+                    "type": "array",
+                    "items": { "type": "string", "maxLength": 191 },
+                    "maxItems": 50,
+                    "default": [],
+                    "scope": "window",
+                    "description": "내보낼 글에 추가할 태그입니다. PS-Blogself 설정 탭에서는 쉼표로 구분해 입력합니다. Ghost 태그, Markdown 메타데이터, HTML 키워드에 반영됩니다."
+                },
+                "psb.ghostAutoUpload": {
+                    "type": "boolean",
+                    "default": false,
+                    "scope": "machine",
+                    "description": "글 생성이 완료되거나 생성 결과를 적용하면 연결된 Ghost에 자동으로 업로드합니다."
+                },
+                "psb.ghostAutoUploadMode": {
+                    "type": "string",
+                    "enum": ["draft", "publish"],
+                    "enumDescriptions": ["비공개 초안으로 저장합니다.", "자동으로 공개 게시합니다."],
+                    "default": "draft",
+                    "scope": "machine",
+                    "description": "Ghost 자동 업로드 방식입니다. Publish는 확인창 없이 공개 게시합니다."
                 }
             }
         }
@@ -89,7 +112,7 @@
         "check-types": "tsc --noEmit",
         "lint": "eslint src",
         "test": "pnpm test:host",
-        "test:unit": "node --test --require ./scripts/register-typescript.cjs src/test/storage.test.ts src/test/writing.test.ts src/test/writing-style.test.ts src/test/article-export.test.ts src/test/ghost.test.ts src/test/change-filter.test.ts src/test/input-limits.test.ts src/test/sidebar.test.ts src/test/multiwindow.test.ts src/test/connection-settings.test.ts src/test/service-login.test.ts src/test/recording-settings.test.ts src/test/usage.test.ts src/test/notices.test.ts src/test/service-jobs.test.ts src/test/welcome.test.ts",
+        "test:unit": "node --test --require ./scripts/register-typescript.cjs src/test/storage.test.ts src/test/writing.test.ts src/test/writing-activity.test.ts src/test/writing-style.test.ts src/test/article-export.test.ts src/test/ghost.test.ts src/test/change-filter.test.ts src/test/input-limits.test.ts src/test/sidebar.test.ts src/test/multiwindow.test.ts src/test/connection-settings.test.ts src/test/service-login.test.ts src/test/recording-settings.test.ts src/test/usage.test.ts src/test/notices.test.ts src/test/service-jobs.test.ts src/test/welcome.test.ts",
         "test:ui": "playwright test",
         "dev": "pnpm check:backend && pnpm compile && node scripts/dev.cjs",
         "package:vsix": "vsce package --no-dependencies --allow-missing-repository --skip-license --out dist/ps-blogself.vsix",

@@ -1,7 +1,8 @@
 import { createHmac } from 'node:crypto';
 
 export interface GhostSettings { url: string; key: string }
-export interface GhostPost { id: string; title: string; lexical: string; status: string; updated_at: string; url?: string; slug: string }
+export interface GhostTag { id?: string; name: string }
+export interface GhostPost { id: string; title: string; lexical: string; status: string; updated_at: string; url?: string; slug: string; tags?: GhostTag[] }
 export class GhostError extends Error { constructor(message: string, readonly status = 0) { super(message); } }
 export function ghostUrl(value: string): string {
     const url = new URL(value);
@@ -39,11 +40,11 @@ export class GhostClient {
     async check(): Promise<void> { await this.request('posts/?limit=1&fields=id'); }
     async find(id: string | undefined, slug: string): Promise<GhostPost | undefined> {
         try {
-            const data = await this.request(id ? `posts/${encodeURIComponent(id)}/?formats=lexical` : `posts/?filter=${encodeURIComponent('slug:' + slug)}&limit=1&formats=lexical`);
+            const data = await this.request(id ? `posts/${encodeURIComponent(id)}/?formats=lexical&include=tags` : `posts/?filter=${encodeURIComponent('slug:' + slug)}&limit=1&formats=lexical&include=tags`);
             return data.posts?.[0];
         } catch (error) { if (error instanceof GhostError && error.status === 404 && id) return undefined; throw error; }
     }
-    async save(post: { title: string; lexical: string; slug?: string; status: string }, remote?: GhostPost): Promise<GhostPost> {
+    async save(post: { title: string; lexical: string; slug?: string; status: string; tags?: GhostTag[] }, remote?: GhostPost): Promise<GhostPost> {
         const data = await this.request(remote ? `posts/${encodeURIComponent(remote.id)}/?formats=lexical` : 'posts/?formats=lexical', remote ? 'PUT' : 'POST', { posts: [{ ...post, ...(remote ? { updated_at: remote.updated_at } : {}) }] });
         if (!data.posts?.[0]?.id) throw new GhostError('Ghost 저장 결과를 확인할 수 없습니다. 다시 시도하면 기존 글을 먼저 확인합니다.');
         return data.posts[0];

@@ -57,6 +57,33 @@ function timeAgo(timestamp) {
 
 // Store logs globally to re-render
 let currentLogs = [];
+const writingActivities = new Map();
+function rememberWritingActivity(log) {
+    if (!log.writingActivity) return;
+    const previous = writingActivities.get(log.filePath);
+    if (previous && previous.revision > (log.writingActivityRevision || 0)) return;
+    writingActivities.set(log.filePath, { ...log.writingActivity, revision: log.writingActivityRevision || 0 });
+}
+function renderWritingActivity(row) {
+    const activity = writingActivities.get(row.dataset.path);
+    let region = row.querySelector('.log-writing');
+    if (!region) { region = document.createElement('span'); region.className = 'log-writing'; row.append(region); }
+    region.replaceChildren();
+    for (const [key, label] of [['notes', '메모'], ['articles', '글']]) {
+        const count = activity?.[key];
+        if (!Number.isSafeInteger(count) || count <= 0) continue;
+        const item = document.createElement('span'); item.className = 'log-writing-count';
+        const unread = key === 'articles' && activity.unreadArticles === true;
+        item.textContent = `${label} ${count}`;
+        item.title = `${label} ${count}개${unread ? ' · 확인하지 않은 내용이 있습니다.' : ''}`;
+        item.setAttribute('aria-label', item.title);
+        if (unread) {
+            const dot = document.createElement('span'); dot.className = 'log-unread'; dot.setAttribute('aria-hidden', 'true'); item.append(dot);
+        }
+        region.append(item);
+    }
+    region.hidden = !region.childElementCount;
+}
 let recentLogsRevision = -1;
 let hasMoreRecentLogs = false;
 let recentLogsRequestId = 0;
@@ -122,8 +149,8 @@ class FileActionsMenu {
         const width = document.documentElement.clientWidth;
         const height = document.documentElement.clientHeight;
         const gap = 6;
-        // Pointer menus follow the click; keyboard menus stay anchored to the row.
-        const left = this.point ? this.point.x + gap : row.left;
+        // Align both pointer and keyboard menus with the file row's right edge.
+        const left = row.right - menu.width;
         const below = (this.point?.y ?? row.bottom) + gap;
         const above = (this.point?.y ?? row.top) - gap - menu.height;
         // Flip above when needed, keeping the click point clear for a double-click.
@@ -213,6 +240,8 @@ function renderLogs(logs, container = logsContainer) {
             row.append(info);
         }
         row.dataset.name = log.fileName;
+        rememberWritingActivity(log);
+        renderWritingActivity(row);
         row.title = log.filePath;
         row.classList.toggle('selected', log.filePath === selectedPath);
         row.setAttribute('aria-pressed', String(log.filePath === selectedPath));
@@ -503,6 +532,13 @@ updateRelativeTimes();
 window.addEventListener('message', (event) => {
     const message = event.data;
     switch (message.type) {
+        case 'writingActivity':
+            rememberWritingActivity(message);
+            document.querySelectorAll('.log-item').forEach(row => {
+                if (row.dataset.path === message.filePath) renderWritingActivity(row);
+            });
+            fileActions.position();
+            break;
         case 'updateState':
             document.querySelector('#connect-server-btn .account-action-label').textContent = message.accountLabel || '로그인';
             renderNotices(message.notices);

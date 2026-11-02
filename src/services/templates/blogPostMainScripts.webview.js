@@ -1,6 +1,7 @@
 import { createArticleEditor } from './articleEditor.webview.js';
 import { observeCodeHighlighting } from './codeHighlighting.js';
 import { DEFAULT_WRITING_MODEL } from '../../writing/WritingModels';
+import { separateArticleTitle } from '../../writing/ArticleContent';
 
 const vscode = acquireVsCodeApi();
 observeCodeHighlighting(document.body);
@@ -10,6 +11,7 @@ let model,
     counter = 0,
     activeTab = 'plan',
     lastMarkdown = '',
+    lastPreviewKey = '',
     editTimer,
     previewMode = false,
     sourceMode = false,
@@ -27,6 +29,29 @@ let ghostState = { connected: false };
 const modelOptions = [...el('writing-model-options').querySelectorAll('[role=option]')];
 // Keep the UI within validatePlan's saved-step limit.
 const MAX_MEMOS = 12;
+let modelSelectionRequest, modelSelectionNotice = '';
+let writingVisible = true, viewedFrame;
+const viewedKeys = new Set();
+function markDisplayedWriting() {
+    if (viewedFrame) return;
+    viewedFrame = requestAnimationFrame(() => {
+        viewedFrame = undefined;
+        if (!writingVisible || document.hidden || !model?.activity) return;
+        const articles = activeTab === 'article'
+            ? selectedVersion ? (readyVersion === selectedVersion ? [selectedVersion] : [])
+                : ['title', 'markdown', 'document'].some(key => dirty.has(key)) ? [] : model.activity.articles : [];
+        const unseen = { notes: [], articles: articles.filter(key => !viewedKeys.has(key)) };
+        if (!unseen.articles.length) return;
+        for (const key of unseen.articles) viewedKeys.add(key);
+        send('viewedWriting', unseen);
+    });
+}
+function setWritingVisibility(visible) {
+    if (visible && !writingVisible) viewedKeys.clear();
+    writingVisible = visible;
+    markDisplayedWriting();
+}
+document.addEventListener('visibilitychange', markDisplayedWriting);
 const richEditor = createArticleEditor({
     element: el('rich-editor'), toolbar: el('format-tools'), outline: el('outline-list'),
     onChange(markdown, document) {
@@ -46,8 +71,7 @@ const richEditor = createArticleEditor({
 function height(node) {
     if (node.tagName === 'TEXTAREA' && !node.closest('[hidden]')) {
         node.style.height = 'auto';
-        const minimum = node.id === 'article-title' || node.id === 'summary' || node.closest('.step') ? 0 : 70;
-        node.style.height = Math.max(minimum, node.scrollHeight + 2) + 'px';
+        node.style.height = Math.max(node.id === 'article-title' || node.classList.contains('plan-text') ? 0 : 70, node.scrollHeight + 2) + 'px';
     }
 }
 function stash() {
@@ -80,6 +104,9 @@ function value(id, text) {
     height(node);
 }
 function action(type) {
+    modelSelectionRequest = undefined;
+    modelSelectionNotice = '';
+    renderWritingModel();
     clearTimeout(editTimer);
     send(type, {}, true);
 }
@@ -186,20 +213,24 @@ function renderSteps() {
                 form.plan.steps.splice(index, 1);
                 changed('plan');
                 renderSteps();
-                const remaining = container.querySelectorAll('.step textarea');
+                const remaining = container.querySelectorAll('.step textarea[id^=step-body-]');
                 (remaining[Math.min(position, remaining.length - 1)] || container.querySelector('.memo-add')).focus();
             });
             row.append(number, remove);
-            const title = document.createElement('input');
+            const title = document.createElement('textarea');
+            title.className = 'plan-text step-title';
+            title.rows = 1;
             title.id = 'step-title-' + index;
             title.maxLength = 300;
             title.placeholder = '메모 제목 (선택)';
             title.setAttribute('aria-label', `${label} 제목`);
             title.addEventListener('input', () => {
                 form.plan.steps[index].title = title.value;
+                height(title);
                 changed('plan');
             });
             const body = document.createElement('textarea');
+            body.className = 'plan-text';
             body.id = 'step-body-' + index;
             body.rows = 1;
             body.maxLength = 12000;
@@ -230,6 +261,7 @@ function renderSteps() {
 }
 function switchTab(tab) {
     activeTab = tab;
+    el('plan-options').hidden = tab !== 'plan';
     el('plan-view').hidden = tab !== 'plan';
     el('article-view').hidden = tab !== 'article';
     el('plan-tab').classList.toggle('active', tab === 'plan');
@@ -237,6 +269,7 @@ function switchTab(tab) {
     el('plan-tab').setAttribute('aria-pressed', String(tab === 'plan'));
     el('article-tab').setAttribute('aria-pressed', String(tab === 'article'));
     document.querySelectorAll('textarea').forEach(height);
+    markDisplayedWriting();
 }
 function renderEditorMode() {
     const browsing = !!selectedVersion;
@@ -294,6 +327,7 @@ function renderVersions() {
     el('export-btn').disabled = loading;
     el('export-html-btn').disabled = loading;
     renderEditorMode();
+    markDisplayedWriting();
 }
 function chooseVersion(id) {
     if (restoreRequest || id === selectedVersion) return;
@@ -328,10 +362,14 @@ function renderWritingModel() {
     for (const option of modelOptions) option.setAttribute('aria-selected', String(option.value === selected));
     const selectedOption = modelOptions.find(option => option.value === selected);
     el('writing-model-value').textContent = selectedOption.textContent;
-    const paidOnly = selectedOption.dataset.paidOnly === 'true';
+    const paidOnly = selectedOption.dataset.paid === 'true';
     el('writing-model-help').hidden = !paidOnly;
     if (paidOnly) el('writing-model').setAttribute('aria-describedby', 'writing-model-help');
     else el('writing-model').removeAttribute('aria-describedby');
+    el('writing-model-hint').textContent = modelSelectionRequest ? '유료 크레딧을 확인하고 있습니다.'
+        : modelSelectionNotice;
+    el('writing-model').setAttribute('aria-busy', String(!!modelSelectionRequest));
+    if (el('writing-model-hint').textContent) el('writing-model').setAttribute('aria-describedby', [paidOnly ? 'writing-model-help' : '', 'writing-model-hint'].filter(Boolean).join(' '));
     el('writing-model').disabled = model.editable === false || !!model.pending || !!model.running;
     if (el('writing-model').disabled) closeModelOptions();
 }
@@ -347,6 +385,7 @@ function openModelOptions() {
     modelOptions.find(option => option.getAttribute('aria-selected') === 'true').focus();
 }
 function render() {
+    form = separateArticleTitle(form);
     renderGhost();
     const busy = renderLoading();
     const editable = model.editable !== false;
@@ -374,7 +413,7 @@ function render() {
         : '코드의 변경사항을 순서대로 정리해 드릴게요.';
     el('plan-content').hidden = !form.plan;
     el('generate-btn').disabled = !form.plan || model.pending;
-    el('generate-btn').textContent = model.pending
+    el('generate-label').textContent = model.pending
         ? (model.pendingKind === 'prepare_blog' || !form.plan ? '준비 중…' : '작성 중…')
         : form.markdown ? '글 다시 쓰기' : '이대로 글쓰기';
     el('prepare-btn').disabled = model.pending;
@@ -397,13 +436,15 @@ function render() {
     value('article-body', form.markdown);
     richEditor.setMarkdown(form.markdown, editable, form.document, model.images);
     el('article-tab').disabled = !form.markdown && !form.title && !model.versions.length && activeTab !== 'article';
+    const previewKey = JSON.stringify([form.markdown, form.document]);
     if (form.markdown && !lastMarkdown) {
         switchTab('article');
         send('preview');
-    } else if (form.markdown !== lastMarkdown && previewMode) {
+    } else if (previewKey !== lastPreviewKey && previewMode) {
         send('preview');
     }
     lastMarkdown = form.markdown || '';
+    lastPreviewKey = previewKey;
     if (el('article-tab').disabled) switchTab('plan');
     renderVersions();
     document.querySelectorAll('textarea, input:not([type="range"])').forEach(node => { node.readOnly = !editable; });
@@ -417,12 +458,32 @@ function render() {
 }
 window.addEventListener('message', (event) => {
     const message = event.data;
+    if (message.type === 'writingVisibility') { setWritingVisibility(message.visible); return; }
+    if (message.type === 'writingModelChecked' || message.type === 'saveError' && message.id === modelSelectionRequest?.id) {
+        const request = modelSelectionRequest;
+        if (!request || message.id !== request.id) return;
+        modelSelectionRequest = undefined;
+        if (model?.editable !== false && !model.pending && !model.running
+            && request.editToken === model.editToken) {
+            if (message.allowed === true && message.editToken === request.editToken && message.writingModel === request.value) {
+                form.writingModel = request.value;
+                changed('writingModel');
+            } else modelSelectionNotice = message.message || '사용 가능 여부를 확인하지 못해 이전 모델을 유지했습니다.';
+        }
+        renderWritingModel();
+        return;
+    }
     if (message.type === 'imageReady' || message.type === 'saveError' && imageRequests.has(message.id)) {
         const request = imageRequests.get(message.id); if (request) { clearTimeout(request.timer); imageRequests.delete(message.id); if (message.type === 'imageReady') request.resolve(message); else request.reject(new Error(message.message)); }
         return;
     }
     if (message.type === 'ghost') { ghostState = message.state; renderGhost(); return; }
     if (message.type === 'model') {
+        setWritingVisibility(message.writingVisible !== false);
+        if (message.editable === false || message.pending || message.running || message.editToken !== model?.editToken) {
+            modelSelectionRequest = undefined;
+            modelSelectionNotice = '';
+        }
         if (message.ghost) ghostState = message.ghost;
         renderGhost();
         if (message.editable === false || (model?.editToken && message.editToken !== model.editToken)) {
@@ -540,11 +601,18 @@ el('writing-model').addEventListener('keydown', event => {
 for (const option of modelOptions) {
     option.addEventListener('click', () => {
         if (el('writing-model').disabled) return;
-        if (form.writingModel !== option.value) {
-            form.writingModel = option.value;
-            changed('writingModel');
-            render();
+        modelSelectionRequest = undefined;
+        modelSelectionNotice = '';
+        if ((form.writingModel || DEFAULT_WRITING_MODEL) !== option.value) {
+            if (option.dataset.paid === 'true') {
+                modelSelectionRequest = { id: send('checkWritingModel', { writingModel: option.value }),
+                    value: option.value, editToken: model.editToken };
+            } else {
+                form.writingModel = option.value;
+                changed('writingModel');
+            }
         }
+        renderWritingModel();
         closeModelOptions(true);
     });
 }
@@ -577,6 +645,7 @@ el('writing-style').addEventListener('change', (event) => {
 });
 el('plan-title').addEventListener('input', (event) => {
     form.plan.title = event.target.value;
+    height(event.target);
     changed('plan');
 });
 el('summary').addEventListener('input', (event) => {
@@ -650,6 +719,14 @@ for (const [id, type] of [
 el('plan-tab').addEventListener('click', () => switchTab('plan'));
 el('article-tab').addEventListener('click', () => switchTab('article'));
 window.addEventListener('resize', () => document.querySelectorAll('textarea').forEach(height));
+// Wrapped options and version controls can change height in narrow editor panes.
+const toolbarObserver = new ResizeObserver(entries => {
+    for (const { target } of entries) {
+        document.documentElement.style.setProperty('--' + target.id + '-height', target.getBoundingClientRect().height + 'px');
+    }
+});
+toolbarObserver.observe(el('writing-header'));
+toolbarObserver.observe(el('article-toolbar'));
 window.addEventListener('pagehide', () => {
     if (dirty.size) send('save', {}, true);
 });

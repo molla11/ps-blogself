@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { FileHistory } from '../types';
 import { computeDiff } from '../storage/utils';
 import { DraftStore } from '../writing/DraftStore';
+import { documentFromMarkdown } from '../writing/ArticleDocument';
 import {
     newDraft,
     reconstructContents,
@@ -205,4 +206,31 @@ test('preparation bounds long histories while preserving absolute range indices'
 test('draft editing permits a temporarily empty title and preserves explanations outside a narrowed range', () => {
     const narrowed = { ...plan, title: '', start: 1, end: 1 };
     assert.equal(validatePlan(narrowed, 3, true).steps[0].body, plan.steps[0].body);
+});
+
+
+test('reopening integrated drafts separates the title in drafts, versions and pending candidates', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'psb-title-migration-'));
+    const store = new DraftStore(directory);
+    try {
+        const oldArticle = (title: string, body: string) => ({ title, markdown: '---\n\n' + body,
+            document: { ...documentFromMarkdown(`# ${title}\n\n---\n\n${body}`), titleInDocument: true as const } });
+        const draft = { ...newDraft(history), ...oldArticle('현재 제목', '현재 본문') };
+        draft.articleVersions = [{ ...oldArticle('이전 제목', '이전 본문'), at: 1 }];
+        draft.candidate = oldArticle('새 제목', '새 본문');
+        await store.save(draft);
+        const restored = (await store.read(history.filePath))!;
+        for (const [article, title, body] of [[restored, '현재 제목', '현재 본문'], [restored.articleVersions[0], '이전 제목', '이전 본문'], [restored.candidate!, '새 제목', '새 본문']] as const) {
+            assert.equal(article.title, title);
+            assert.equal(article.markdown, body);
+            assert.equal(article.document?.titleInDocument, undefined);
+            assert.equal(article.document?.root.children?.length, 1);
+            assert.equal(article.document?.root.children?.[0].type, 'paragraph');
+        }
+        await store.save(restored);
+        assert.deepEqual(await store.read(history.filePath), restored);
+    } finally {
+        await store.close();
+        await rm(directory, { recursive: true, force: true });
+    }
 });

@@ -48,6 +48,7 @@ async function main() {
                     PSB_HOST_STAGE: stage,
                     PSB_CDP_PORT: String(cdpPort),
                     PSB_API_URL: apiUrl,
+                    PSB_TEST_AUTO_GHOST_MODE: process.env.PSB_TEST_AUTO_GHOST_MODE || '',
                 },
                 launchArgs: [
                     workspace,

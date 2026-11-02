@@ -157,6 +157,7 @@ function sidebarHarness(read: () => Promise<typeof logs>, size: () => Promise<st
         const { SidebarProvider } = require('../sidebar/SidebarProvider');
         const noop = () => {};
         const provider: import('../sidebar/SidebarProvider').SidebarProvider = new SidebarProvider({}, noop, noop, noop, noop, noop);
+        (provider as any).writingLogs = async (logs: unknown[]) => logs;
         const messages: any[] = [];
         (provider as any)._view = { webview: { postMessage: async (message: unknown) => { messages.push(message); return true; } } };
         return { provider, messages };
@@ -212,4 +213,39 @@ test('rapid saves publish each new page while stale background state is discarde
     assert.equal(messages[2].type, 'updateState');
     assert.equal(messages[2].totalLogSize, '20 KB');
     assert.deepEqual(messages[2].recentLogs, index);
+});
+
+test('service polling refreshes notices and usage while the window and sidebar are inactive, then stops on disposal', t => {
+    const disposed = () => ({ dispose() {} });
+    let usage = 0, notices = 0, tick!: () => void, onFocus!: () => void;
+    const disposeCallbacks: (() => void)[] = [];
+    const manager = { onDidChange: disposed, refreshUsage: async () => { usage++; }, refreshNotices: async () => { notices++; } };
+    const mocks: Record<string, unknown> = {
+        vscode: { window: { state: { focused: false }, onDidChangeWindowState: (listener: () => void) => { onFocus = listener; return disposed(); }, onDidChangeActiveTextEditor: disposed },
+            workspace: { onDidChangeWorkspaceFolders: disposed } },
+        '../config': { configManager: { onDidChange: disposed } },
+        '../storage/StorageManager': { storageManager: { onDidUpdateIndex: disposed } },
+        './getSidebarHtml': { getSidebarHtml: () => '' },
+        '../services/HistoryManager': { HistoryManager: {} },
+        '../services/BlogPostManager': { BlogPostManager: manager },
+    };
+    const loader = require('node:module'), original = loader._load;
+    let Provider: typeof import('../sidebar/SidebarProvider').SidebarProvider;
+    loader._load = function(name: string, ...args: unknown[]) { return mocks[name] || original.call(this, name, ...args); };
+    try { Provider = require('../sidebar/SidebarProvider').SidebarProvider; }
+    finally { loader._load = original; }
+    t.mock.method(globalThis, 'setInterval', (callback: () => void, delay: number) => {
+        assert.equal(delay, 30000); tick = callback;
+        return { unref() {} } as NodeJS.Timeout;
+    });
+    const clear = t.mock.method(globalThis, 'clearInterval', () => {});
+    const provider = new Provider!({} as any, () => {}, () => {}, () => {}, () => {}, () => {});
+    provider.resolveWebviewView({ visible: false, webview: { onDidReceiveMessage() {}, options: {}, html: '' },
+        onDidDispose: (callback: () => void) => { disposeCallbacks.push(callback); return disposed(); }, onDidChangeVisibility: disposed } as any, {} as any, {} as any);
+    tick(); tick();
+    assert.equal(usage, 2); assert.equal(notices, 2);
+    onFocus();
+    assert.equal(usage, 3); assert.equal(notices, 3);
+    disposeCallbacks.forEach(dispose => dispose());
+    assert.equal(clear.mock.callCount(), 1);
 });

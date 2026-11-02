@@ -56,7 +56,12 @@ for (const side of ['top', 'bottom'] as const) {
         const paragraphs = Array.from({ length: 30 }, (_, index) => `문단 ${index + 1}`);
         await open(page, paragraphs);
         await startDrag(page, '문단 15');
-        await page.evaluate(side => scrollTo(0, side === 'top' ? 160 : document.documentElement.scrollHeight), side);
+        await page.evaluate(side => {
+            // Keep the top drop boundary below the pinned writing and format controls.
+            const editorTop = document.getElementById('rich-editor')!.getBoundingClientRect().top + scrollY;
+            const controlsBottom = document.getElementById('format-bar')!.getBoundingClientRect().bottom;
+            scrollTo(0, side === 'top' ? editorTop - controlsBottom - 24 : document.documentElement.scrollHeight);
+        }, side);
         const position = await edge(page, side);
         await page.mouse.move(position.x, position.y, { steps: 15 });
         await page.mouse.move(position.x, position.y);

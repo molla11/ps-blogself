@@ -5,12 +5,14 @@ import { getSidebarHtml } from './getSidebarHtml';
 import { HistoryManager } from '../services/HistoryManager';
 import { BlogPostManager } from '../services/BlogPostManager';
 import { RecentLogsPager } from './RecentLogsPager';
+import { SessionIndexItem } from '../types';
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'psb.sidebar';
 
     private _view?: vscode.WebviewView;
     private _stateRevision = 0;
+    private _activityRevision = 0;
     private _recentLogs = new RecentLogsPager(() => storageManager.getRecentFiles());
 
     constructor(
@@ -77,7 +79,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         } else if (data.searchId !== recentLogs.searchId || !Number.isSafeInteger(data.count) || data.count < 0) break;
                         try {
                             const page = await recentLogs.load(searching ? undefined : data.count);
-                            await webviewView.webview.postMessage({ type: 'recentLogsPage', requestId: data.requestId, ...page });
+                            const enrichedLogs = await this.writingLogs(page.recentLogs);
+                            await webviewView.webview.postMessage({ type: 'recentLogsPage', requestId: data.requestId, ...page, recentLogs: enrichedLogs });
                         } catch {
                             await webviewView.webview.postMessage({ type: 'recentLogsPage', requestId: data.requestId, recentLogsSearchId: data.searchId, error: '기록을 불러오지 못했습니다.' });
                         }
@@ -100,7 +103,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         const allLogs = await storageManager.getAllLogs();
                         this._view?.webview.postMessage({
                             type: 'showFullLogs',
-                            logs: allLogs,
+                            logs: await this.writingLogs(allLogs),
                         });
                         break;
                     }
@@ -148,18 +151,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             this.updateState();
         });
         webviewView.onDidDispose(() => disposable.dispose());
-        const accountUpdate = BlogPostManager.onDidChange(file => { if (!file) void this.updateState(); });
+        const accountUpdate = BlogPostManager.onDidChange(file => {
+            if (!file) void this.updateState();
+            else void this.updateWritingActivity(file);
+        });
         webviewView.onDidDispose(() => accountUpdate.dispose());
-        const refreshUsage = () => {
-            if (webviewView.visible && vscode.window.state.focused) {
-                void BlogPostManager.refreshUsage();
-                void BlogPostManager.refreshNotices();
-            }
+        const refreshServiceState = () => {
+            void BlogPostManager.refreshUsage();
+            void BlogPostManager.refreshNotices();
         };
-        const usageTimer = setInterval(refreshUsage, 30000);
+        const usageTimer = setInterval(refreshServiceState, 30000);
         usageTimer.unref();
-        const visibility = webviewView.onDidChangeVisibility(refreshUsage);
-        const focus = vscode.window.onDidChangeWindowState(refreshUsage);
+        const visibility = webviewView.onDidChangeVisibility(refreshServiceState);
+        const focus = vscode.window.onDidChangeWindowState(refreshServiceState);
         webviewView.onDidDispose(() => { clearInterval(usageTimer); visibility.dispose(); focus.dispose(); });
         const settingsUpdate = configManager.onDidChange(() => { void this.updateState(); });
         webviewView.onDidDispose(() => settingsUpdate.dispose());
@@ -172,16 +176,27 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // Ideally we should dispose this listener when webview is disposed.
     }
 
+    private async writingLogs(logs: SessionIndexItem[]) {
+        const writingActivityRevision = ++this._activityRevision;
+        return (await BlogPostManager.withWritingActivity(logs)).map(log => ({ ...log, writingActivityRevision }));
+    }
+    private async updateWritingActivity(filePath: string) {
+        const view = this._view, writingActivityRevision = ++this._activityRevision;
+        const writingActivity = await BlogPostManager.writingActivity(filePath);
+        if (view && view === this._view && writingActivity) {
+            await view.webview.postMessage({ type: 'writingActivity', filePath, writingActivity, writingActivityRevision });
+        }
+    }
     public async updateState() {
         const revision = ++this._stateRevision;
         const view = this._view;
         if (view) {
-            const recentLogs = this._recentLogs;
+            const recentLogsPager = this._recentLogs;
             const [page, totalSize, accountLabel, usage, notices] = await Promise.all([
-                recentLogs.load().then(async page => {
+                recentLogsPager.load().then(async page => {
                     // A saved file is ready to show before size scans and account
                     // lookups finish. Page revisions still protect newer results.
-                    if (view === this._view && recentLogs === this._recentLogs) {
+                    if (view === this._view && recentLogsPager === this._recentLogs) {
                         await view.webview.postMessage({
                             type: 'recentLogsPage',
                             activeFile: vscode.window.activeTextEditor?.document.uri.fsPath,
@@ -195,6 +210,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 BlogPostManager.usage(),
                 BlogPostManager.notices(),
             ]);
+            const recentLogs = await this.writingLogs(page.recentLogs);
             if (view !== this._view || revision !== this._stateRevision) return;
 
             await view.webview.postMessage({
@@ -206,6 +222,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 isRecording: configManager.isRecording(),
                 languages: configManager.getSupportedLanguages(),
                 ...page,
+                recentLogs,
                 totalLogSize: totalSize,
                 accountLabel,
                 usage,

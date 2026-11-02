@@ -45,7 +45,7 @@ test('credit recharge explains the admin request and copies only the chosen acco
     await connection.showCreditRecharge();
     assert.deepEqual(dialog.mock.calls[0].arguments, [
         '크레딧 충전은 관리자에게 요청해 주세요.',
-        { modal: true, detail: '충전할 계정 이메일을 함께 전달해 주세요.\n\ntest-user@example.test' },
+        { modal: true, detail: '문의: hsjang635@gmail.com\n충전할 계정 이메일을 함께 전달해 주세요.\n\ntest-user@example.test' },
         '계정 이메일 복사',
     ]);
     assert.deepEqual(clipboard.mock.calls[0].arguments, ['test-user@example.test']);
@@ -153,4 +153,52 @@ test('an old unauthorized response cannot sign out a newly connected account', (
     finish(Response.json({message: 'old token expired'}, {status: 401})); await refresh;
     assert.equal((await connection.account())?.id, 'new-user');
     assert.equal((await connection.usage())?.status, 'loading');
+}));
+
+test('paid model selection checks current backend availability even when free credits remain', () => withFetch(async () => {
+    const { connection } = harness();
+    let calls = 0;
+    for (const creditBalance of [100, 0, -5, 0.025]) {
+        globalThis.fetch = async () => {
+            calls++;
+            return response({ ...sample, creditBalance, models: [
+                { id: 'opus5.5', paidOnly: true, available: creditBalance > 0, nextFunding: creditBalance > 0 ? 'credit' : null },
+                { id: 'astra', paidOnly: true, available: creditBalance > 0, nextFunding: creditBalance > 0 ? 'credit' : null },
+            ] });
+        };
+        for (const id of ['opus5.5', 'astra'] as const) {
+            const result = await connection.checkWritingModel(id);
+            assert.equal(result.allowed, creditBalance > 0);
+            if (!result.allowed) assert.equal(result.message, '유료 크레딧이 없어 이전 모델을 유지했습니다.');
+        }
+    }
+    assert.equal(calls, 8);
+    // The displayed balance rounds down; availability still comes from the server.
+    assert.match((await connection.usage())!.label, /유료 0 크레딧/);
+}));
+
+test('unverified paid model choices retain the previous model without initiating login or AI work', () => withFetch(async () => {
+    const { connection, secrets } = harness();
+    for (const fetcher of [
+        async () => { throw new Error('offline'); },
+        async () => response(),
+        async () => response({ ...sample, models: [{ id: 'astra', paidOnly: true, available: false, nextFunding: null }] }),
+    ]) {
+        globalThis.fetch = fetcher;
+        assert.equal((await connection.checkWritingModel('opus5.5')).allowed, false);
+    }
+    secrets.clear();
+    globalThis.fetch = async () => { assert.fail('Signed-out selection must not make a request'); };
+    assert.deepEqual(await connection.checkWritingModel('astra'), { allowed: false, message: '로그인 후 유료 크레딧을 확인해 주세요.' });
+}));
+
+test('a balance check from a previous account cannot approve a paid model', () => withFetch(async () => {
+    const { connection, seed, settings } = harness();
+    let finish!: (response: Response) => void;
+    globalThis.fetch = async () => new Promise(resolve => { finish = resolve; });
+    const check = connection.checkWritingModel('astra');
+    await new Promise(resolve => setImmediate(resolve));
+    seed(settings.apiUrl, 'new-token', 'new-user');
+    finish(response({ ...sample, models: [{ id: 'astra', paidOnly: true, available: true, nextFunding: 'credit' }] }));
+    assert.equal((await check).allowed, false);
 }));

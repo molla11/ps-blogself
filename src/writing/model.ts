@@ -82,6 +82,8 @@ export interface WritingDraft extends WritingPreferences {
     };
     candidate?: { plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory; preparationModel?: WritingModel };
     articleVersions: ArticleVersion[];
+    /** Only newly generated articles opt into unread notifications. Legacy drafts have none. */
+    newArticleKeys?: string[];
 }
 
 // Compare without changing the stored text: indentation and spaces within a line

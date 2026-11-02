@@ -11,6 +11,18 @@ async function model(page: Page, patch: any = {}) {
 async function choose(page: Page, name: string) {
     await page.locator('#writing-model').click();
     await page.getByRole('option', { name, exact: true }).click();
+    if (name.endsWith('(유료)')) await answerCheck(page);
+}
+async function latestCheck(page: Page) {
+    return page.evaluate(() => (window as any).__messages.filter((m: any) => m.type === 'checkWritingModel').at(-1));
+}
+async function answerCheck(page: Page, allowed = true, request?: any) {
+    request ||= await latestCheck(page);
+    expect(request).toBeTruthy();
+    await page.evaluate(data => window.dispatchEvent(new MessageEvent('message', { data })), {
+        ...request, type: 'writingModelChecked', allowed,
+        ...(allowed ? {} : { message: '유료 크레딧이 없어 이전 모델을 유지했습니다.' }),
+    });
 }
 
 test('four public aliases persist and travel with prepare/write without generation on selection', async ({ page }) => {
@@ -21,11 +33,14 @@ test('four public aliases persist and travel with prepare/write without generati
     expect(await page.getByRole('listbox', { name: '모델', exact: true }).getByRole('option').allTextContents()).toEqual(['standard', 'high', 'Claude Opus 5.5 (유료)', 'GPT 6 Astra (유료)']);
     await expect(page.getByRole('option', { name: 'high', exact: true })).toHaveAttribute('aria-selected', 'true');
     await page.getByRole('option', { name: 'Claude Opus 5.5 (유료)', exact: true }).click();
+    await expect(page.locator('#writing-model')).toHaveText('high');
+    await answerCheck(page);
     await expect(page.locator('#writing-model-options')).toBeHidden();
     await expect(page.locator('#writing-model')).toBeFocused();
     await expect(page.locator('#writing-model-help')).toBeVisible();
     await expect(page.locator('#writing-model-help')).toHaveText('유료 모델은 유료 크레딧만으로 작동합니다.');
     await expect(page.locator('#writing-model')).toHaveAccessibleDescription('유료 모델은 유료 크레딧만으로 작동합니다.');
+    await expect(page.locator('#writing-model-hint')).toBeEmpty();
     expect(await page.evaluate(() => (window as any).__messages.filter((m: any) => ['prepare', 'generate'].includes(m.type)))).toEqual([]);
     await model(page, { pending: true, running: true, writingModel: 'standard-high' });
     await expect(page.locator('#writing-model')).toHaveText('Claude Opus 5.5 (유료)');
@@ -57,10 +72,12 @@ test('keyboard navigation, dismissal and selection keep the original request ali
     await expect(trigger).toBeFocused();
     await expect(trigger).toHaveAttribute('aria-expanded', 'false');
     await page.keyboard.press('Space'); await page.keyboard.press('End'); await page.keyboard.press('Enter');
+    await answerCheck(page);
     await expect(trigger).toHaveText('GPT 6 Astra (유료)');
     await trigger.click(); await page.keyboard.press('Home'); await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowUp'); await page.keyboard.press('Enter');
     await expect(trigger).toHaveText('standard');
+    await expect(page.locator('#writing-model-hint')).toBeEmpty();
     await trigger.click(); await page.keyboard.press('c'); await page.keyboard.press('Tab');
     await expect(page.getByRole('listbox', { name: '모델', exact: true })).toBeHidden();
     await expect(trigger).toHaveText('standard');
@@ -90,4 +107,42 @@ test('webview recovery restores the selection and another window cannot edit it'
     await expect(page.locator('#writing-model-help')).toBeHidden();
     await expect(page.locator('#writing-model')).toBeDisabled();
     await expect(page.getByRole('listbox', { name: '모델', exact: true })).toBeHidden();
+});
+
+test('an unavailable paid model preserves the previous choice and never saves the rejected model', async ({ page }) => {
+    await openWebview(page); await model(page, { writingModel: 'standard' });
+    for (const label of ['Claude Opus 5.5 (유료)', 'GPT 6 Astra (유료)']) {
+        await page.locator('#writing-model').click();
+        await page.getByRole('option', { name: label, exact: true }).click();
+        await expect(page.locator('#writing-model')).toHaveText('standard');
+        await answerCheck(page, false);
+        await expect(page.locator('#writing-model')).toHaveText('standard');
+        await expect(page.locator('#writing-model-hint')).toHaveText('유료 크레딧이 없어 이전 모델을 유지했습니다.');
+    }
+    await page.locator('#generate-btn').click();
+    const requests = await page.evaluate(() => (window as any).__messages);
+    expect(requests.filter((m: any) => ['save', 'prepare'].includes(m.type))).toEqual([]);
+    expect(requests.find((m: any) => m.type === 'generate').fields.writingModel).toBe('standard');
+});
+
+test('late balance checks cannot overwrite a newer choice, an active request or another window', async ({ page }) => {
+    await openWebview(page); await model(page);
+    const pending = async () => {
+        await page.locator('#writing-model').click();
+        await page.getByRole('option', { name: 'GPT 6 Astra (유료)', exact: true }).click();
+        return latestCheck(page);
+    };
+    const old = await pending();
+    await choose(page, 'standard');
+    await answerCheck(page, true, old);
+    await expect(page.locator('#writing-model')).toHaveText('standard');
+    const generating = await pending();
+    await page.locator('#generate-btn').click();
+    await answerCheck(page, true, generating);
+    await expect(page.locator('#writing-model')).toHaveText('standard');
+    const moved = await pending();
+    await model(page, { editable: false, editToken: 'window-b', writingModel: 'standard-high' });
+    await answerCheck(page, true, moved);
+    await expect(page.locator('#writing-model')).toHaveText('high');
+    await expect(page.locator('#writing-model')).toBeDisabled();
 });

@@ -7,7 +7,7 @@ export interface ArticleNode {
     children?: ArticleNode[];
     [key: string]: any;
 }
-export interface ArticleDocument { version: 1; root: ArticleNode }
+export interface ArticleDocument { version: 1; root: ArticleNode; titleInDocument?: true }
 const markdown = new MarkdownIt({ html: false });
 const element = (type: string, children: ArticleNode[] = [], extra = {}): ArticleNode =>
     ({ type, version: 1, children, direction: null, format: '', indent: 0, ...extra });
@@ -128,7 +128,7 @@ export function validateDocument(input: unknown): ArticleDocument {
         }
         return output;
     };
-    return { version: 1, root: visit(doc.root, 0) };
+    return { version: 1, root: visit(doc.root, 0), ...(doc.titleInDocument === true ? { titleInDocument: true as const } : {}) };
 }
 
 export const documentText = (node: ArticleNode): string => node.type === 'linebreak' ? '\n' : node.type === 'tab' ? '\t' : node.text ?? (node.children || []).map(documentText).join('');

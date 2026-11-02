@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'crypto';
 import { WritingDraft, previousArticleVersions } from './model';
 import { atomicWrite, observeFile, readJson, withFileLock } from '../storage/SharedFiles';
 import { WindowSession } from '../storage/WindowSession';
+import { separateArticleTitle } from './ArticleContent';
 
 export class DraftConflict extends Error {
     constructor() { super('다른 창에서 글이 변경되었습니다. 최신 내용을 확인한 뒤 이 창에서 편집해 주세요.'); }
@@ -19,7 +20,12 @@ export class DraftStore {
         if (draft && (draft.schemaVersion !== 1 || draft.filePath !== filePath || !draft.history?.snapshots || !Array.isArray(draft.articleVersions))) {
             throw new Error('저장된 글 형식을 확인할 수 없습니다.');
         }
-        if (draft) draft.articleVersions = previousArticleVersions(draft);
+        if (draft) {
+            Object.assign(draft, separateArticleTitle(draft));
+            draft.articleVersions = draft.articleVersions.map(separateArticleTitle);
+            if (draft.candidate) draft.candidate = separateArticleTitle(draft.candidate);
+            draft.articleVersions = previousArticleVersions(draft);
+        }
         return draft;
     }
     owns(draft: WritingDraft) { return draft.editor?.owner.id === this.session.id; }

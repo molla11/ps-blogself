@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { ArticleAssets, mapImages } from '../ghost/ArticleAssets';
-import { GhostPublisher } from '../ghost/GhostPublisher';
+import { GhostPublisher, articleHash } from '../ghost/GhostPublisher';
 import { GhostClient, ghostToken, ghostUrl } from '../ghost/GhostClient';
 import { documentFromMarkdown, documentHtml, documentMarkdown, ghostDocument, validateDocument } from '../writing/ArticleDocument';
 
@@ -64,6 +64,25 @@ test('URL and document boundaries reject unsafe sources without HTML injection',
     assert.match(documentHtml(doc), /alt="&lt;script&gt;"/); assert.doesNotMatch(documentHtml(doc), /<script>/);
     assert.throws(() => ghostDocument(documentFromMarkdown('![local](./local.png)')), /이미지/);
 });
+test('Ghost receives a separate title, no display divider, and preserves authored body headings and dividers', async () => fixture(async ({ publisher, settings, posts }) => {
+    const markdown = '# 본문의 제목\n\n설명\n\n---\n\n본문';
+    for (const document of [undefined, documentFromMarkdown(markdown)]) {
+        await publisher.publish(settings, '/title.py', { title: '편집한 제목', markdown, document });
+        assert.equal(posts[0].title, '편집한 제목');
+        const nodes = JSON.parse(posts[0].lexical!).root.children;
+        assert.equal(nodes[0].tag, 'h1');
+        assert.equal(nodes[0].children[0].text, '본문의 제목');
+        assert.equal(nodes.filter((node: any) => node.type === 'horizontalrule').length, 1);
+        assert.equal(nodes[2].type, 'horizontalrule');
+    }
+    const document = { ...documentFromMarkdown('# 이전 제목\n\n---\n\n본문'), titleInDocument: true as const };
+    await publisher.publish(settings, '/legacy-title.py', { title: '이전 제목', markdown: '---\n\n본문', document });
+    assert.equal(posts[1].title, '이전 제목');
+    const nodes = JSON.parse(posts[1].lexical!).root.children;
+    assert.equal(nodes.length, 1);
+    assert.equal(nodes[0].type, 'paragraph');
+}));
+
 test('draft save, update, explicit publish and later save reuse one post and preserve published status', async () => fixture(async ({ publisher, settings, posts, ...ctx }) => {
     const first = await publisher.publish(settings, '/solve.py', article);
     assert.equal(first.status, 'draft'); assert.ok(first.postId);
@@ -78,6 +97,47 @@ test('a lost create response is recovered by the persistent slug with no duplica
     await assert.rejects(ctx.publisher.publish(ctx.settings, '/solve.py', article), /연결/);
     const state = await ctx.publisher.publish(ctx.settings, '/solve.py', article);
     assert.equal(state.postId, ctx.posts[0].id); assert.equal(ctx.creates, 1); assert.equal(ctx.updates, 0);
+}));
+test('automatic Draft saves stay private and cannot modify or unpublish an already published post', async () => fixture(async ctx => {
+    await ctx.publisher.publish(ctx.settings, '/auto.py', article, false, { draftOnly: true });
+    assert.equal(ctx.posts[0].status, 'draft');
+    await ctx.publisher.publish(ctx.settings, '/auto.py', article, true);
+    assert.equal(ctx.posts[0].status, 'published');
+    const updates = ctx.updates;
+    await assert.rejects(ctx.publisher.publish(ctx.settings, '/auto.py', { ...article, title: '새 제목' }, false, { draftOnly: true }), /이미 공개된 글/);
+    assert.equal(ctx.posts[0].title, article.title);
+    assert.equal(ctx.posts[0].status, 'published');
+    assert.equal(ctx.updates, updates);
+    await ctx.publisher.publish(ctx.settings, '/auto.py', { ...article, title: '명시적 수정' }, false);
+    assert.equal(ctx.posts[0].status, 'published');
+    assert.equal(ctx.posts[0].title, '명시적 수정');
+}));
+test('export tags create once, update without body edits, and preserve existing Ghost tags and their order', async () => fixture(async ctx => {
+    const tagged = { ...article, tags: [' 알고리즘 ', 'PS', 'ps', 'segment tree'] };
+    const first = await ctx.publisher.publish(ctx.settings, '/tags.py', tagged);
+    assert.deepEqual(ctx.posts[0].tags, [{ name: '알고리즘' }, { name: 'PS' }, { name: 'segment tree' }]);
+    assert.equal(first.localHash, articleHash(tagged));
+    assert.notEqual(articleHash(tagged), articleHash(article));
+    await ctx.publisher.publish(ctx.settings, '/tags.py', tagged);
+    assert.equal(ctx.updates, 0);
+    ctx.posts[0].tags.unshift({ id: 'existing-tag', name: 'Ghost에서 추가' });
+    await ctx.publisher.publish(ctx.settings, '/tags.py', { ...article, tags: ['ps', '새 태그'] });
+    assert.equal(ctx.updates, 1);
+    assert.deepEqual(ctx.posts[0].tags, [{ id: 'existing-tag', name: 'Ghost에서 추가' }, { name: '알고리즘' }, { name: 'PS' }, { name: 'segment tree' }, { name: '새 태그' }]);
+    await ctx.publisher.publish(ctx.settings, '/tags.py', { ...article, tags: [] });
+    assert.equal(ctx.posts[0].tags.length, 5);
+    assert.equal(ctx.updates, 1);
+    ctx.forceConflict = true;
+    await assert.rejects(ctx.publisher.publish(ctx.settings, '/tags.py', { ...article, tags: ['경합'] }), /변경/);
+    assert.equal(ctx.posts[0].tags.length, 5);
+}));
+test('a lost tagged creation recovers without duplicate posts or tag updates', async () => fixture(async ctx => {
+    const tagged = { ...article, tags: ['PS', 'segment tree'] };
+    ctx.failCreate = true;
+    await assert.rejects(ctx.publisher.publish(ctx.settings, '/tags.py', tagged), /연결/);
+    await ctx.publisher.publish(ctx.settings, '/tags.py', tagged);
+    assert.equal(ctx.creates, 1); assert.equal(ctx.updates, 0);
+    assert.deepEqual(ctx.posts[0].tags.map((tag: any) => tag.name), tagged.tags);
 }));
 test('remote edits and updated_at races cannot be silently overwritten', async () => fixture(async ctx => {
     await ctx.publisher.publish(ctx.settings, '/solve.py', article);

@@ -123,6 +123,24 @@ test('insert menu, link dialog, outline and export support direct keyboard inter
 
 test('document layout stays usable in light, dark and narrow editor tabs', async ({ page }) => {
     await openWebview(page); await model(page);
+    for (const width of [1600, 1050, 640, 360]) {
+        await page.setViewportSize({ width, height: 800 });
+        const paper = (await page.locator('#current-article').boundingBox())!;
+        const column = (await page.locator('.document-column').boundingBox())!;
+        const prose = (await page.locator('.prose-editor').boundingBox())!;
+        expect(paper.width).toBe(column.width);
+        expect(prose.width).toBeLessThanOrEqual(760);
+        expect(Math.abs(prose.x + prose.width / 2 - (paper.x + paper.width / 2))).toBeLessThanOrEqual(1);
+        for (const selector of ['#article-title', '#current-article .article-title-divider', '.prose-editor > h2', '.prose-editor > .code-block', '.prose-editor > .table-wrapper']) {
+            const box = (await page.locator(selector).boundingBox())!;
+            expect(Math.abs(box.x - prose.x), selector).toBeLessThanOrEqual(1);
+            expect(Math.abs(box.width - prose.width), selector).toBeLessThanOrEqual(1);
+        }
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+    await page.setViewportSize({ width: 1600, height: 800 });
+    await page.screenshot({path: 'test-results/writer-editor-wide.png', fullPage: true});
+    await page.setViewportSize({ width: 1050, height: 800 });
     await page.locator('#outline-toggle').click();
     await page.screenshot({path: 'test-results/writer-editor-light.png', fullPage: true});
     await page.locator('#plan-tab').click();
@@ -195,4 +213,38 @@ test('Ghost uses a current immutable snapshot and stays separate from local save
     await expect(page.locator('#ghost-status')).toContainText('변경 사항');
     await page.locator('#export-menu-btn').click(); await expect(page.locator('#ghost-save-btn')).toHaveText('Ghost 변경 사항 저장'); await expect(page.locator('#ghost-publish-btn')).toBeHidden();
     await page.locator('#ghost-open-btn').click(); expect((await messages(page)).at(-1).type).toBe('ghostOpen');
+});
+
+
+test('separate title editing preserves body undo and never copies the display divider into source', async ({ page }) => {
+    await openWebview(page); await model(page, { markdown: '본문' });
+    const editor = page.getByRole('textbox', { name: '글 본문', exact: true });
+    await editor.locator('p').click(); await page.keyboard.press('End'); await page.keyboard.insertText(' 수정');
+    await page.locator('#article-title').fill('별도로 고친 제목');
+    await expect.poll(async () => (await messages(page)).filter((m: any) => m.type === 'save').at(-1)?.fields.title).toBe('별도로 고친 제목');
+    const saved = (await messages(page)).filter((m: any) => m.type === 'save').at(-1);
+    expect(saved.fields.markdown).toBe('본문 수정');
+    expect(saved.fields.document.titleInDocument).toBeUndefined();
+    expect(saved.fields.document.root.children.map((node: any) => node.type)).toEqual(['paragraph']);
+    await page.evaluate(id => window.dispatchEvent(new MessageEvent('message', { data: { type: 'ack', id } })), saved.id);
+    await model(page, saved.fields);
+    await page.getByRole('button', { name: '실행 취소', exact: true }).click();
+    await expect(editor).toHaveText('본문');
+    await expect(page.locator('#article-title')).toHaveValue('별도로 고친 제목');
+    await page.getByRole('button', { name: '다시 실행', exact: true }).click();
+    await expect(editor).toHaveText('본문 수정');
+    await page.locator('#source-btn').click();
+    await expect(page.locator('#article-body')).toHaveValue('본문 수정');
+    await page.locator('#article-body').fill('# 본문의 H1\n\n---\n\n직접 넣은 구분선');
+    await page.locator('#source-btn').click();
+    await expect(page.locator('#article-title')).toHaveValue('별도로 고친 제목');
+    await expect(editor.locator('h1')).toHaveText('본문의 H1');
+    await expect(editor.locator('hr')).toHaveCount(1);
+    await page.locator('#export-menu-btn').click(); await page.locator('#ghost-save-btn').click();
+    const fields = (await messages(page)).filter((m: any) => m.type === 'ghostSave').at(-1).fields;
+    await openWebview(page); await model(page, fields);
+    await expect(page.locator('#article-title')).toHaveValue('별도로 고친 제목');
+    await expect(editor.locator('h1')).toHaveText('본문의 H1');
+    await expect(editor.locator('hr')).toHaveCount(1);
+    await expect(page.locator('#current-article > .article-content > hr')).toHaveCount(1);
 });

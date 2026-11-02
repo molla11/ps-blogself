@@ -18,7 +18,7 @@ async function checkGhostExport(writer, sandbox, stage) {
     const key = '123456789012345678901234:' + 'ab'.repeat(32);
     // Extension tests force VS Code application storage into memory, so re-enter the
     // fixture credential after restart; publication IDs and image cache remain real files.
-    if (stage === 'first' || !(await writer.frame.locator('#ghost-status').innerText()).includes('ghost.psb.test')) {
+    if (!(await writer.frame.locator('#ghost-status').innerText()).includes('ghost.psb.test')) {
         await writer.frame.locator('#export-menu-btn').click();
         await writer.frame.locator('#ghost-connect-btn').click();
         const input = writer.page.locator('.quick-input-widget input');
@@ -43,10 +43,31 @@ async function checkGhostExport(writer, sandbox, stage) {
     try { await until(async () => (await writer.frame.locator('#ghost-status').innerText()).includes('최신 내용 저장됨'), 'Ghost saved current document'); }
     catch (error) { throw new Error(error.message + ': ' + await writer.frame.locator('#ghost-status').innerText() + '; ' + await writer.page.locator('.quick-input-title').allTextContents()); }
     let posts = JSON.parse(await fs.readFile(path.join(sandbox, 'ghost-posts.json'), 'utf8'));
-    assert.equal(posts.length, 1); assert.equal(posts[0].status, stage === 'first' ? 'draft' : 'published');
+    assert.equal(posts.length, 1); assert.equal(posts[0].status, stage === 'first' && process.env.PSB_TEST_AUTO_GHOST_MODE !== 'publish' ? 'draft' : 'published');
+    assert.deepEqual(posts[0].tags.map(tag => tag.name), ['PS', 'segment tree', '알고리즘']);
     assert.match(posts[0].lexical, /서버와 무관하게 보존된 로컬 본문/);
+    assert.equal(posts[0].title, '에디터에서 고친 제목');
+    assert.doesNotMatch(posts[0].lexical, /에디터에서 고친 제목|horizontalrule/);
     assert.match(posts[0].lexical, /https:\/\/ghost.psb.test\/content\/images\/test.png/);
-    if (stage === 'first') {
+    const originalSaveDialog = vscode.window.showSaveDialog;
+    try {
+        for (const [button, extension] of [['export-btn', 'md'], ['export-html-btn', 'html']]) {
+            const exported = path.join(sandbox, `tagged-${stage}.${extension}`);
+            vscode.window.showSaveDialog = async () => vscode.Uri.file(exported);
+            await writer.frame.locator('#export-menu-btn').click();
+            await writer.frame.locator('#' + button).click();
+            const content = await until(() => fs.readFile(exported, 'utf8'), 'tagged file export');
+            if (extension === 'md') {
+                assert.ok(content.startsWith('---\ntags: ["PS","segment tree","알고리즘"]\n---\n\n# '));
+                assert.match(content, /tagged-.*\.assets\//);
+            } else {
+                assert.match(content, /<meta name="keywords" content="PS, segment tree, 알고리즘">/);
+                assert.match(content, /src="data:image\/png;base64,/);
+            }
+            assert.match(content, /서버와 무관하게 보존된 로컬 본문/);
+        }
+    } finally { vscode.window.showSaveDialog = originalSaveDialog; }
+    if (stage === 'first' && posts[0].status !== 'published') {
         // VS Code deliberately refuses modal dialogs while extensionTestsPath is active.
         // Replace only this confirmation boundary; retain the complete webview/API/storage flow.
         const originalWarning = vscode.window.showWarningMessage;

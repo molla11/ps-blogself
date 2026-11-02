@@ -8,16 +8,67 @@
         {{styles}}
     </head>
     <body>
-        <header class="topbar">
-            <div class="document-location">
-                <span id="file-name">풀이 기록</span>
-                <span class="location-divider" aria-hidden="true">/</span>
-                <h1>글쓰기</h1>
+        <!-- AI icons: Codicons sparkle-filled; license in media/codicons/LICENSE. -->
+        <div class="writing-header" id="writing-header">
+            <header class="topbar">
+                <div class="document-location">
+                    <span id="file-name">풀이 기록</span>
+                    <span class="location-divider" aria-hidden="true">/</span>
+                    <h1>글쓰기</h1>
+                </div>
+                <div class="actions">
+                    <span id="save-status" role="status"></span
+                    ><button id="generate-btn" class="ai-action" disabled>
+                        <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path d="M5.46524 9.82962C5.62134 9.94037 5.80806 9.99974 5.99946 9.99948C6.19151 10.0003 6.37897 9.94082 6.53546 9.82948C6.69223 9.71378 6.81095 9.55398 6.87646 9.37048L7.22346 8.30348C7.3077 8.05191 7.44906 7.82327 7.63646 7.63548C7.82305 7.44851 8.05078 7.30776 8.30146 7.22448L9.38746 6.87148C9.56665 6.80759 9.72173 6.68989 9.83146 6.53448C9.94145 6.37908 10.0005 6.19337 10.0005 6.00298C10.0005 5.81259 9.94145 5.62689 9.83146 5.47148C9.71293 5.30613 9.54426 5.18339 9.35046 5.12148L8.28146 4.77548C8.02989 4.69238 7.80123 4.55163 7.61371 4.36447C7.4262 4.1773 7.28503 3.9489 7.20146 3.69748L6.84846 2.61348C6.78519 2.43423 6.66777 2.27908 6.51246 2.16948C6.35557 2.06133 6.16951 2.00342 5.97896 2.00342C5.78841 2.00342 5.60235 2.06133 5.44546 2.16948C5.28572 2.28196 5.16594 2.44237 5.10346 2.62748L4.74846 3.71748C4.66476 3.96155 4.52691 4.18351 4.34524 4.36673C4.16358 4.54996 3.9428 4.6897 3.69946 4.77548L2.61546 5.12648C2.43437 5.19048 2.27775 5.30937 2.16743 5.4666C2.05712 5.62383 1.99859 5.81155 2.00003 6.00361C2.00146 6.19568 2.06277 6.38251 2.17541 6.53808C2.28806 6.69364 2.44643 6.81019 2.62846 6.87148L3.69546 7.21848C3.94767 7.30297 4.17673 7.44506 4.36446 7.63348C4.41519 7.6837 4.46262 7.73715 4.50646 7.79348C4.62481 7.94615 4.71614 8.11797 4.77646 8.30148L5.12846 9.38148C5.19143 9.56222 5.30914 9.71886 5.46524 9.82962ZM10.5344 13.8515C10.6703 13.9477 10.8328 13.9994 10.9994 13.9995C11.1642 13.998 11.3245 13.9456 11.4584 13.8495C11.5979 13.751 11.7029 13.611 11.7584 13.4495L12.0064 12.6875C12.0595 12.529 12.1485 12.385 12.2664 12.2665C12.3837 12.148 12.5277 12.0592 12.6864 12.0075L13.4584 11.7555C13.6161 11.701 13.7528 11.5985 13.8494 11.4625C13.9227 11.3595 13.9706 11.2405 13.9891 11.1154C14.0076 10.9903 13.9962 10.8626 13.9558 10.7428C13.9154 10.623 13.8472 10.5144 13.7567 10.4261C13.6662 10.3377 13.5561 10.272 13.4354 10.2345L12.6714 9.98548C12.5132 9.93291 12.3695 9.8443 12.2514 9.72663C12.1334 9.60896 12.0444 9.46547 11.9914 9.30748L11.7394 8.53348C11.685 8.37623 11.5825 8.24011 11.4464 8.14448C11.3443 8.07153 11.2266 8.02359 11.1026 8.00453C10.9787 7.98547 10.8519 7.99582 10.7327 8.03475C10.6135 8.07369 10.5051 8.1401 10.4163 8.22865C10.3274 8.31719 10.2607 8.42538 10.2214 8.54448L9.97435 9.30648C9.92207 9.46413 9.83452 9.60777 9.71835 9.72648C9.60382 9.84272 9.46428 9.9313 9.31035 9.98548L8.53435 10.2385C8.41689 10.2793 8.31057 10.347 8.22382 10.4361C8.13708 10.5252 8.0723 10.6333 8.03464 10.7518C7.99698 10.8704 7.98746 10.996 8.00686 11.1189C8.02625 11.2417 8.07401 11.3583 8.14635 11.4595C8.24456 11.5993 8.38462 11.7044 8.54635 11.7595L9.30935 12.0065C9.46821 12.0599 9.61262 12.1492 9.73135 12.2675C9.84958 12.3857 9.93801 12.5304 9.98935 12.6895L10.2424 13.4635C10.2971 13.6199 10.3992 13.7555 10.5344 13.8515Z"/></svg>
+                        <span id="generate-label">이대로 글쓰기</span>
+                    </button>
+                </div>
+            </header>
+            <div class="writing-navigation">
+                <nav id="view-tabs" aria-label="글 작성 화면">
+                    <button class="tab active" id="plan-tab" aria-pressed="true">변경사항 요약</button
+                    ><button class="tab" id="article-tab" aria-pressed="false" disabled>글 확인/수정</button>
+                </nav>
+                <div class="writing-options">
+                    <div class="model-picker">
+                        <span id="writing-model-label">모델</span>
+                        <div class="model-select" id="model-select">
+                            <button id="writing-model" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="writing-model-options" aria-labelledby="writing-model-label writing-model-value" disabled>
+                                <span id="writing-model-value">high</span>
+                                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            </button>
+                            <div id="writing-model-options" class="model-options" role="listbox" aria-labelledby="writing-model-label" hidden>
+                                <button type="button" role="option" value="standard" aria-selected="false" tabindex="-1">standard</button>
+                                <button type="button" role="option" value="standard-high" aria-selected="true" tabindex="-1">high</button>
+                                <button type="button" role="option" value="opus5.5" data-paid="true" aria-selected="false" tabindex="-1">Claude Opus 5.5 (유료)</button>
+                                <button type="button" role="option" value="astra" data-paid="true" aria-selected="false" tabindex="-1">GPT 6 Astra (유료)</button>
+                            </div>
+                        </div>
+                        <p id="writing-model-help" role="status" hidden>유료 모델은 유료 크레딧만으로 작동합니다.</p>
+                        <span id="writing-model-hint" role="status"></span>
+                    </div>
+                    <div class="plan-options" id="plan-options">
+                        <label class="option-field" for="writing-mode"><span id="writing-mode-label">글 구성</span>
+                            <select id="writing-mode" aria-labelledby="writing-mode-label" aria-describedby="writing-mode-help">
+                                <option value="evolution">수정 과정 중심 (기본)</option>
+                                <option value="solution">풀이 해설 중심</option>
+                                <option value="algorithm">알고리즘 설명 중심</option>
+                            </select>
+                        </label>
+                        <p id="writing-mode-help" class="muted">이전 코드와 수정 이유, 바뀐 결과를 따라가며 씁니다.</p>
+                        <label class="option-field" for="writing-style">문체
+                            <select id="writing-style">
+                                <option value="plain">했다/이다체 (기본)</option>
+                                <option value="formal">합니다체</option>
+                                <option value="friendly">해요체</option>
+                                <option value="notes">간결한 메모체</option>
+                                <option value="custom">사용자 지정</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
             </div>
-            <div class="actions">
-                <span id="save-status" role="status"></span>
-            </div>
-        </header>
+        </div>
         <main>
             <div class="notice" id="ownership-box" role="status" hidden>
                 <span>다른 창에서 편집 중입니다. 최신 내용을 함께 보고 있어요.</span>
@@ -48,34 +99,15 @@
                     ><button class="quiet" id="discard-candidate-btn">현재 내용 유지</button>
                 </div>
             </div>
-            <div class="model-picker">
-                <span id="writing-model-label">모델</span>
-                <div class="model-select" id="model-select">
-                    <button id="writing-model" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="writing-model-options" aria-labelledby="writing-model-label writing-model-value" disabled>
-                        <span id="writing-model-value">high</span>
-                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    </button>
-                    <div id="writing-model-options" class="model-options" role="listbox" aria-labelledby="writing-model-label" hidden>
-                        <button type="button" role="option" value="standard" aria-selected="false" tabindex="-1">standard</button>
-                        <button type="button" role="option" value="standard-high" aria-selected="true" tabindex="-1">high</button>
-                        <button type="button" role="option" value="opus5.5" data-paid-only="true" aria-selected="false" tabindex="-1">Claude Opus 5.5 (유료)</button>
-                        <button type="button" role="option" value="astra" data-paid-only="true" aria-selected="false" tabindex="-1">GPT 6 Astra (유료)</button>
-                    </div>
-                </div>
-                <p id="writing-model-help" role="status" hidden>유료 모델은 유료 크레딧만으로 작동합니다.</p>
-            </div>
-            <nav id="view-tabs" aria-label="글 작성 화면">
-                <div class="view-tab-list">
-                    <button class="tab active" id="plan-tab" aria-pressed="true">변경사항 요약</button
-                    ><button class="tab" id="article-tab" aria-pressed="false" disabled>글 확인/수정</button>
-                </div>
-                <button id="generate-btn" disabled>이대로 글쓰기</button>
-            </nav>
             <section id="stream-box" hidden>
                 <h2>작성 중인 글</h2>
                 <article id="stream-preview" class="article-preview" aria-label="작성 중인 본문"></article>
             </section>
             <section id="plan-view">
+                <label class="field" id="custom-style-field" hidden>원하는 문체
+                    <textarea id="custom-style" rows="2" maxlength="2000"
+                        placeholder="예: 짧고 담백한 했다체로, 처음 배우는 사람도 이해할 수 있게. 비워두면 했다/이다체를 사용해요."></textarea>
+                </label>
                 <div id="preparing">
                     <h2>변경사항 요약</h2>
                     <p>코드의 변경사항을 순서대로 정리해 드릴게요.</p>
@@ -87,7 +119,10 @@
                             <h2>변경사항 요약</h2>
                             <p class="section-description">메모를 순서대로 정리한 뒤 글로 이어가세요.</p>
                         </div>
-                        <button class="quiet" id="prepare-btn">다시 요약</button>
+                        <button class="ai-action" id="prepare-btn">
+                            <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path d="M5.46524 9.82962C5.62134 9.94037 5.80806 9.99974 5.99946 9.99948C6.19151 10.0003 6.37897 9.94082 6.53546 9.82948C6.69223 9.71378 6.81095 9.55398 6.87646 9.37048L7.22346 8.30348C7.3077 8.05191 7.44906 7.82327 7.63646 7.63548C7.82305 7.44851 8.05078 7.30776 8.30146 7.22448L9.38746 6.87148C9.56665 6.80759 9.72173 6.68989 9.83146 6.53448C9.94145 6.37908 10.0005 6.19337 10.0005 6.00298C10.0005 5.81259 9.94145 5.62689 9.83146 5.47148C9.71293 5.30613 9.54426 5.18339 9.35046 5.12148L8.28146 4.77548C8.02989 4.69238 7.80123 4.55163 7.61371 4.36447C7.4262 4.1773 7.28503 3.9489 7.20146 3.69748L6.84846 2.61348C6.78519 2.43423 6.66777 2.27908 6.51246 2.16948C6.35557 2.06133 6.16951 2.00342 5.97896 2.00342C5.78841 2.00342 5.60235 2.06133 5.44546 2.16948C5.28572 2.28196 5.16594 2.44237 5.10346 2.62748L4.74846 3.71748C4.66476 3.96155 4.52691 4.18351 4.34524 4.36673C4.16358 4.54996 3.9428 4.6897 3.69946 4.77548L2.61546 5.12648C2.43437 5.19048 2.27775 5.30937 2.16743 5.4666C2.05712 5.62383 1.99859 5.81155 2.00003 6.00361C2.00146 6.19568 2.06277 6.38251 2.17541 6.53808C2.28806 6.69364 2.44643 6.81019 2.62846 6.87148L3.69546 7.21848C3.94767 7.30297 4.17673 7.44506 4.36446 7.63348C4.41519 7.6837 4.46262 7.73715 4.50646 7.79348C4.62481 7.94615 4.71614 8.11797 4.77646 8.30148L5.12846 9.38148C5.19143 9.56222 5.30914 9.71886 5.46524 9.82962ZM10.5344 13.8515C10.6703 13.9477 10.8328 13.9994 10.9994 13.9995C11.1642 13.998 11.3245 13.9456 11.4584 13.8495C11.5979 13.751 11.7029 13.611 11.7584 13.4495L12.0064 12.6875C12.0595 12.529 12.1485 12.385 12.2664 12.2665C12.3837 12.148 12.5277 12.0592 12.6864 12.0075L13.4584 11.7555C13.6161 11.701 13.7528 11.5985 13.8494 11.4625C13.9227 11.3595 13.9706 11.2405 13.9891 11.1154C14.0076 10.9903 13.9962 10.8626 13.9558 10.7428C13.9154 10.623 13.8472 10.5144 13.7567 10.4261C13.6662 10.3377 13.5561 10.272 13.4354 10.2345L12.6714 9.98548C12.5132 9.93291 12.3695 9.8443 12.2514 9.72663C12.1334 9.60896 12.0444 9.46547 11.9914 9.30748L11.7394 8.53348C11.685 8.37623 11.5825 8.24011 11.4464 8.14448C11.3443 8.07153 11.2266 8.02359 11.1026 8.00453C10.9787 7.98547 10.8519 7.99582 10.7327 8.03475C10.6135 8.07369 10.5051 8.1401 10.4163 8.22865C10.3274 8.31719 10.2607 8.42538 10.2214 8.54448L9.97435 9.30648C9.92207 9.46413 9.83452 9.60777 9.71835 9.72648C9.60382 9.84272 9.46428 9.9313 9.31035 9.98548L8.53435 10.2385C8.41689 10.2793 8.31057 10.347 8.22382 10.4361C8.13708 10.5252 8.0723 10.6333 8.03464 10.7518C7.99698 10.8704 7.98746 10.996 8.00686 11.1189C8.02625 11.2417 8.07401 11.3583 8.14635 11.4595C8.24456 11.5993 8.38462 11.7044 8.54635 11.7595L9.30935 12.0065C9.46821 12.0599 9.61262 12.1492 9.73135 12.2675C9.84958 12.3857 9.93801 12.5304 9.98935 12.6895L10.2424 13.4635C10.2971 13.6199 10.3992 13.7555 10.5344 13.8515Z"/></svg>
+                            <span>다시 메모 쓰기</span>
+                        </button>
                     </div>
                     <details class="range-box" id="range-details">
                         <summary>
@@ -110,79 +145,68 @@
                         <div id="range-changes" class="range-changes"></div>
                     </details>
                     <div class="plan-title-section" role="group" aria-label="글 제목과 전체 설명">
-                        <label class="field" for="plan-title">제목
-                            <input id="plan-title" maxlength="300" placeholder="글 제목" />
+                        <label class="plan-title-field">
+                            <span class="visually-hidden">글 제목</span>
+                            <textarea id="plan-title" class="plan-text" rows="1" maxlength="300" placeholder="글 제목"></textarea>
                         </label>
-                        <label class="summary-label" for="summary">전체 설명</label>
-                        <textarea id="summary" rows="1" maxlength="12000" placeholder="풀이의 전체 흐름"></textarea>
+                        <hr class="plan-title-divider" />
+                        <label class="plan-summary-field">
+                            <span class="visually-hidden">전체 설명</span>
+                            <textarea
+                                id="summary"
+                                class="plan-text"
+                                rows="1"
+                                maxlength="12000"
+                                placeholder="풀이의 전체 흐름"
+                            ></textarea>
+                        </label>
                     </div>
                     <div id="steps" class="memo-process" role="group" aria-label="변경사항 메모"></div>
                     <p id="memo-limit" class="muted" role="status" hidden>메모는 최대 12개까지 추가할 수 있어요.</p>
                 </div>
-                <div class="writing-options" role="group" aria-label="글 작성 설정">
-                    <label class="field" for="writing-mode"><span id="writing-mode-label">글 구성</span>
-                        <select id="writing-mode" aria-labelledby="writing-mode-label" aria-describedby="writing-mode-help">
-                            <option value="evolution">수정 과정 중심 (기본)</option>
-                            <option value="solution">풀이 해설 중심</option>
-                            <option value="algorithm">알고리즘 설명 중심</option>
-                        </select>
-                    </label>
-                    <p id="writing-mode-help" class="muted">이전 코드와 수정 이유, 바뀐 결과를 따라가며 씁니다.</p>
-                    <label class="field" for="writing-style">문체
-                        <select id="writing-style">
-                            <option value="plain">했다/이다체 (기본)</option>
-                            <option value="formal">합니다체</option>
-                            <option value="friendly">해요체</option>
-                            <option value="notes">간결한 메모체</option>
-                            <option value="custom">사용자 지정</option>
-                        </select>
-                    </label>
-                    <label class="field" id="custom-style-field" hidden>원하는 문체
-                        <textarea id="custom-style" rows="2" maxlength="2000"
-                            placeholder="예: 짧고 담백한 했다체로, 처음 배우는 사람도 이해할 수 있게. 비워두면 했다/이다체를 사용해요."></textarea>
-                    </label>
-                    <label class="field extra"
-                        >추가로 담고 싶은 내용 <span class="muted">선택 사항</span
-                        ><textarea
-                            id="instructions"
-                            rows="2"
-                            maxlength="12000"
-                            placeholder="문제 설명이나 원하는 글의 분위기를 적어도 좋아요."
-                        ></textarea>
-                    </label>
-                </div>
+                <label class="field extra"
+                    >추가로 담고 싶은 내용 <span class="muted">선택 사항</span
+                    ><textarea
+                        id="instructions"
+                        rows="2"
+                        maxlength="12000"
+                        placeholder="문제 설명이나 원하는 글의 분위기를 적어도 좋아요."
+                    ></textarea>
+                </label>
             </section>
             <section id="article-view" hidden>
-                <div class="document-controls">
-                    <button class="quiet" id="outline-toggle" aria-expanded="false" aria-controls="article-outline">목차</button>
-                    <div class="actions">
-                        <button class="quiet" id="source-btn" aria-pressed="false">Markdown</button>
-                        <button class="quiet" id="preview-btn" aria-pressed="false">미리보기</button>
-                        <button class="secondary" id="export-menu-btn" popovertarget="export-menu" aria-haspopup="true">
-                            내보내기
-                            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3.14645 5.64645C3.34171 5.45118 3.65829 5.45118 3.85355 5.64645L8 9.79289L12.1464 5.64645C12.3417 5.45118 12.6583 5.45118 12.8536 5.64645C13.0488 5.84171 13.0488 6.15829 12.8536 6.35355L8.35355 10.8536C8.15829 11.0488 7.84171 11.0488 7.64645 10.8536L3.14645 6.35355C2.95118 6.15829 2.95118 5.84171 3.14645 5.64645Z"/></svg>
-                        </button>
+                <div class="article-toolbar" id="article-toolbar">
+                    <div class="document-controls">
+                        <button class="quiet" id="outline-toggle" aria-expanded="false" aria-controls="article-outline">목차</button>
+                        <div class="actions">
+                            <button class="quiet" id="source-btn" aria-pressed="false">Markdown</button>
+                            <button class="quiet" id="preview-btn" aria-pressed="false">미리보기</button>
+                            <button class="secondary" id="export-menu-btn" popovertarget="export-menu" aria-haspopup="true">
+                                내보내기
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3.14645 5.64645C3.34171 5.45118 3.65829 5.45118 3.85355 5.64645L8 9.79289L12.1464 5.64645C12.3417 5.45118 12.6583 5.45118 12.8536 5.64645C13.0488 5.84171 13.0488 6.15829 12.8536 6.35355L8.35355 10.8536C8.15829 11.0488 7.84171 11.0488 7.64645 10.8536L3.14645 6.35355C2.95118 6.15829 2.95118 5.84171 3.14645 5.64645Z"/></svg>
+                            </button>
+                        </div>
                     </div>
-                </div>
-                <div id="export-menu" class="action-menu" popover="auto" aria-label="내보내기">
-                    <button id="ghost-save-btn">Ghost 초안 저장</button>
-                    <button id="ghost-publish-btn">Ghost에 게시…</button>
-                    <button id="ghost-open-btn" hidden>Ghost에서 열기</button>
-                    <button id="ghost-connect-btn">Ghost 연결 설정</button>
-                    <hr>
-                    <button id="export-btn">Markdown 파일 저장</button>
-                    <button id="export-html-btn">HTML 파일 저장</button>
-                    <button id="copy-btn">Markdown 복사</button>
-                </div>
-                <p id="ghost-status" class="ghost-status" role="status" hidden></p>
-                <div class="version-bar" id="versions-box" hidden>
-                    <label for="version-select">버전</label>
-                    <div class="version-picker">
-                        <select id="version-select" aria-label="글 버전"></select>
-                        <button class="quiet version-arrow" id="version-older-btn" aria-label="이전 버전" title="이전 버전">‹</button>
-                        <button class="quiet version-arrow" id="version-newer-btn" aria-label="다음 버전" title="다음 버전">›</button>
+                    <div id="export-menu" class="action-menu" popover="auto" aria-label="내보내기">
+                        <button id="ghost-save-btn">Ghost 초안 저장</button>
+                        <button id="ghost-publish-btn">Ghost에 게시…</button>
+                        <button id="ghost-open-btn" hidden>Ghost에서 열기</button>
+                        <button id="ghost-connect-btn">Ghost 연결 설정</button>
+                        <hr>
+                        <button id="export-btn">Markdown 파일 저장</button>
+                        <button id="export-html-btn">HTML 파일 저장</button>
+                        <button id="copy-btn">Markdown 복사</button>
                     </div>
-                    <button class="secondary" id="restore-version-btn" hidden>이 버전 사용</button>
+                    <p id="ghost-status" class="ghost-status" role="status" hidden></p>
+                    <div class="version-bar" id="versions-box" hidden>
+                        <label for="version-select">버전</label>
+                        <div class="version-picker">
+                            <select id="version-select" aria-label="글 버전"></select>
+                            <button class="quiet version-arrow" id="version-older-btn" aria-label="이전 버전" title="이전 버전">‹</button>
+                            <button class="quiet version-arrow" id="version-newer-btn" aria-label="다음 버전" title="다음 버전">›</button>
+                        </div>
+                        <button class="secondary" id="restore-version-btn" hidden>이 버전 사용</button>
+                    </div>
                 </div>
                 <div class="document-layout" id="document-layout">
                     <aside id="article-outline" aria-label="글 목차" hidden>
@@ -210,23 +234,32 @@
                         </div>
                         <div id="block-menu" class="action-menu" popover="auto" aria-label="블록 메뉴"><button data-block-action="up">위로 이동</button><button data-block-action="down">아래로 이동</button><button data-block-action="delete">블록 삭제</button></div>
                         <div class="document-paper" id="current-article">
-                    <label class="article-title-field"><span class="visually-hidden">글 제목</span><textarea id="article-title" rows="1" maxlength="300" placeholder="글 제목" spellcheck="false"></textarea></label>
-                    <div id="rich-editor"></div>
-                    <label class="field" id="body-field" hidden
-                        >본문<textarea
-                            id="article-body"
-                            rows="18"
-                            maxlength="150000"
-                            spellcheck="false"
-                        ></textarea>
-                    </label>
-                    <article id="article-preview" class="article-preview" hidden></article>
-                </div>
-                <div class="document-paper" id="version-preview" hidden>
-                    <p class="section-description" id="version-status" role="status">이전 버전 미리보기</p>
-                    <h3 id="version-title"></h3>
-                    <article id="version-body" class="article-preview" aria-label="선택한 버전 본문"></article>
-                </div>
+                            <div class="article-content">
+                                <label class="article-title-field">
+                                    <span class="visually-hidden">글 제목</span>
+                                    <textarea id="article-title" rows="1" maxlength="300" placeholder="글 제목" spellcheck="false"></textarea>
+                                </label>
+                                <hr class="article-title-divider" aria-hidden="true" />
+                                <div id="rich-editor"></div>
+                                <label class="field" id="body-field" hidden
+                                    >본문<textarea
+                                        id="article-body"
+                                        rows="18"
+                                        maxlength="150000"
+                                        spellcheck="false"
+                                    ></textarea>
+                                </label>
+                                <article id="article-preview" class="article-preview" hidden></article>
+                            </div>
+                        </div>
+                        <div class="document-paper" id="version-preview" hidden>
+                            <div class="article-content">
+                                <p class="section-description" id="version-status" role="status">이전 버전 미리보기</p>
+                                <h1 id="version-title"></h1>
+                                <hr class="article-title-divider" aria-hidden="true" />
+                                <article id="version-body" class="article-preview" aria-label="선택한 버전 본문"></article>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>

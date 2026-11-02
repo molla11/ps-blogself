@@ -24,7 +24,7 @@ test('one click opens actions, the same row closes them, and another row switche
     await row(page, 1).click();
     await expect(menu(page)).toBeVisible();
     await expect(row(page, 1)).toHaveAttribute('aria-expanded', 'true');
-    expect((await messages(page)).filter((m: any) => ['openFile', 'viewHistory'].includes(m.type))).toHaveLength(0);
+    expect((await messages(page)).filter((m: any) => ['openFile', 'viewHistory', 'selectLogForBlog'].includes(m.type))).toHaveLength(0);
     await row(page, 1).click();
     await expect(menu(page)).toBeHidden();
     await expect(row(page, 1)).toHaveAttribute('aria-expanded', 'false');
@@ -37,6 +37,11 @@ test('one click opens actions, the same row closes them, and another row switche
     await expect(row(page, 0)).toHaveAttribute('aria-pressed', 'true');
     await page.getByRole('menuitem', { name: '파일 열기', exact: true }).click();
     expect((await messages(page)).at(-1)).toEqual({ type: 'openFile', path: '/work/solve0.cpp' });
+    await expect(menu(page)).toBeHidden();
+    await row(page, 1).click();
+    expect(await menu(page).getByRole('menuitem').allTextContents()).toEqual(['파일 열기', '수정 기록 보기', '글쓰기']);
+    await page.getByRole('menuitem', { name: '글쓰기', exact: true }).click();
+    expect((await messages(page)).at(-1)).toEqual({ type: 'selectLogForBlog', path: '/work/solve1.cpp' });
     await expect(menu(page)).toBeHidden();
 });
 
@@ -60,9 +65,9 @@ test('native double-click opens the file exactly once from either menu state', a
     ]);
 });
 
-test('actions open just below and right of the click without intercepting a double-click', async ({ page }) => {
+test('actions align with the row right edge without intercepting a double-click', async ({ page }) => {
     const bounds = (await row(page, 0).boundingBox())!;
-    // Click different parts of the same row to distinguish pointer anchoring from row anchoring.
+    // Horizontal placement stays fixed regardless of where the row is clicked.
     for (const offset of [{ x: 20, y: 8 }, { x: 65, y: bounds.height - 8 }, { x: bounds.width - 8, y: 8 }]) {
         const point = { x: bounds.x + offset.x, y: bounds.y + offset.y };
         await page.mouse.click(point.x, point.y);
@@ -70,13 +75,10 @@ test('actions open just below and right of the click without intercepting a doub
         const actions = (await menu(page).boundingBox())!;
         expect(actions.y - point.y).toBeGreaterThan(0);
         expect(actions.y - point.y).toBeLessThanOrEqual(10);
-        if (point.x + actions.width + 10 <= 300) {
-            expect(actions.x - point.x).toBeGreaterThan(0);
-            expect(actions.x - point.x).toBeLessThanOrEqual(10);
-        }
+        expect(actions.x + actions.width).toBeCloseTo(bounds.x + bounds.width, 1);
         expect(actions.x + actions.width).toBeLessThanOrEqual(300);
         expect(await page.evaluate(p => document.elementFromPoint(p.x, p.y)?.closest('.log-item')?.getAttribute('data-path'), point)).toBe('/work/solve0.cpp');
-        // Refreshing the list must retain the original pointer anchor.
+        // Refreshing the list must retain the menu position.
         await update(page);
         expect(await menu(page).boundingBox()).toEqual(actions);
         await page.keyboard.press('Escape');
@@ -107,7 +109,7 @@ test('keyboard actions support focus navigation, Escape and native Tab', async (
     await expect(page.getByRole('menuitem', { name: '파일 열기', exact: true })).toBeFocused();
     const owner = (await row(page, 0).boundingBox())!;
     const actions = (await menu(page).boundingBox())!;
-    expect(actions.x).toBe(owner.x);
+    expect(actions.x + actions.width).toBeCloseTo(owner.x + owner.width, 1);
     expect(actions.y).toBeGreaterThanOrEqual(owner.y + owner.height);
     await page.keyboard.press('ArrowDown');
     await expect(page.getByRole('menuitem', { name: '수정 기록 보기', exact: true })).toBeFocused();
@@ -120,7 +122,11 @@ test('keyboard actions support focus navigation, Escape and native Tab', async (
     await expect(menu(page)).toBeHidden();
     await expect(row(page, 0)).toBeFocused();
     await page.keyboard.press('ArrowUp');
-    await expect(page.getByRole('menuitem', { name: '수정 기록 보기', exact: true })).toBeFocused();
+    await expect(page.getByRole('menuitem', { name: '글쓰기', exact: true })).toBeFocused();
+    await page.keyboard.press('Enter');
+    expect((await messages(page)).at(-1)).toEqual({ type: 'selectLogForBlog', path: '/work/solve0.cpp' });
+    await expect(row(page, 0)).toBeFocused();
+    await page.keyboard.press('ArrowUp');
     await page.keyboard.press('Home');
     await expect(page.getByRole('menuitem', { name: '파일 열기', exact: true })).toBeFocused();
     await page.keyboard.press('Tab');
@@ -131,6 +137,11 @@ test('keyboard actions support focus navigation, Escape and native Tab', async (
 test('only the file list scrolls while its heading and primary controls stay fixed', async ({ page }) => {
     const headingBefore = await page.locator('#recent-logs-title').boundingBox();
     const controlsBefore = await page.locator('.bottom-actions').boundingBox();
+    const history = (await page.locator('#manage-logs-btn').boundingBox())!;
+    const write = (await page.locator('#generate-blog-btn').boundingBox())!;
+    expect(history.width).toBeGreaterThan(write.width);
+    expect(history.y).toBe(write.y);
+    expect(history.height).toBe(write.height);
     await page.locator('#logs-container').hover();
     await page.mouse.wheel(0, 2000);
     await expect.poll(() => page.locator('#logs-container').evaluate(el => el.scrollTop)).toBeGreaterThan(0);
@@ -180,6 +191,10 @@ test('full history uses the same interactions and view switching dismisses the m
     await expect(menu(page)).toBeVisible();
     await page.getByRole('menuitem', { name: '수정 기록 보기', exact: true }).click();
     expect((await messages(page)).at(-1)).toEqual({ type: 'viewHistory', path: '/work/solve2.cpp' });
+    await row(page, 2, '#full-logs-container').click();
+    await page.getByRole('menuitem', { name: '글쓰기', exact: true }).click();
+    expect((await messages(page)).at(-1)).toEqual({ type: 'selectLogForBlog', path: '/work/solve2.cpp' });
+    await expect(menu(page)).toBeHidden();
     await row(page, 1, '#full-logs-container').dblclick();
     expect((await messages(page)).at(-1)).toEqual({ type: 'openFile', path: '/work/solve1.cpp' });
     await row(page, 0, '#full-logs-container').click();

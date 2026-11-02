@@ -250,7 +250,11 @@ input:checked + .slider:before {
     pointer-events: none;
 }
 .path-reset:hover .path-tooltip,
-.path-reset:focus-within .path-tooltip { visibility: visible; }
+.path-reset:focus-within .path-tooltip { animation: path-tooltip-dismiss 3s step-end forwards; }
+@keyframes path-tooltip-dismiss {
+    from { visibility: visible; }
+    to { visibility: hidden; }
+}
 #path-menu {
     position: absolute;
     z-index: 1100;
@@ -429,11 +433,26 @@ button.action-btn {
 }
 
 .log-info {
+    flex: 1;
     display: flex;
     flex-direction: column;
     overflow: hidden;
     min-width: 0;
 }
+.log-writing {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+    margin-left: 10px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+}
+.log-writing-count { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.log-unread { width: 5px; height: 5px; flex: 0 0 auto; border-radius: 50%; background: var(--vscode-notificationsInfoIcon-foreground, #3794ff); }
 
 .log-name {
     font-size: 0.75rem;
@@ -566,10 +585,11 @@ button.action-btn {
     flex-shrink: 0;
 }
 .bottom-actions .action-btn {
-    flex: 1;
+    flex: 2;
     justify-content: center;
     min-width: 0;
 }
+.bottom-actions #manage-logs-btn { flex: 3; }
 .bottom-actions .icon {
     display: none;
 }

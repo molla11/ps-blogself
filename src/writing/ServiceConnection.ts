@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'crypto';
 import { ConnectionEnvironment, resolveConnectionSettings, serviceUrl, loginUrl } from './ConnectionSettings';
 import { AccountUsage, accountUsage, UsageView, usageView } from './Usage';
 import { NoticeFeed } from './NoticeFeed';
+import { LOGIN_BRIDGE_URL, startLoginBridge } from './LoginBridge';
 
 export interface Account {
     id: string; email: string;
@@ -131,15 +132,38 @@ export class ServiceConnection {
         this.login = Promise.resolve(vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: '브라우저에서 로그인을 완료해 주세요.', cancellable: true }, async (_progress, cancellation) => {
             const verifier = randomBytes(32).toString('base64url');
             const challenge = createHash('sha256').update(verifier).digest('base64url');
-            const flow = await this.fetchJson<{ id: string; loginUrl: string }>(base, '/auth/start', 'POST', { challenge, presentation: 'clean' });
-            if (!await vscode.env.openExternal(vscode.Uri.parse(loginUrl(flow.loginUrl, base)))) throw new Error('로그인 브라우저를 열 수 없습니다.');
-            const deadline = Date.now() + 10 * 60 * 1000;
-            while (!cancellation.isCancellationRequested && Date.now() < deadline) {
-                const result = await this.fetchJson<Credentials | { pending: true }>(base, '/auth/exchange', 'POST', { id: flow.id, verifier });
-                if ('token' in result) return this.store(base, result);
-                await new Promise(resolve => setTimeout(resolve, 1000));
+            const flow = await this.fetchJson<{ id: string; loginUrl: string; bridge?: string }>(base, '/auth/start', 'POST', { challenge, presentation: 'automatic' });
+            const url = loginUrl(flow.loginUrl, base);
+            // A server upgrade is required; never silently reopen a URL containing identifiers.
+            if (flow.bridge !== 'loopback-v1' || new URL(url).pathname !== '/login' || new URL(url).search || new URL(url).hash
+                || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(flow.id)) {
+                throw new Error('자동 연결을 지원하는 백엔드로 업데이트한 뒤 다시 로그인해 주세요.');
             }
-            throw new Error(cancellation.isCancellationRequested ? '로그인을 취소했습니다.' : '로그인 시간이 초과되었습니다. 다시 시도해 주세요.');
+            if (cancellation.isCancellationRequested) throw new Error('로그인을 취소했습니다.');
+            const deadline = Date.now() + 10 * 60 * 1000;
+            const bridge = await startLoginBridge(new URL(url).origin, flow.id, deadline);
+            this.context.subscriptions.push(bridge);
+            const cancelled = cancellation.onCancellationRequested(() => bridge.dispose());
+            try {
+                // In remote windows VS Code may forward the port. The fixed page must still reach the same port.
+                const external = new URL((await vscode.env.asExternalUri(vscode.Uri.parse(LOGIN_BRIDGE_URL))).toString());
+                if (external.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(external.hostname) || external.port !== '49629') {
+                    throw new Error('이 원격 창에서는 자동 로그인 포트를 연결할 수 없습니다. 로컬 VS Code 창에서 로그인해 주세요.');
+                }
+                if (cancellation.isCancellationRequested) throw new Error('로그인을 취소했습니다.');
+                if (!await vscode.env.openExternal(vscode.Uri.parse(url))) throw new Error('로그인 브라우저를 열 수 없습니다.');
+                while (!cancellation.isCancellationRequested && Date.now() < deadline) {
+                    const result = await this.fetchJson<Credentials | { pending: true }>(base, '/auth/exchange', 'POST', { id: flow.id, verifier });
+                    if (cancellation.isCancellationRequested) break;
+                    if ('token' in result) return this.store(base, result);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+                throw new Error(cancellation.isCancellationRequested ? '로그인을 취소했습니다.' : '로그인 시간이 초과되었습니다. 다시 시도해 주세요.');
+            } finally {
+                cancelled.dispose(); bridge.dispose();
+                const index = this.context.subscriptions.indexOf(bridge);
+                if (index >= 0) this.context.subscriptions.splice(index, 1);
+            }
         })).finally(() => { this.login = undefined; });
         return this.login;
     }

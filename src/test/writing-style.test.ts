@@ -57,17 +57,19 @@ test('draft storage restores selected mode, style and custom prose while legacy 
     } finally { await store.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test('model defaults and preparation provenance survive candidate application', () => {
+test('model defaults survive candidate application; preparation results carry no model', () => {
     assert.equal(selectedWritingModel(), DEFAULT_WRITING_MODEL);
     assert.throws(() => selectedWritingModel('unknown' as any), /모델/);
     const draft = newDraft({ id: 'model', filePath: '/workspace/model.py', language: 'python', startedAt: 1,
         lastModified: 1, requestLogs: [], snapshots: [{ timestamp: 1, content: 'print(1)', hash: 'a' }] });
     const plan = { title: '기록', summary: '요약', start: 0, end: 0, steps: [] };
-    mergeResult(draft, { plan, preparationModel: 'standard' }, draft.revision);
+    mergeResult(draft, { plan }, draft.revision);
     draft.writingModel = 'astra';
-    mergeResult(draft, { plan, preparationModel: 'astra' }, -1);
-    assert.equal(draft.preparationModel, 'standard');
-    assert.equal(draft.candidate?.preparationModel, 'astra');
+    mergeResult(draft, { plan: { ...plan, title: '새 기록' } }, -1);
+    assert.equal(draft.plan?.title, '기록');
+    assert.equal(draft.candidate?.plan?.title, '새 기록');
     mergeResult(draft, draft.candidate!, draft.revision);
-    assert.equal(draft.preparationModel, 'astra');
+    assert.equal(draft.plan?.title, '새 기록');
+    assert.equal(draft.writingModel, 'astra');
+    assert.equal('preparationModel' in draft, false);
 });

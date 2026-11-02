@@ -10,7 +10,7 @@ import { articleHtml, taggedMarkdown } from '../writing/ArticleExport';
 import { normalizeExportTags } from '../settings/ExportTags';
 import { checkInputSize } from '../writing/InputLimits';
 import { WRITING_MODES, WritingMode, WRITING_STYLES, WritingStyle, writingInstructions } from '../writing/WritingStyle';
-import { DEFAULT_WRITING_MODEL, isWritingModel, selectedWritingModel } from '../writing/WritingModels';
+import { isWritingModel, selectedWritingModel } from '../writing/WritingModels';
 import { randomBytes, randomUUID } from 'crypto';
 import { storageManager } from '../storage/StorageManager';
 import { ServiceConnection, ServiceError } from '../writing/ServiceConnection';
@@ -185,10 +185,9 @@ export class BlogPostManager {
                 if (view.draft.pending) { this.run(view); return; }
                 const history = await storageManager.getFileHistory(filePath);
                 if (!history?.snapshots.length) return;
-                const fingerprint = historyFingerprint(history), model = selectedWritingModel(view.draft.writingModel);
-                const key = fingerprint + ':' + model;
-                if (view.draft.preparationKey === key || (view.draft.plan && view.draft.fingerprint === fingerprint
-                    && (view.draft.preparationModel ?? DEFAULT_WRITING_MODEL) === model)) return;
+                // Preparation does not depend on the selected model, so only the history matters.
+                const fingerprint = historyFingerprint(history);
+                if (view.draft.preparationKey === fingerprint || (view.draft.plan && view.draft.fingerprint === fingerprint)) return;
                 await this.start(view, 'prepare_blog', target, true);
             });
         } catch { /* Optional preparation must not interrupt history viewing. */ }
@@ -492,7 +491,6 @@ export class BlogPostManager {
         if (value.document) patch.document = validateDocument(value.document);
         else if (typeof value.markdown === 'string' && (value.document === null || value.markdown !== draft.markdown)) patch.document = undefined;
         Object.assign(draft, separateArticleTitle({ ...draft, ...patch }));
-        if (modelChanged) delete draft.preparationKey;
         if (
             before !== JSON.stringify([draft.plan, draft.instructions, draft.writingModel, draft.writingMode, draft.writingStyle, draft.customStyle, draft.title, draft.markdown, draft.document])
         ) {
@@ -742,13 +740,13 @@ export class BlogPostManager {
         checkInputSize({ source });
         const instructions = writingInstructions(draft);
         target ||= await this.jobs.target(!prefetch);
-        const model = selectedWritingModel(draft.writingModel);
-        if (kind === 'prepare_blog') draft.preparationKey = historyFingerprint(history) + ':' + model;
+        if (kind === 'prepare_blog') draft.preparationKey = historyFingerprint(history);
         draft.pending = {
             target,
             request: {
                 kind,
-                model,
+                // The server always prepares memos with its own model; the choice applies to the article only.
+                ...(kind === 'write_blog' ? { model: selectedWritingModel(draft.writingModel) } : {}),
                 priority: prefetch ? 'prefetch' : 'interactive',
                 requestId: randomUUID(),
                 source,
@@ -815,8 +813,7 @@ export class BlogPostManager {
                         signal.throwIfAborted();
                         const applied = view.draft.revision === pending.baseRevision;
                         const previousArticles = writingActivityContent(view.draft).articles;
-                        mergeResult(view.draft, { ...job.result!, ...(pending.history ? { history: pending.history,
-                            preparationModel: pending.request.model ?? DEFAULT_WRITING_MODEL } : {}) }, pending.baseRevision);
+                        mergeResult(view.draft, { ...job.result!, ...(pending.history ? { history: pending.history } : {}) }, pending.baseRevision);
                         if (pending.request.kind === 'write_blog') registerGeneratedArticles(view.draft, previousArticles);
                         delete view.draft.pending;
                         await this.store.save(view.draft);

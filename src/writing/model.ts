@@ -55,7 +55,6 @@ export interface ArticleVersion {
 }
 export interface WritingDraft extends WritingPreferences {
     writingModel?: WritingModel;
-    preparationModel?: WritingModel;
     schemaVersion: 1;
     storageVersion?: number;
     editor?: { owner: import('../storage/WindowSession').SessionOwner; token: string };
@@ -80,7 +79,7 @@ export interface WritingDraft extends WritingPreferences {
         history?: FileHistory;
         cancelRequested?: boolean;
     };
-    candidate?: { plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory; preparationModel?: WritingModel };
+    candidate?: { plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory };
     articleVersions: ArticleVersion[];
     /** Only newly generated articles opt into unread notifications. Legacy drafts have none. */
     newArticleKeys?: string[];
@@ -274,7 +273,6 @@ export function mergeResult(
     }
     if (result.plan) {
         draft.plan = result.plan;
-        draft.preparationModel = result.preparationModel ?? DEFAULT_WRITING_MODEL;
         if (result.history) {
             draft.history = result.history;
             draft.fingerprint = historyFingerprint(result.history);

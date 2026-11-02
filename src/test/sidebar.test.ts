@@ -125,3 +125,91 @@ test('search pagination and clearing each start a fresh window, even with older 
     pager.setSearch('stale', 1);
     assert.deepEqual((await pager.load()).recentLogs, page.recentLogs);
 });
+
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>(done => { resolve = done; });
+    return { promise, resolve };
+}
+
+function sidebarHarness(read: () => Promise<typeof logs>, size: () => Promise<string>, account = async () => 'reader@example.test') {
+    const Module = require('node:module');
+    const original = Module._load;
+    const file = require.resolve('../sidebar/SidebarProvider');
+    const cached = require.cache[file];
+    const mocks: Record<string, unknown> = {
+        vscode: { window: { activeTextEditor: { document: { uri: { fsPath: '/work/solve0.cpp' } } } } },
+        '../config': { configManager: {
+            getRootFolder: () => '/work', getCurrentDirectory: () => '/work', isWindowRoot: () => false,
+            isRecording: () => true, getSupportedLanguages: () => ['cpp'],
+        } },
+        '../storage/StorageManager': { storageManager: { getRecentFiles: read, calculateTotalSize: size } },
+        './getSidebarHtml': {},
+        '../services/HistoryManager': {},
+        '../services/BlogPostManager': { BlogPostManager: { accountLabel: account, usage: async () => undefined, notices: async () => [] } },
+    };
+    delete require.cache[file];
+    Module._load = function(name: string, parent: { filename: string }, ...args: unknown[]) {
+        if (parent?.filename === file && Object.hasOwn(mocks, name)) return mocks[name];
+        return original.call(this, name, parent, ...args);
+    };
+    try {
+        const { SidebarProvider } = require('../sidebar/SidebarProvider');
+        const noop = () => {};
+        const provider: import('../sidebar/SidebarProvider').SidebarProvider = new SidebarProvider({}, noop, noop, noop, noop, noop);
+        const messages: any[] = [];
+        (provider as any)._view = { webview: { postMessage: async (message: unknown) => { messages.push(message); return true; } } };
+        return { provider, messages };
+    } finally {
+        Module._load = original;
+        if (cached) require.cache[file] = cached; else delete require.cache[file];
+    }
+}
+
+test('saved records reach the sidebar before storage-size and account lookups finish', async () => {
+    const size = deferred<string>(), account = deferred<string>();
+    const { provider, messages } = sidebarHarness(async () => logs, () => size.promise, () => account.promise);
+    const refresh = provider.updateState();
+    try {
+        await new Promise<void>(resolve => setImmediate(resolve));
+        assert.equal(messages.length, 1);
+        assert.equal(messages[0].type, 'recentLogsPage');
+        assert.deepEqual(messages[0].recentLogs, logs.slice(0, 20));
+        assert.equal(messages[0].activeFile, '/work/solve0.cpp');
+        assert.equal(messages[0].requestId, undefined);
+        size.resolve('10 KB');
+        await new Promise<void>(resolve => setImmediate(resolve));
+        assert.equal(messages.length, 1, 'the file list does not wait for the still-pending account lookup');
+    } finally {
+        size.resolve('10 KB'); account.resolve('reader@example.test');
+        await refresh;
+    }
+    assert.equal(messages[1].type, 'updateState');
+    assert.equal(messages[1].totalLogSize, '10 KB');
+    assert.equal(messages[1].accountLabel, 'reader@example.test');
+});
+
+test('rapid saves publish each new page while stale background state is discarded', async () => {
+    const firstSize = deferred<string>(), secondSize = deferred<string>();
+    let index = logs.slice(0, 1), sizes = 0;
+    const { provider, messages } = sidebarHarness(async () => index, () => ++sizes === 1 ? firstSize.promise : secondSize.promise);
+    const first = provider.updateState();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    index = [logs[1], logs[0]];
+    const second = provider.updateState();
+    try {
+        await new Promise<void>(resolve => setImmediate(resolve));
+        assert.deepEqual(messages.map(message => message.type), ['recentLogsPage', 'recentLogsPage']);
+        assert.deepEqual(messages[1].recentLogs, index);
+        assert.ok(messages[1].recentLogsRevision > messages[0].recentLogsRevision);
+        secondSize.resolve('20 KB');
+        await second;
+    } finally {
+        firstSize.resolve('10 KB'); secondSize.resolve('20 KB');
+        await Promise.all([first, second]);
+    }
+    assert.equal(messages.length, 3);
+    assert.equal(messages[2].type, 'updateState');
+    assert.equal(messages[2].totalLogSize, '20 KB');
+    assert.deepEqual(messages[2].recentLogs, index);
+});

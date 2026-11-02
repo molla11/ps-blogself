@@ -45,3 +45,20 @@ test('folder selection cancellation preserves input and failures remain editable
     await expect(page.locator('#root')).toHaveValue(''); await expect(page.locator('#root')).toHaveAttribute('placeholder', '현재 열려있는 모든 파일');
     await expect(page.locator('#error')).toBeHidden();
 });
+
+test('current-directory selection exposes its window scope through edits and reset', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 740 });
+    await openWebview(page, 'settings'); await emit(page, initial);
+    await expect(page.locator('#window-root-description')).toBeHidden();
+    await page.getByRole('button', { name: '현재 폴더로 설정 (이 창)', exact: true }).click();
+    const selected = (await messages(page)).at(-1);
+    expect(selected.type).toBe('currentDirectory');
+    await emit(page, { ...initial, windowRoot: true });
+    await emit(page, { type: 'saved', id: selected.id });
+    await expect(page.locator('#window-root-description')).toContainText('이 창에만 적용됩니다.');
+    await page.locator('#reset-root').click();
+    await emit(page, { ...initial, root: '', windowRoot: true });
+    await expect(page.locator('#root')).toHaveValue('');
+    await expect(page.locator('#window-root-description')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});

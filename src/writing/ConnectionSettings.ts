@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { parseEnv } from 'node:util';
 
 export const PUBLIC_API = 'https://psb-backend.shinem.dev/api';
+export const PUBLIC_LOGIN = 'https://auth.shinem.dev';
 export interface ConnectionEnvironment { [name: string]: string | undefined; PSB_API_URL?: string }
 
 
@@ -12,6 +13,15 @@ export function serviceUrl(value: string) {
         throw new Error('서버 주소는 HTTPS 또는 로컬 HTTP 주소여야 합니다.');
     }
     return url.href.replace(/\/$/, '');
+}
+
+/** Only the production backend may open our separate, fixed login origin. */
+export function loginUrl(value: string, base: string): string {
+    const url = new URL(value), api = new URL(serviceUrl(base));
+    const sameOrigin = url.origin === api.origin;
+    const brandedLogin = api.origin === new URL(PUBLIC_API).origin && url.origin === PUBLIC_LOGIN && url.pathname === '/login';
+    if (url.username || url.password || (!sameOrigin && !brandedLogin)) throw new Error('로그인 주소를 확인할 수 없습니다.');
+    return url.href;
 }
 
 /** Read only the extension checkout, never the user's active problem folder. */

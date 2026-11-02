@@ -19,6 +19,7 @@ function render() {
     }
     el('current-directory').disabled = !state.currentDirectory;
     el('current-directory').title = state.currentDirectory || '';
+    el('window-root-description').hidden = !state.windowRoot;
 }
 window.addEventListener('message', event => {
     const message = event.data;

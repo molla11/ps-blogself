@@ -5,7 +5,7 @@ import template from './templates/settings.html';
 import css from './templates/settings.css';
 import script from './templates/settingsScripts.webview.js';
 
-/** Uses the recorder's workspace store directly, including its cross-window locks. */
+/** Uses the recorder's effective settings, including this window's path override. */
 export class SettingsPanel {
     private static current?: SettingsPanel;
     private queue: Promise<void> = Promise.resolve();
@@ -43,7 +43,7 @@ export class SettingsPanel {
     private render() {
         if (this.disposed) return;
         void this.panel.webview.postMessage({ type: 'settings',
-            root: configManager.getRootFolder(), currentDirectory: configManager.getCurrentDirectory(),
+            root: configManager.getRootFolder(), currentDirectory: configManager.getCurrentDirectory(), windowRoot: configManager.isWindowRoot(),
             recording: configManager.isRecording(), extensions: configManager.getSupportedLanguages(),
             prepareOnReview: vscode.workspace.getConfiguration('psb').get('prepareOnReview', true),
         });
@@ -60,7 +60,7 @@ export class SettingsPanel {
             }
             case 'currentDirectory': {
                 const directory = configManager.getCurrentDirectory();
-                if (directory) await configManager.setRootFolder(directory);
+                if (directory) await configManager.setRootFolder(directory, true);
                 break;
             }
             case 'resetRoot': await configManager.setRootFolder(''); break;

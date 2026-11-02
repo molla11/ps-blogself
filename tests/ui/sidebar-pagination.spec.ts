@@ -26,6 +26,22 @@ test.beforeEach(async ({ page }) => {
     await openWebview(page, true);
 });
 
+test('a save refresh renders before background state and is not replaced by a late older state', async ({ page }) => {
+    await state(page, [], 1, false);
+    const saved = { ...logs[0], fileName: 'saved.cpp', filePath: '/work/saved.cpp', lastModified: Date.now() };
+    await send(page, {
+        type: 'recentLogsPage', activeFile: saved.filePath, recentLogs: [saved],
+        recentLogsRevision: 3, recentLogsSearchId: 0, hasMoreRecentLogs: false,
+    });
+    await expect(rows(page)).toHaveCount(1);
+    await expect(rows(page).first()).toContainText('saved.cpp');
+    await expect(page.locator('#generate-blog-btn')).toBeEnabled();
+    await state(page, [logs[0]], 2, false);
+    await expect(rows(page).first()).toContainText('saved.cpp');
+    await page.locator('#generate-blog-btn').click();
+    expect(await page.evaluate(() => (window as any).__messages.at(-1))).toEqual({ type: 'generateBlog', path: saved.filePath });
+});
+
 test('scrolling loads successive pages once, keeps the heading fixed, and stops at the end', async ({ page }) => {
     await state(page);
     await expect(rows(page)).toHaveCount(20);

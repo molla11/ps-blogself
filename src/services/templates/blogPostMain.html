@@ -65,7 +65,7 @@
                 </div>
             </div>
             <nav id="view-tabs" aria-label="글 작성 화면">
-                <button class="tab active" id="plan-tab" aria-pressed="true">글 준비</button
+                <button class="tab active" id="plan-tab" aria-pressed="true">변경사항 요약</button
                 ><button class="tab" id="article-tab" aria-pressed="false" disabled>완성된 글</button>
             </nav>
             <section id="stream-box" hidden>
@@ -74,17 +74,17 @@
             </section>
             <section id="plan-view">
                 <div id="preparing">
-                    <h2>풀이 흐름 준비</h2>
-                    <p>변경 구간과 풀이 설명을 먼저 채워드릴게요.</p>
-                    <button id="prepare-empty-btn" class="secondary" hidden>풀이 준비</button>
+                    <h2>변경사항 요약</h2>
+                    <p>코드의 변경사항을 순서대로 정리해 드릴게요.</p>
+                    <button id="prepare-empty-btn" class="secondary" hidden>변경사항 요약하기</button>
                 </div>
                 <div id="plan-content" class="preparation-content" hidden>
                     <div class="section-heading">
                         <div>
-                            <h2>글의 흐름</h2>
-                            <p class="section-description">제목과 설명을 확인하고 글쓰기를 시작하세요.</p>
+                            <h2>변경사항 요약</h2>
+                            <p class="section-description">메모를 순서대로 정리한 뒤 글로 이어가세요.</p>
                         </div>
-                        <button class="quiet" id="prepare-btn">다시 준비</button>
+                        <button class="quiet" id="prepare-btn">다시 요약</button>
                     </div>
                     <details class="range-box" id="range-details">
                         <summary>
@@ -106,18 +106,19 @@
                         </div>
                         <div id="range-changes" class="range-changes"></div>
                     </details>
-                    <label class="field"
-                        >글 제목<input id="plan-title" maxlength="300" placeholder="글 제목"
-                    /></label>
-                    <label class="field"
-                        >전체 설명<textarea
-                            id="summary"
-                            rows="3"
-                            maxlength="12000"
-                            placeholder="풀이의 전체 흐름"
-                        ></textarea>
-                    </label>
-                    <div id="steps"></div>
+                    <div class="plan-process" role="group" aria-label="제목과 메모">
+                        <div class="process-title process-node">
+                            <label class="field" for="plan-title">제목
+                                <input id="plan-title" maxlength="300" placeholder="글 제목" />
+                            </label>
+                            <details id="summary-details" class="summary-details">
+                                <summary>전체 설명</summary>
+                                <textarea id="summary" aria-label="전체 설명" rows="3" maxlength="12000" placeholder="풀이의 전체 흐름"></textarea>
+                            </details>
+                        </div>
+                        <div id="steps" role="group" aria-label="변경사항 메모"></div>
+                    </div>
+                    <p id="memo-limit" class="muted" role="status" hidden>메모는 최대 12개까지 추가할 수 있어요.</p>
                 </div>
                 <label class="field" for="writing-mode"><span id="writing-mode-label">글 구성</span>
                     <select id="writing-mode" aria-labelledby="writing-mode-label" aria-describedby="writing-mode-help">

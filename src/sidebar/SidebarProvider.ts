@@ -176,8 +176,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const revision = ++this._stateRevision;
         const view = this._view;
         if (view) {
+            const recentLogs = this._recentLogs;
             const [page, totalSize, accountLabel, usage, notices] = await Promise.all([
-                this._recentLogs.load(),
+                recentLogs.load().then(async page => {
+                    // A saved file is ready to show before size scans and account
+                    // lookups finish. Page revisions still protect newer results.
+                    if (view === this._view && recentLogs === this._recentLogs) {
+                        await view.webview.postMessage({
+                            type: 'recentLogsPage',
+                            activeFile: vscode.window.activeTextEditor?.document.uri.fsPath,
+                            ...page,
+                        });
+                    }
+                    return page;
+                }),
                 storageManager.calculateTotalSize(),
                 BlogPostManager.accountLabel(),
                 BlogPostManager.usage(),
@@ -189,6 +201,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 type: 'updateState',
                 activeFile: vscode.window.activeTextEditor?.document.uri.fsPath,
                 root: configManager.getRootFolder(),
+                windowRoot: configManager.isWindowRoot(),
                 currentDirectory: configManager.getCurrentDirectory(),
                 isRecording: configManager.isRecording(),
                 languages: configManager.getSupportedLanguages(),

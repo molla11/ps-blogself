@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { FileHistory } from '../types';
@@ -69,6 +69,65 @@ test('settings in the same workspace merge simultaneous changes and notify the o
         return left.root === '/both' && right.root === '/both' && !left.recording && !right.recording;
     });
     assert.ok((await a.call('settingsValue')).updates > 0 || (await b.call('settingsValue')).updates > 0);
+}));
+
+test('current-directory roots stay local to each host, including recording and later resets', {timeout: 20000}, () => windows(async (a, b, dir) => {
+    const left = path.join(dir, 'project-a'), right = path.join(dir, 'project-b');
+    await Promise.all([mkdir(left), mkdir(right)]);
+    const shared = { directory: dir, workspace: path.join(dir, 'config-workspace'), folders: [left, right] };
+    await Promise.all([
+        a.call('configInit', { ...shared, activeFile: path.join(left, 'solve.py') }),
+        b.call('configInit', { ...shared, activeFile: path.join(right, 'solve.py') }),
+    ]);
+    await a.call('configRoot', { path: dir });
+    await until(async () => (await b.call('configValue')).root === dir);
+    await a.call('configRoot', { windowOnly: true });
+    assert.equal((await a.call('configValue')).root, left);
+    assert.equal((await b.call('configValue')).root, dir);
+    await b.call('configRoot', { windowOnly: true });
+    assert.equal((await b.call('configValue')).root, right);
+    await Promise.all([
+        a.call('recordDocument', { file: path.join(left, 'solve.py'), content: 'print("left")' }),
+        b.call('recordDocument', { file: path.join(right, 'solve.py'), content: 'print("right")' }),
+        a.call('recordDocument', { file: path.join(right, 'excluded-a.py'), content: 'print("excluded")' }),
+        b.call('recordDocument', { file: path.join(left, 'excluded-b.py'), content: 'print("excluded")' }),
+    ]);
+    assert.deepEqual(new Set((await a.call('index')).map((item: any) => item.filePath)), new Set([path.join(left, 'solve.py'), path.join(right, 'solve.py')]));
+    // Changing editor focus updates the next folder choice, not the selected root.
+    const switched = await a.call('configActiveFile', path.join(right, 'other.py'));
+    assert.equal(switched.currentDirectory, right); assert.equal(switched.root, left);
+    await Promise.all([a.call('configLanguages', ['py', 'rs']), b.call('configRecording', false)]);
+    await until(async () => {
+        const av = await a.call('configValue'), bv = await b.call('configValue');
+        return !av.recording && bv.languages.includes('rs');
+    });
+    assert.equal((await a.call('configValue')).root, left);
+    assert.equal((await b.call('configValue')).root, right);
+    await a.call('configRoot', { path: '' });
+    assert.equal((await a.call('configValue')).root, '');
+    assert.equal((await a.call('configValue')).windowRoot, true);
+    assert.equal((await b.call('configValue')).root, right);
+    await a.call('configRoot', { path: left });
+    await assert.rejects(a.call('configRoot', { path: path.join(dir, 'missing') }), /존재하는 폴더/);
+    assert.equal((await a.call('configValue')).root, left);
+    assert.equal((await b.call('configValue')).root, right);
+    const reloaded = await a.call('configReload');
+    assert.equal(reloaded.root, dir); assert.equal(reloaded.windowRoot, false);
+    await a.call('configRoot', { path: left });
+    await b.call('configReload');
+    assert.equal((await b.call('configValue')).root, left);
+}));
+
+test('a window without a workspace can independently use the open file directory', {timeout: 20000}, () => windows(async (a, b, dir) => {
+    const left = path.join(dir, 'loose-a'), right = path.join(dir, 'loose-b');
+    await Promise.all([mkdir(left), mkdir(right)]);
+    await Promise.all([
+        a.call('configInit', { directory: dir, folders: [], activeFile: path.join(left, 'solve.py') }),
+        b.call('configInit', { directory: dir, folders: [], activeFile: path.join(right, 'solve.py') }),
+    ]);
+    await Promise.all([a.call('configRoot', { windowOnly: true }), b.call('configRoot', { windowOnly: true })]);
+    assert.equal((await a.call('configValue')).root, left);
+    assert.equal((await b.call('configValue')).root, right);
 }));
 
 

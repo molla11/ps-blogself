@@ -68,7 +68,7 @@ async function clearRootFolder(sidebarProvider: SidebarProvider) {
 }
 
 async function useCurrentDirectory(sidebarProvider: SidebarProvider, directory: string) {
-    await configManager.setRootFolder(directory);
+    await configManager.setRootFolder(directory, true);
     await sidebarProvider.updateState();
 }
 

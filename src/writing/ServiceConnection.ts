@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { createHash, randomBytes } from 'crypto';
-import { ConnectionEnvironment, resolveConnectionSettings, serviceUrl } from './ConnectionSettings';
+import { ConnectionEnvironment, resolveConnectionSettings, serviceUrl, loginUrl } from './ConnectionSettings';
 import { AccountUsage, accountUsage, UsageView, usageView } from './Usage';
 import { NoticeFeed } from './NoticeFeed';
 
@@ -131,9 +131,8 @@ export class ServiceConnection {
         this.login = Promise.resolve(vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: '브라우저에서 로그인을 완료해 주세요.', cancellable: true }, async (_progress, cancellation) => {
             const verifier = randomBytes(32).toString('base64url');
             const challenge = createHash('sha256').update(verifier).digest('base64url');
-            const flow = await this.fetchJson<{ id: string; loginUrl: string }>(base, '/auth/start', 'POST', { challenge });
-            if (new URL(flow.loginUrl).origin !== new URL(base).origin) throw new Error('로그인 주소를 확인할 수 없습니다.');
-            if (!await vscode.env.openExternal(vscode.Uri.parse(flow.loginUrl))) throw new Error('로그인 브라우저를 열 수 없습니다.');
+            const flow = await this.fetchJson<{ id: string; loginUrl: string }>(base, '/auth/start', 'POST', { challenge, presentation: 'clean' });
+            if (!await vscode.env.openExternal(vscode.Uri.parse(loginUrl(flow.loginUrl, base)))) throw new Error('로그인 브라우저를 열 수 없습니다.');
             const deadline = Date.now() + 10 * 60 * 1000;
             while (!cancellation.isCancellationRequested && Date.now() < deadline) {
                 const result = await this.fetchJson<Credentials | { pending: true }>(base, '/auth/exchange', 'POST', { id: flow.id, verifier });

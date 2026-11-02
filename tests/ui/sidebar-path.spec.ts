@@ -113,3 +113,17 @@ test('path and file menus dismiss each other and current-directory updates use t
     await page.getByRole('menuitem', { name: '/other/workspace/로 설정', exact: true }).click();
     expect(await lastMessage(page)).toEqual({ type: 'useWorkspaceRoot', path: '/other/workspace' });
 });
+
+test('a window-specific active path is labeled even after resetting to all open files', async ({ page }) => {
+    await expect(page.locator('#window-root-label')).toBeHidden();
+    for (const root of ['/work', '']) {
+        await page.evaluate(root => window.dispatchEvent(new MessageEvent('message', { data: {
+            type: 'updateState', root, windowRoot: true, currentDirectory: '/work', isRecording: true, languages: ['cpp'],
+        } })), root);
+        await expect(page.locator('#window-root-label')).toHaveText('이 창');
+        await expect(page.locator('#window-root-label')).toBeVisible();
+        await expect(page.locator('#root-folder-display')).toHaveText(root || '현재 열려있는 모든 파일');
+    }
+    await page.getByRole('button', { name: '활성 경로 재설정', exact: true }).click();
+    expect(await lastMessage(page)).toEqual({ type: 'clearRootFolder' });
+});

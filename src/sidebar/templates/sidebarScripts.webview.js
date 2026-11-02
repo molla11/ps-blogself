@@ -514,6 +514,7 @@ window.addEventListener('message', (event) => {
                 usage.disabled = message.usage?.status === 'loading';
             }
             rootDisplay.textContent = message.root || '현재 열려있는 모든 파일';
+            document.getElementById('window-root-label').hidden = !message.windowRoot;
             rootButton.title = rootDisplay.textContent;
             rootHint.hidden = !message.root;
             if (typeof message.currentDirectory === 'string') updateCurrentDirectory(message.currentDirectory);

@@ -87,7 +87,7 @@ test('AI-filled text and range can generate a complete draft without typing', as
     await open(page);
     await model(page);
     await expect(page.getByLabel('전체 설명', { exact: true })).toHaveValue(plan.summary);
-    await expect(page.getByLabel('1단계 설명')).toHaveValue(plan.steps[0].body);
+    await expect(page.getByLabel('메모 #1 내용')).toHaveValue(plan.steps[0].body);
     await expect(page.locator('#range-info')).toContainText('#1–2');
     await page.getByRole('button', { name: '이대로 글쓰기' }).click();
     const request = (await messages(page)).find((m: any) => m.type === 'generate');
@@ -114,6 +114,7 @@ test('late saves and progress updates preserve input typed while a request is ru
 }) => {
     await open(page);
     await model(page);
+    await page.locator('#summary-details > summary').click();
     await page.locator('#summary').fill('첫 수정');
     await expect
         .poll(async () => (await messages(page)).filter((m: any) => m.type === 'save').length)
@@ -162,6 +163,7 @@ test('single-change ranges remain valid and code containing HTML is rendered as 
 test('clicking generate flushes the latest explanation even before autosave', async ({ page }) => {
     await open(page);
     await model(page);
+    await page.locator('#summary-details > summary').click();
     await page.locator('#summary').fill('최종 설명');
     await page.getByRole('button', { name: '이대로 글쓰기' }).click();
     expect((await messages(page)).find((m: any) => m.type === 'generate').fields.plan.summary).toBe(
@@ -195,12 +197,12 @@ test('narrowing and widening a range preserves edited step explanations', async 
             ],
         },
     });
-    await page.getByLabel('1단계 설명').fill('보존할 수정 문장');
+    await page.locator('#step-body-0').fill('보존할 수정 문장');
     await page.locator('#range-details > summary').click();
     await page.locator('#range-start').fill('1');
-    await expect(page.getByLabel('1단계 설명')).toBeHidden();
+    await expect(page.locator('#step-body-0')).toBeHidden();
     await page.locator('#range-start').fill('0');
-    await expect(page.getByLabel('1단계 설명')).toHaveValue('보존할 수정 문장');
+    await expect(page.locator('#step-body-0')).toHaveValue('보존할 수정 문장');
 });
 
 test('streaming shows a readable preview without replacing an edited article', async ({ page }) => {
@@ -223,7 +225,7 @@ test('cancelled initial preparation can restart without closing the writer', asy
     await page.locator('#cancel-btn').click();
     expect((await messages(page)).at(-1).type).toBe('cancel');
     await model(page, { plan: undefined, pending: false, running: false, status: '작업을 취소했습니다.' });
-    await page.getByRole('button', { name: '풀이 준비', exact: true }).click();
+    await page.getByRole('button', { name: '변경사항 요약하기', exact: true }).click();
     expect((await messages(page)).at(-1).type).toBe('prepare');
 });
 
@@ -249,6 +251,7 @@ test('another window’s writer is read-only, follows live text, and can request
 test('losing ownership preserves unsaved input for explicit recovery', async ({ page }) => {
     await open(page);
     await model(page);
+    await page.locator('#summary-details > summary').click();
     await page.locator('#summary').fill('아직 저장하지 못한 설명');
     await model(page, { editable: false, editToken: 'window-b' });
     await expect(page.locator('#recovery-box')).toBeVisible();

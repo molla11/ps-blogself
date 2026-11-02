@@ -25,6 +25,8 @@ let recoveryApplied = false;
 const imageRequests = new Map();
 let ghostState = { connected: false };
 const modelOptions = [...el('writing-model-options').querySelectorAll('[role=option]')];
+// Keep the UI within validatePlan's saved-step limit.
+const MAX_MEMOS = 12;
 const richEditor = createArticleEditor({
     element: el('rich-editor'), toolbar: el('format-tools'), outline: el('outline-list'),
     onChange(markdown, document) {
@@ -125,49 +127,104 @@ function diffDisclosure(start, end) {
     });
     return details;
 }
+function insertMemo(index) {
+    const plan = form.plan;
+    if (!plan || model?.editable === false || plan.steps.length >= MAX_MEMOS) return;
+    const inRange = step => step.end >= plan.start && step.start <= plan.end;
+    const neighbor = plan.steps.slice(index).find(inRange) || plan.steps.slice(0, index).reverse().find(inRange);
+    plan.steps.splice(index, 0, {
+        title: '', body: '',
+        start: Math.max(plan.start, neighbor?.start ?? plan.start),
+        end: Math.min(plan.end, neighbor?.end ?? plan.end),
+    });
+    changed('plan');
+    renderSteps();
+    el('step-body-' + index).focus();
+}
+function memoInsertion(index, label) {
+    const row = document.createElement('div');
+    row.className = 'memo-insertion';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'quiet memo-add';
+    button.textContent = '메모 추가';
+    button.setAttribute('aria-label', label);
+    button.addEventListener('click', () => insertMemo(index));
+    row.appendChild(button);
+    return row;
+}
 function renderSteps() {
     const container = el('steps'),
         plan = form.plan;
     if (!plan) return;
-    const structure = JSON.stringify(plan.steps.map((s) => [s.start, s.end]));
+    const visible = plan.steps.map((step, index) => ({ step, index }))
+        .filter(({ step }) => step.end >= plan.start && step.start <= plan.end);
+    const structure = JSON.stringify([plan.start, plan.end, plan.steps.map((s) => [s.start, s.end])]);
     if (container.dataset.structure !== structure) {
         container.replaceChildren();
         container.dataset.structure = structure;
-        plan.steps.forEach((step, index) => {
+        container.appendChild(memoInsertion(visible[0]?.index ?? plan.steps.length, '첫 메모 추가'));
+        visible.forEach(({ step, index }, position) => {
+            const label = `메모 #${position + 1}`;
             const section = document.createElement('section');
-            section.className = 'step';
+            section.className = 'step process-node';
+            section.setAttribute('aria-labelledby', 'memo-label-' + index);
             const row = document.createElement('div');
-            row.className = 'step-title';
-            const number = document.createElement('span');
-            number.textContent = String(index + 1).padStart(2, '0');
+            row.className = 'step-heading';
+            const number = document.createElement('h3');
+            number.id = 'memo-label-' + index;
+            number.textContent = label;
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'quiet step-remove';
+            remove.textContent = '삭제';
+            remove.setAttribute('aria-label', `${label} 삭제`);
+            remove.addEventListener('click', () => {
+                if (model?.editable === false) return;
+                form.plan.steps.splice(index, 1);
+                changed('plan');
+                renderSteps();
+                const remaining = container.querySelectorAll('.step textarea');
+                (remaining[Math.min(position, remaining.length - 1)] || container.querySelector('.memo-add')).focus();
+            });
+            row.append(number, remove);
             const title = document.createElement('input');
             title.id = 'step-title-' + index;
             title.maxLength = 300;
-            title.setAttribute('aria-label', `${index + 1}단계 제목`);
+            title.placeholder = '메모 제목 (선택)';
+            title.setAttribute('aria-label', `${label} 제목`);
             title.addEventListener('input', () => {
                 form.plan.steps[index].title = title.value;
                 changed('plan');
             });
-            row.append(number, title);
             const body = document.createElement('textarea');
             body.id = 'step-body-' + index;
             body.rows = 3;
             body.maxLength = 12000;
-            body.setAttribute('aria-label', `${index + 1}단계 설명`);
+            body.placeholder = '바꾼 내용과 이유를 적어보세요.';
+            body.setAttribute('aria-label', `${label} 내용`);
             body.addEventListener('input', () => {
                 form.plan.steps[index].body = body.value;
                 height(body);
                 changed('plan');
             });
-            section.append(row, body, diffDisclosure(step.start, step.end));
+            const start = Math.max(step.start, plan.start), end = Math.min(step.end, plan.end);
+            const code = diffDisclosure(start, end);
+            code.querySelector('summary').textContent = `변경 #${start + 1}${start === end ? '' : '–' + (end + 1)} · 코드 변화 보기`;
+            section.append(row, title, body, code);
             container.appendChild(section);
+            container.appendChild(memoInsertion(index + 1, `${label} 뒤에 메모 추가`));
         });
     }
-    plan.steps.forEach((step, index) => {
-        container.children[index].hidden = step.end < plan.start || step.start > plan.end;
+    visible.forEach(({ step, index }) => {
         value('step-title-' + index, step.title);
         value('step-body-' + index, step.body);
     });
+    const editable = model?.editable !== false;
+    container.querySelectorAll('input, textarea').forEach(node => { node.readOnly = !editable; });
+    container.querySelectorAll('.step-remove').forEach(button => { button.disabled = !editable; });
+    container.querySelectorAll('.memo-add').forEach(button => { button.disabled = !editable || plan.steps.length >= MAX_MEMOS; });
+    el('memo-limit').hidden = plan.steps.length < MAX_MEMOS;
 }
 function switchTab(tab) {
     activeTab = tab;
@@ -295,8 +352,8 @@ function render() {
     el('status-text').textContent =
         model.status ||
         (form.plan
-            ? '준비된 내용을 그대로 사용하거나 자유롭게 고쳐보세요.'
-            : '풀이 흐름을 준비해 주세요.');
+            ? '변경사항 메모를 그대로 사용하거나 자유롭게 고쳐보세요.'
+            : '변경사항을 요약해 주세요.');
     el('progress-box').hidden = !model.pending && !model.running && !/저장|복사|적용|취소/.test(model.status || '');
     el('error-box').hidden = !model.error;
     el('error-text').textContent = model.error || '';
@@ -307,7 +364,7 @@ function render() {
     el('prepare-empty-btn').hidden = !!model.pending || !!model.running || !!model.candidate;
     el('preparing').querySelector('p').textContent = model.error
         ? '안내를 확인한 뒤 다시 시도할 수 있어요.'
-        : '변경 구간과 풀이 설명을 먼저 채워드릴게요.';
+        : '코드의 변경사항을 순서대로 정리해 드릴게요.';
     el('plan-content').hidden = !form.plan;
     el('generate-btn').disabled = !form.plan || model.pending;
     el('generate-btn').textContent = model.pending
@@ -520,6 +577,7 @@ el('summary').addEventListener('input', (event) => {
     height(event.target);
     changed('plan');
 });
+el('summary-details').addEventListener('toggle', () => height(el('summary')));
 el('prepare-empty-btn').addEventListener('click', () => action('prepare'));
 el('version-select').addEventListener('change', event => chooseVersion(event.target.value));
 for (const [id, offset] of [['version-older-btn', 1], ['version-newer-btn', -1]]) {

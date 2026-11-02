@@ -7,7 +7,8 @@
             <label for="root">활성 경로</label>
             <p id="root-description">활성 경로 밖의 파일 수정은 기록하지 않습니다.</p>
             <div class="input-row"><input id="root" type="text" maxlength="4096" placeholder="현재 열려있는 모든 파일" aria-describedby="root-description" autocomplete="off"><button type="submit" id="save-root">적용</button></div>
-            <div class="path-actions"><button type="button" class="secondary" id="choose-folder">폴더 선택</button><button type="button" class="secondary" id="current-directory">현재 폴더로 설정</button><button type="button" class="quiet" id="reset-root">재설정</button></div>
+            <div class="path-actions"><button type="button" class="secondary" id="choose-folder">폴더 선택</button><button type="button" class="secondary" id="current-directory">현재 폴더로 설정 (이 창)</button><button type="button" class="quiet" id="reset-root">재설정</button></div>
+            <p id="window-root-description" hidden>이 창에만 적용됩니다. 창을 닫거나 다시 불러오면 작업 공간의 저장된 경로로 돌아갑니다.</p>
         </form>
         <form id="extensions-form" class="setting">
             <label for="extensions">대상 확장자</label>

@@ -11,6 +11,7 @@ export class ConfigManager {
     private static readonly LANGUAGES_KEY = 'psb.languages';
     private static _instance: ConfigManager;
     private _lastFile?: vscode.Uri;
+    private windowRoot?: string;
     private settings = new WorkspaceSettings();
     private changed = new vscode.EventEmitter<void>();
     readonly onDidChange = this.changed.event;
@@ -25,6 +26,7 @@ export class ConfigManager {
     }
 
     public async init(context: vscode.ExtensionContext) {
+        this.windowRoot = undefined;
         this.settings = new WorkspaceSettings(context.storageUri && path.join(context.storageUri.fsPath, 'recording-settings.json'));
         const migration = path.join(context.globalStorageUri.fsPath, 'recording-settings-migration.json');
         await withFileLock(migration, async () => {
@@ -52,14 +54,21 @@ export class ConfigManager {
     }
 
     public getRootFolder(): string {
-        return this.settings.value.root.trim();
+        return this.windowRoot ?? this.settings.value.root.trim();
     }
 
-    public async setRootFolder(folderPath: string): Promise<void> {
+    public isWindowRoot(): boolean {
+        return this.windowRoot !== undefined;
+    }
+
+    public async setRootFolder(folderPath: string, windowOnly = false): Promise<void> {
         const input = folderPath.trim();
         const root = input ? path.resolve(this.getCurrentDirectory() || '.', input) : '';
         if (root && !isValidFolderPath(root)) throw new Error('존재하는 폴더를 선택해 주세요.');
-        await this.settings.update(value => { value.root = root; });
+        // Selecting this window's current directory must never change another
+        // window's recorder. Later edits and resets retain that local scope.
+        if (windowOnly || this.isWindowRoot()) this.windowRoot = root;
+        else await this.settings.update(value => { value.root = root; });
         this.changed.fire();
     }
 

@@ -86,6 +86,7 @@ exports.run = async () => {
         if (stage === 'first') {
             assert.equal(await writer.frame.locator('#summary').inputValue(), 'AI가 미리 정리한 설명');
             assert.equal((await requests()).length, 1, 'opening writer must reuse preparation');
+            await writer.frame.locator('#summary-details > summary').click();
             await writer.frame.locator('#summary').fill('서버 경로에서 수정한 의도');
             await writer.frame.locator('#generate-btn').click();
             await until(async () => (await writer.frame.locator('#stream-preview').innerText()).includes('생성 중인 본문'), 'stream visible before completion');

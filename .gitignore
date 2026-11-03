@@ -11,6 +11,6 @@ media/codicons/
 .env.*
 !.env.example
 
-# Reports and progress archives are maintained in ps-blogself-backend.
-/docs/reports/
-/docs/progress*.md
+# Documentation and video projects are maintained in ps-blogself-backend.
+/docs/
+/video/

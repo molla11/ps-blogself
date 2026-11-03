@@ -41,7 +41,7 @@ Lexical 기반 블록 편집기에서 제목·목록·인용·코드·표·이�
 - HTML 파일 저장. 로컬 이미지를 포함하므로 브라우저에서 바로 열 수 있습니다.
 - Ghost 연결 및 초안 저장. 공개 게시는 별도 확인을 거치며 이후에는 같은 글을 갱신합니다. Ghost에서 수정한 글은 자동으로 덮어쓰지 않습니다.
 
-Ghost 연결에는 해당 사이트의 Admin API 키가 필요하며 키는 VS Code SecretStorage에 저장합니다. 표·체크 목록은 Ghost HTML 카드로 변환합니다. 자세한 지원 범위는 [편집기와 Ghost 내보내기](docs/lexical-ghost.md)를 참고하세요.
+Ghost 연결에는 해당 사이트의 Admin API 키가 필요하며 키는 VS Code SecretStorage에 저장합니다. 표·체크 목록은 Ghost HTML 카드로 변환합니다. 자세한 지원 범위는 [편집기와 Ghost 내보내기](https://github.com/molla11/ps-blogself-backend/blob/main/docs/ps-blogself/lexical-ghost.md)를 참고하세요.
 
 설정 탭의 **내보내기 → 추가할 태그**에 `알고리즘, PS, segment tree`처럼 쉼표로 구분해 입력하고 **적용**을 누르세요. Ghost에는 기존 태그를 유지하며 추가하고, Markdown 저장·복사에는 `tags` 메타데이터, HTML에는 키워드로 포함합니다. 태그 안의 공백은 유지하며 중복과 빈 항목은 정리합니다. 비워두면 태그를 추가하지 않습니다.
 

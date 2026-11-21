@@ -1,10 +1,29 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { RecentLogsPager } from '../sidebar/RecentLogsPager';
+import { mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { FileModifiedTimes } from '../storage/FileModifiedTime';
 
 const logs = Array.from({ length: 55 }, (_, i) => ({
     fileName: `solve${i}.cpp`, filePath: `/work/solve${i}.cpp`, language: 'cpp', lastModified: 1000 - i, fileHash: String(i),
 }));
+
+test('file dates prefer the saved snapshot, fall back to disk, and omit unavailable dates', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'psb-file-dates-'));
+    try {
+        const file = { filePath: join(directory, 'solve.py'), language: 'python' };
+        const missing = { filePath: join(directory, 'gone.cpp'), language: 'cpp' };
+        const diskTime = new Date('2025-09-20T12:30:00Z');
+        await writeFile(file.filePath, 'print(1)');
+        await utimes(file.filePath, diskTime, diskTime);
+        const times = new FileModifiedTimes();
+        const history = { ...logs[0], ...file, language: 'custom', lastModified: diskTime.getTime() - 60000 };
+        assert.deepEqual((await times.newestFirst([file], [history]))[0], { ...file, language: 'custom', lastModified: history.lastModified });
+        assert.deepEqual(await times.newestFirst([file, missing]), [{ ...file, lastModified: diskTime.getTime() }, missing]);
+    } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test('recent history expands through the final page and duplicate requests do not skip files', async () => {
     const pager = new RecentLogsPager(async () => logs);
@@ -17,6 +36,26 @@ test('recent history expands through the final page and duplicate requests do no
     assert.deepEqual(last.recentLogs, logs);
     assert.equal(last.hasMoreRecentLogs, false);
     assert.deepEqual((await pager.load()).recentLogs, logs);
+});
+
+test('disk files and recordings are ranked together before preview, search and pagination', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'psb-file-order-'));
+    try {
+        const file = { filePath: join(directory, 'solve99.py'), fileName: 'solve99.py', language: 'python', source: 'folder' as const };
+        await writeFile(file.filePath, 'print(99)');
+        const times = new FileModifiedTimes();
+        const all = [...logs, file];
+        const read = () => times.newestFirst(all);
+        const pager = new RecentLogsPager(read);
+        pager.setSearch('solve', 1);
+        const page = await pager.load();
+        assert.equal(page.recentLogs.length, 20);
+        assert.equal(page.recentLogs[0].filePath, file.filePath);
+        assert.equal((await read()).slice(0, 4)[0].filePath, file.filePath);
+        await utimes(file.filePath, new Date(0), new Date(0));
+        times.invalidate(file.filePath);
+        assert.equal((await read()).at(-1)?.filePath, file.filePath);
+    } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('new and reordered records retain all loaded files without offset gaps', async () => {
@@ -46,6 +85,16 @@ test('concurrent refreshes are ordered and a failed read can be retried', async 
     const pages = await Promise.all([pager.load(), pager.load(20), pager.load(40)]);
     assert.deepEqual(pages.map(page => page.recentLogs.length), [20, 40, 55]);
     assert.deepEqual(pages.map(page => page.recentLogsRevision), [1, 2, 3]);
+});
+
+test('closing a discovered tab does not expand the page to its new directory position', async () => {
+    const folder = logs.map(({ filePath, fileName, language }) => ({ filePath, fileName, language, source: 'folder' as const }));
+    const tab = { ...folder.at(-1)!, source: 'open' as const };
+    let opened = true;
+    const pager = new RecentLogsPager(async () => opened ? [tab, ...folder.slice(0, -1)] : folder);
+    assert.deepEqual((await pager.load()).recentLogs[0], tab);
+    opened = false;
+    assert.deepEqual((await pager.load()).recentLogs, folder.slice(0, 20));
 });
 
 test('search covers the complete index by file name or path, including Unicode and literal punctuation', async () => {
@@ -156,7 +205,7 @@ function sidebarHarness(read: () => Promise<typeof logs>, size: () => Promise<st
     try {
         const { SidebarProvider } = require('../sidebar/SidebarProvider');
         const noop = () => {};
-        const provider: import('../sidebar/SidebarProvider').SidebarProvider = new SidebarProvider({}, noop, noop, noop, noop, noop);
+        const provider: import('../sidebar/SidebarProvider').SidebarProvider = new SidebarProvider({}, noop, noop, noop, noop, noop, { withHistory: (files: unknown[]) => files });
         (provider as any).writingLogs = async (logs: unknown[]) => logs;
         const messages: any[] = [];
         (provider as any)._view = { webview: { postMessage: async (message: unknown) => { messages.push(message); return true; } } };
@@ -219,7 +268,7 @@ test('service polling refreshes notices and usage while the window and sidebar a
     const disposed = () => ({ dispose() {} });
     let usage = 0, notices = 0, tick!: () => void, onFocus!: () => void;
     const disposeCallbacks: (() => void)[] = [];
-    const manager = { onDidChange: disposed, refreshUsage: async () => { usage++; }, refreshNotices: async () => { notices++; } };
+    const manager = { onDidChange: disposed, onDidChangeControls: disposed, setSidebarVisible() {}, refreshUsage: async () => { usage++; }, refreshNotices: async () => { notices++; } };
     const mocks: Record<string, unknown> = {
         vscode: { window: { state: { focused: false }, onDidChangeWindowState: (listener: () => void) => { onFocus = listener; return disposed(); }, onDidChangeActiveTextEditor: disposed },
             workspace: { onDidChangeWorkspaceFolders: disposed } },
@@ -239,7 +288,7 @@ test('service polling refreshes notices and usage while the window and sidebar a
         return { unref() {} } as NodeJS.Timeout;
     });
     const clear = t.mock.method(globalThis, 'clearInterval', () => {});
-    const provider = new Provider!({} as any, () => {}, () => {}, () => {}, () => {}, () => {});
+    const provider = new Provider!({} as any, () => {}, () => {}, () => {}, () => {}, () => {}, { onDidChange: disposed } as any);
     provider.resolveWebviewView({ visible: false, webview: { onDidReceiveMessage() {}, options: {}, html: '' },
         onDidDispose: (callback: () => void) => { disposeCallbacks.push(callback); return disposed(); }, onDidChangeVisibility: disposed } as any, {} as any, {} as any);
     tick(); tick();

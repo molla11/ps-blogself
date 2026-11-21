@@ -6,7 +6,7 @@ const logs = Array.from({ length: 55 }, (_, i) => ({
 }));
 const rows = (page: Page) => page.locator('#logs-container .log-item');
 const input = (page: Page) => page.getByRole('searchbox', { name: '파일명 또는 경로 검색' });
-const toggle = (page: Page) => page.getByRole('button', { name: '기록 검색', exact: true });
+const toggle = (page: Page) => page.getByRole('button', { name: '코드 파일 검색', exact: true });
 async function send(page: Page, data: object) {
     await page.evaluate(data => window.dispatchEvent(new MessageEvent('message', { data })), data);
 }

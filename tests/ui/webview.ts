@@ -18,6 +18,7 @@ export async function openWebview(page: Page, sidebar: boolean | 'settings' | 'w
     if (!bundles.has(entry)) bundles.set(entry, buildWebview(entry).then((result: any) => result.outputFiles[0].text));
     const js = `<script nonce="${nonce}">${bridge}\n${await bundles.get(entry)}</script>`;
     html = html
+        .replace('{{logoUri}}', () => 'data:image/png;base64,' + readFileSync('media/image/logo_ps_blogself1.png').toString('base64'))
         .replace(/<link[^>]*>/g, '')
         .replace(sidebar ? '<!-- {{css}} -->' : '{{styles}}', () => css)
         .replace(sidebar ? '{{js}}' : '{{script}}', () => js);

@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { access } from 'node:fs/promises';
 import { createHash, randomUUID } from 'crypto';
 import { WritingDraft, previousArticleVersions } from './model';
 import { atomicWrite, observeFile, readJson, withFileLock } from '../storage/SharedFiles';
@@ -14,6 +15,9 @@ export class DraftStore {
     constructor(private directory: string, readonly session = new WindowSession()) {}
     private file(filePath: string) {
         return path.join(this.directory, createHash('sha256').update(filePath).digest('hex') + '.json');
+    }
+    async exists(filePath: string) {
+        return access(this.file(filePath)).then(() => true, () => false);
     }
     async read(filePath: string): Promise<WritingDraft | undefined> {
         const draft = await readJson<WritingDraft>(this.file(filePath));

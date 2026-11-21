@@ -10,9 +10,10 @@ import { articleHtml, taggedMarkdown } from '../writing/ArticleExport';
 import { normalizeExportTags } from '../settings/ExportTags';
 import { checkInputSize } from '../writing/InputLimits';
 import { WRITING_MODES, WritingMode, WRITING_STYLES, WritingStyle, writingInstructions } from '../writing/WritingStyle';
-import { DEFAULT_WRITING_MODEL, isWritingModel, selectedWritingModel } from '../writing/WritingModels';
+import { isWritingModel, selectedWritingModel } from '../writing/WritingModels';
 import { randomBytes, randomUUID } from 'crypto';
 import { storageManager } from '../storage/StorageManager';
+import { readSavedFileHistory } from '../storage/SavedFileHistory';
 import { ServiceConnection, ServiceError } from '../writing/ServiceConnection';
 import { JobRouter, JobTarget, isServerTarget } from '../writing/JobRouter';
 import { DraftStore, DraftConflict } from '../writing/DraftStore';
@@ -37,6 +38,8 @@ import script from './templates/blogPostMainScripts.webview.js';
 
 interface View {
     panel?: vscode.WebviewPanel;
+    controls?: Record<string, unknown>;
+    sidebarLinked?: boolean;
     draft: WritingDraft;
     queue: Promise<unknown>;
     task?: Promise<void>;
@@ -71,6 +74,39 @@ export class BlogPostManager {
     private static closing = false;
     private static updates = new vscode.EventEmitter<string>();
     static readonly onDidChange = this.updates.event;
+    private static sidebarVisible = false;
+    private static controlsChanged = new vscode.EventEmitter<void>();
+    static readonly onDidChangeControls = this.controlsChanged.event;
+
+    static get sidebarWriter() {
+        const active = [...this.views.values()].find(view => view.panel?.active && view.sidebarLinked);
+        if (!active?.controls) return undefined;
+        const { filePath } = active.draft;
+        return { filePath, fileName: path.basename(filePath), controls: active.controls };
+    }
+
+    static setSidebarVisible(visible: boolean) {
+        this.sidebarVisible = visible;
+        this.syncSidebar();
+    }
+
+    private static syncSidebar() {
+        for (const view of this.views.values()) {
+            const linked = this.sidebarVisible && !!view.panel?.active;
+            if (view.sidebarLinked === linked) continue;
+            view.sidebarLinked = linked;
+            if (!linked) view.controls = undefined;
+            if (view.ready) void view.panel?.webview.postMessage({ type: 'writerSidebar', linked });
+        }
+        this.controlsChanged.fire();
+    }
+
+    static sidebarAction(filePath: string, action: string, value?: string) {
+        const view = this.views.get(filePath);
+        if (view?.sidebarLinked && view.panel?.active && typeof action === 'string') {
+            void view.panel.webview.postMessage({ type: 'writerAction', filePath, action, value });
+        }
+    }
     static init(context: vscode.ExtensionContext, development: ConnectionEnvironment = {}) {
         this.assets = new ArticleAssets(path.join(context.globalStorageUri.fsPath, 'article-assets'));
         this.ghost = new GhostConnection(context);
@@ -106,7 +142,7 @@ export class BlogPostManager {
                         return;
                     }
                     try {
-                        await this.openPage(context.extensionUri, filePath, panel);
+                        await this.openPage(context.extensionUri, filePath, { panel });
                     } catch {
                         panel.dispose();
                     }
@@ -140,6 +176,12 @@ export class BlogPostManager {
         await Promise.all(Array.from({ length: Math.min(4, logs.length) }, async () => {
             while (next < logs.length) {
                 const index = next++, log = logs[index];
+                // Discovered files can have drafts without recorder snapshots. Only
+                // watch a discovered file for writing activity once it has a draft.
+                if ('source' in log && !this.views.has(log.filePath) && !await this.store.exists(log.filePath)) {
+                    result[index] = log;
+                    continue;
+                }
                 result[index] = { ...log, writingActivity: await this.writingActivity(log.filePath) };
             }
         }));
@@ -153,14 +195,25 @@ export class BlogPostManager {
         const view = this.views.get(filePath);
         return view?.error ? '글쓰기 준비를 다시 시도할 수 있어요.' : view?.draft.pending ? 'AI가 글쓰기 내용을 준비하고 있어요…' : view?.draft.plan ? '글쓰기 준비가 끝났어요.' : '글쓰기에서 AI가 풀이를 정리해 드려요.';
     }
-    private static async loadView(filePath: string): Promise<View | undefined> {
+    private static async loadView(filePath: string, discoveredLanguage?: string): Promise<View | undefined> {
         if (this.views.has(filePath)) return this.views.get(filePath);
-        if (this.loads.has(filePath)) return this.loads.get(filePath);
+        const pending = this.loads.get(filePath);
+        if (pending) {
+            const view = await pending;
+            if (view || !discoveredLanguage) return view;
+            return this.loadView(filePath, discoveredLanguage);
+        }
         const loading = (async () => {
-            const saved = await this.store.read(filePath);
-            const history = saved?.history || await storageManager.getFileHistory(filePath);
-            if (!history?.snapshots.length) return undefined;
-            const draft = await this.store.open(saved || newDraft(history));
+            let initial = await this.store.read(filePath);
+            if (!initial) {
+                const history = await storageManager.getFileHistory(filePath);
+                if (history?.snapshots.length) initial = newDraft(history);
+                else if (discoveredLanguage) {
+                    initial = newDraft(await readSavedFileHistory(filePath, discoveredLanguage));
+                    initial.fromSavedFile = true;
+                } else return undefined;
+            }
+            const draft = await this.store.open(initial);
             const view: View = { draft, editable: this.store.owns(draft), queue: Promise.resolve(), error: '', status: '', progress: 0, ready: false };
             this.views.set(filePath, view);
             view.sync = this.store.watch(filePath, () => { void this.enqueue(view, () => this.refresh(view)).catch(() => {}); });
@@ -185,10 +238,9 @@ export class BlogPostManager {
                 if (view.draft.pending) { this.run(view); return; }
                 const history = await storageManager.getFileHistory(filePath);
                 if (!history?.snapshots.length) return;
-                const fingerprint = historyFingerprint(history), model = selectedWritingModel(view.draft.writingModel);
-                const key = fingerprint + ':' + model;
-                if (view.draft.preparationKey === key || (view.draft.plan && view.draft.fingerprint === fingerprint
-                    && (view.draft.preparationModel ?? DEFAULT_WRITING_MODEL) === model)) return;
+                // Preparation does not depend on the selected model, so only the history matters.
+                const fingerprint = historyFingerprint(history);
+                if (view.draft.preparationKey === fingerprint || (view.draft.plan && view.draft.fingerprint === fingerprint)) return;
                 await this.start(view, 'prepare_blog', target, true);
             });
         } catch { /* Optional preparation must not interrupt history viewing. */ }
@@ -196,15 +248,16 @@ export class BlogPostManager {
     public static async openPage(
         extensionUri: vscode.Uri,
         filePath: string,
-        restoredPanel?: vscode.WebviewPanel,
+        options: { panel?: vscode.WebviewPanel; language?: string } = {},
     ) {
+        if (!options.panel) await vscode.commands.executeCommand('psb.sidebar.focus', { preserveFocus: true });
         const opening = this.openings.get(filePath);
         if (opening) {
             await opening;
             this.views.get(filePath)?.panel?.reveal();
             return;
         }
-        const operation = this.openPageInternal(extensionUri, filePath, restoredPanel).finally(() =>
+        const operation = this.openPageInternal(extensionUri, filePath, options.panel, options.language).finally(() =>
             this.openings.delete(filePath),
         );
         this.openings.set(filePath, operation);
@@ -214,8 +267,9 @@ export class BlogPostManager {
         extensionUri: vscode.Uri,
         filePath: string,
         restoredPanel?: vscode.WebviewPanel,
+        discoveredLanguage?: string,
     ) {
-        const view = await this.loadView(filePath);
+        const view = await this.loadView(filePath, discoveredLanguage);
         if (view?.panel && !restoredPanel) {
             view.panel.reveal();
             return;
@@ -236,7 +290,10 @@ export class BlogPostManager {
             );
         current.panel = panel;
         current.ready = false;
+        current.controls = undefined;
+        this.syncSidebar();
         panel.onDidChangeViewState(() => {
+            this.syncSidebar();
             if (current.ready) void panel.webview.postMessage({ type: 'writingVisibility', visible: this.writingIsVisible(current) });
         });
         panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.file(this.assets.directory)] };
@@ -244,6 +301,8 @@ export class BlogPostManager {
             if (current.panel === panel) {
                 current.panel = undefined;
                 current.ready = false;
+                current.controls = undefined;
+                this.syncSidebar();
                 if (!current.draft.pending) {
                     void this.enqueue(current, async () => {
                         if (current.panel) return;
@@ -254,6 +313,13 @@ export class BlogPostManager {
             }
         });
         panel.webview.onDidReceiveMessage((message) => {
+            if (message?.type === 'writerControls') {
+                if (current.panel === panel && message.controls && typeof message.controls === 'object') {
+                    current.controls = message.controls;
+                    if (current.sidebarLinked) this.controlsChanged.fire();
+                }
+                return;
+            }
             void this.enqueue(current, async () => {
                 try {
                     await this.handle(current, message);
@@ -492,7 +558,6 @@ export class BlogPostManager {
         if (value.document) patch.document = validateDocument(value.document);
         else if (typeof value.markdown === 'string' && (value.document === null || value.markdown !== draft.markdown)) patch.document = undefined;
         Object.assign(draft, separateArticleTitle({ ...draft, ...patch }));
-        if (modelChanged) delete draft.preparationKey;
         if (
             before !== JSON.stringify([draft.plan, draft.instructions, draft.writingModel, draft.writingMode, draft.writingStyle, draft.customStyle, draft.title, draft.markdown, draft.document])
         ) {
@@ -532,11 +597,12 @@ export class BlogPostManager {
             }
             case 'ready':
                 view.ready = true;
+                void view.panel?.webview.postMessage({ type: 'writerSidebar', linked: !!view.sidebarLinked });
                 void this.connection.refreshUsage();
                 await this.refreshGhost(view);
                 this.render(view);
                 if (view.draft.pending) this.run(view);
-                else if (!view.draft.plan && view.editable) await this.start(view, 'prepare_blog');
+                else if (!view.draft.plan && view.editable && !view.draft.fromSavedFile) await this.start(view, 'prepare_blog');
                 break;
             case 'checkWritingModel': {
                 if (!isWritingModel(message.writingModel)) throw new Error('사용할 모델을 선택해 주세요.');
@@ -713,10 +779,12 @@ export class BlogPostManager {
         if (!view.editable) return;
         if (view.draft.pending || view.task) return;
         const draft = view.draft;
-        const history =
-            kind === 'prepare_blog'
-                ? (await storageManager.getFileHistory(draft.filePath)) || draft.history
-                : draft.history;
+        let history = draft.history;
+        if (kind === 'prepare_blog') {
+            const recorded = await storageManager.getFileHistory(draft.filePath);
+            if (recorded?.snapshots.length) history = recorded;
+            else if (draft.fromSavedFile) history = await readSavedFileHistory(draft.filePath, history.language);
+        }
         const plan = draft.plan
             ? {
                   ...draft.plan,
@@ -742,13 +810,13 @@ export class BlogPostManager {
         checkInputSize({ source });
         const instructions = writingInstructions(draft);
         target ||= await this.jobs.target(!prefetch);
-        const model = selectedWritingModel(draft.writingModel);
-        if (kind === 'prepare_blog') draft.preparationKey = historyFingerprint(history) + ':' + model;
+        if (kind === 'prepare_blog') draft.preparationKey = historyFingerprint(history);
         draft.pending = {
             target,
             request: {
                 kind,
-                model,
+                // The server always prepares memos with its own model; the choice applies to the article only.
+                ...(kind === 'write_blog' ? { model: selectedWritingModel(draft.writingModel) } : {}),
                 priority: prefetch ? 'prefetch' : 'interactive',
                 requestId: randomUUID(),
                 source,
@@ -815,8 +883,7 @@ export class BlogPostManager {
                         signal.throwIfAborted();
                         const applied = view.draft.revision === pending.baseRevision;
                         const previousArticles = writingActivityContent(view.draft).articles;
-                        mergeResult(view.draft, { ...job.result!, ...(pending.history ? { history: pending.history,
-                            preparationModel: pending.request.model ?? DEFAULT_WRITING_MODEL } : {}) }, pending.baseRevision);
+                        mergeResult(view.draft, { ...job.result!, ...(pending.history ? { history: pending.history } : {}) }, pending.baseRevision);
                         if (pending.request.kind === 'write_blog') registerGeneratedArticles(view.draft, previousArticles);
                         delete view.draft.pending;
                         await this.store.save(view.draft);

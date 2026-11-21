@@ -293,3 +293,10 @@ dialog::backdrop { background: #00000045; }
 .ghost-status { margin: 0; padding: 8px 24px; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--line); }
 .action-menu hr { border: 0; border-top: 1px solid var(--line); margin: 5px; }
 .selection-tools { display: flex; position: fixed; z-index: 8; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); box-shadow: 0 3px 12px #0002; }
+
+.with-writer-sidebar .writing-navigation,
+.with-writer-sidebar #generate-btn,
+.with-writer-sidebar #prepare-empty-btn,
+.with-writer-sidebar #prepare-btn,
+.with-writer-sidebar #versions-box,
+.with-writer-sidebar #preview-btn { display: none; }

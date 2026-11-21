@@ -6,6 +6,7 @@ import { configManager } from './config';
 import { storageManager } from './storage/StorageManager';
 import { fileWatcher } from './storage/FileWatcher';
 import { SidebarProvider } from './sidebar/SidebarProvider';
+import { CodeDiscovery } from './sidebar/CodeDiscovery';
 import { BlogPostManager } from './services/BlogPostManager';
 import { Logger } from './services/logger';
 import { loadConnectionEnvironment, resolveConnectionSettings, requireBackend } from './writing/ConnectionSettings';
@@ -23,6 +24,9 @@ export async function activate(context: vscode.ExtensionContext) {
     fileWatcher.init(context);
     BlogPostManager.init(context, development);
 
+    const codeFiles = new CodeDiscovery(() => configManager.getCurrentDirectory());
+    context.subscriptions.push(codeFiles);
+    const showWelcome = () => WelcomePanel.show(codeFiles, context.extensionUri);
     const sidebarProvider = new SidebarProvider(
         context.extensionUri,
         () => selectRootFolder(sidebarProvider),
@@ -30,19 +34,58 @@ export async function activate(context: vscode.ExtensionContext) {
         directory => useCurrentDirectory(sidebarProvider, directory),
         () => toggleRecording(sidebarProvider),
         (lang: string) => toggleLanguage(sidebarProvider, lang),
+        codeFiles,
     );
 
     context.subscriptions.push(
         vscode.commands.registerCommand('psb.openSettings', () => SettingsPanel.show()),
-        vscode.commands.registerCommand('psb.welcome', () => WelcomePanel.show()),
+        vscode.commands.registerCommand('psb.welcome', showWelcome),
+        vscode.commands.registerCommand('psb.openFolderFromWelcome', () => openFolderFromWelcome(context)),
         vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider, {
             // Preserve search, loaded rows and scroll position across sidebar switches.
             webviewOptions: { retainContextWhenHidden: true },
         }),
     );
 
-    try { await new WelcomeState(context.globalStorageUri.fsPath).showOnce(() => WelcomePanel.show()); }
+    try {
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+        const key = root && sidebarOnOpenKey(root);
+        const requestedAt = key && context.globalState.get<number>(key);
+        if (key && requestedAt) await context.globalState.update(key, undefined);
+        if (requestedAt && Date.now() - requestedAt < 5 * 60_000) {
+            void vscode.commands.executeCommand('psb.sidebar.focus').then(undefined, showWelcome);
+        } else {
+            await new WelcomeState(context.globalStorageUri.fsPath).showOnce(showWelcome);
+        }
+    }
     catch (error) { Logger.warn('시작 안내 표시 상태를 저장하지 못했습니다.', error); }
+}
+
+function sidebarOnOpenKey(folder: vscode.Uri) {
+    const uri = folder.toString();
+    return 'psb.sidebarOnOpen:' + (process.platform === 'win32' ? uri.toLowerCase() : uri);
+}
+
+async function openFolderFromWelcome(context: vscode.ExtensionContext) {
+    const folders = await vscode.window.showOpenDialog({
+        canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: '폴더 열기',
+    });
+    const folder = folders?.[0];
+    if (!folder) return;
+    const key = sidebarOnOpenKey(folder);
+    const roots = vscode.workspace.workspaceFolders;
+    if (!vscode.workspace.workspaceFile && roots?.length === 1 && sidebarOnOpenKey(roots[0].uri) === key) {
+        await vscode.commands.executeCommand('psb.sidebar.focus');
+        return;
+    }
+    // Opening a different folder replaces this extension host. The destination
+    // consumes the request once, without stealing focus on ordinary reloads.
+    await context.globalState.update(key, Date.now());
+    try { await vscode.commands.executeCommand('vscode.openFolder', folder, { forceReuseWindow: true }); }
+    catch (error) {
+        await context.globalState.update(key, undefined);
+        throw error;
+    }
 }
 
 async function selectRootFolder(sidebarProvider: SidebarProvider) {

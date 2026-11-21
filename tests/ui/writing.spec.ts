@@ -89,7 +89,7 @@ test('AI-filled text and range can generate a complete draft without typing', as
     await expect(page.getByLabel('전체 설명', { exact: true })).toHaveValue(plan.summary);
     await expect(page.getByLabel('메모 #1 내용')).toHaveValue(plan.steps[0].body);
     await expect(page.locator('#range-info')).toContainText('#1–2');
-    await page.getByRole('button', { name: '이대로 글쓰기' }).click();
+    await page.getByRole('button', { name: '글쓰기' }).click();
     const request = (await messages(page)).find((m: any) => m.type === 'generate');
     expect(request.fields.plan).toEqual(plan);
     await model(page, { title: '완성 제목', markdown: '## 접근\n\n완성한 글입니다.' });
@@ -163,7 +163,7 @@ test('clicking generate flushes the latest explanation even before autosave', as
     await open(page);
     await model(page);
     await page.locator('#summary').fill('최종 설명');
-    await page.getByRole('button', { name: '이대로 글쓰기' }).click();
+    await page.getByRole('button', { name: '글쓰기' }).click();
     expect((await messages(page)).find((m: any) => m.type === 'generate').fields.plan.summary).toBe(
         '최종 설명',
     );
@@ -223,7 +223,7 @@ test('cancelled initial preparation can restart without closing the writer', asy
     await page.locator('#cancel-btn').click();
     expect((await messages(page)).at(-1).type).toBe('cancel');
     await model(page, { plan: undefined, pending: false, running: false, status: '작업을 취소했습니다.' });
-    await page.getByRole('button', { name: '변경사항 요약하기', exact: true }).click();
+    await page.getByRole('button', { name: '메모 생성', exact: true }).click();
     expect((await messages(page)).at(-1).type).toBe('prepare');
 });
 

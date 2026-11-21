@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as fs from 'fs/promises';
 import * as diff from 'diff';
 import { storageManager, HistoryConflict } from '../storage/StorageManager';
+import { readSavedFileHistory } from '../storage/SavedFileHistory';
 import { historyFingerprint } from '../writing/model';
 import { FileHistory } from '../types';
 import { BlogPostManager } from './BlogPostManager';
@@ -13,7 +13,7 @@ const htmlText = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&
 export class HistoryManager {
     public static readonly viewType = 'psb.history';
 
-    public static async openHistory(extensionUri: vscode.Uri, filePath: string) {
+    public static async openHistory(extensionUri: vscode.Uri, filePath: string, discoveredLanguage?: string) {
         const panel = vscode.window.createWebviewPanel(
             HistoryManager.viewType,
             `History: ${path.basename(filePath)}`,
@@ -24,55 +24,69 @@ export class HistoryManager {
             },
         );
 
-        panel.webview.html = this._getLoadingHtml(panel.webview); // Show loading first
-        let loaded = false, disposed = false;
-
-        // Compute actual HTML
-        this._getHtmlForWebview(panel.webview, filePath, extensionUri).then((html) => {
-            if (!disposed) panel.webview.html = html;
-        }).catch(() => { if (!disposed) panel.webview.html = '<p>기록을 불러오지 못했습니다. 다시 열어 주세요.</p>'; });
+        let recordedHistoryReady = false;
+        let disposed = false;
+        let preview: FileHistory | undefined;
+        const render = async () => {
+            if (disposed) return;
+            recordedHistoryReady = false;
+            panel.webview.html = this._getLoadingHtml(panel.webview);
+            try {
+                const stored = await storageManager.getFileHistory(filePath);
+                let history: FileHistory;
+                if (stored?.snapshots.length) {
+                    preview = undefined;
+                    history = stored;
+                } else {
+                    const language = discoveredLanguage ?? stored?.language;
+                    if (!language) throw new Error('파일을 찾을 수 없습니다.');
+                    preview = await readSavedFileHistory(filePath, language);
+                    history = preview;
+                }
+                const html = await this._getHtmlForWebview(extensionUri, history, !preview);
+                if (!disposed) panel.webview.html = html;
+            } catch {
+                if (!disposed) panel.webview.html = '<p>기록을 불러오지 못했습니다. 파일을 확인한 뒤 다시 열어 주세요.</p>';
+            }
+        };
 
         panel.webview.onDidReceiveMessage(async (message) => {
             try {
                 switch (message.type) {
                     case 'ready':
-                        loaded = true;
+                        if (preview) break;
+                        recordedHistoryReady = true;
                         if (panel.visible) void BlogPostManager.prepareOnReview(filePath);
                         void panel.webview.postMessage({ type: 'preparation', text: BlogPostManager.preparationStatus(filePath) });
                         break;
                     case 'write':
-                        await BlogPostManager.openPage(extensionUri, filePath);
+                        if (recordedHistoryReady) await BlogPostManager.openPage(extensionUri, filePath);
                         break;
                     case 'viewSnapshot':
-                        await this._openSnapshot(filePath, message.index, message.version);
+                        await this._openSnapshot(filePath, message.index, message.version, preview);
                         break;
                     case 'deleteSnapshot':
-                        await this._handleDeleteRequest(
-                            extensionUri,
-                            panel.webview,
-                            filePath,
-                            message.index,
-                            message.version,
-                        );
+                        if (recordedHistoryReady && await this._handleDeleteRequest(filePath, message.index, message.version)) {
+                            await render();
+                        }
                         break;
                 }
             } catch (error) {
                 if (error instanceof HistoryConflict) {
                     void vscode.window.showInformationMessage(error.message);
-                    if (!disposed) panel.webview.html = await this._getHtmlForWebview(panel.webview, filePath, extensionUri);
+                    await render();
                 } else void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
             }
         });
         const preparation = BlogPostManager.onDidChange(changed => {
-            if (changed === filePath) void panel.webview.postMessage({ type: 'preparation', text: BlogPostManager.preparationStatus(filePath) });
+            if (recordedHistoryReady && changed === filePath) void panel.webview.postMessage({ type: 'preparation', text: BlogPostManager.preparationStatus(filePath) });
         });
-        panel.onDidChangeViewState(() => { if (loaded && panel.visible) void BlogPostManager.prepareOnReview(filePath); });
+        panel.onDidChangeViewState(() => { if (recordedHistoryReady && panel.visible) void BlogPostManager.prepareOnReview(filePath); });
         panel.onDidDispose(() => { disposed = true; preparation.dispose(); });
+        await render();
     }
 
     private static async _handleDeleteRequest(
-        extensionUri: vscode.Uri,
-        webview: vscode.Webview,
         filePath: string,
         index: number,
         version: string,
@@ -99,12 +113,9 @@ export class HistoryManager {
             '삭제',
         );
 
-        if (selection === '삭제') {
-            await storageManager.deleteSnapshot(filePath, index, version);
-            // Refresh the view
-            webview.html = this._getLoadingHtml(webview);
-            webview.html = await this._getHtmlForWebview(webview, filePath, extensionUri);
-        }
+        if (selection !== '삭제') return false;
+        await storageManager.deleteSnapshot(filePath, index, version);
+        return true;
     }
 
     private static _getLoadingHtml(webview: vscode.Webview): string {
@@ -152,8 +163,8 @@ export class HistoryManager {
         </html>`;
     }
 
-    private static async _openSnapshot(filePath: string, index: number, version: string) {
-        const history = await storageManager.getFileHistory(filePath);
+    private static async _openSnapshot(filePath: string, index: number, version: string, preview?: FileHistory) {
+        const history = preview ?? await storageManager.getFileHistory(filePath);
         if (!history) {
             vscode.window.showErrorMessage('History not found.');
             return;
@@ -204,21 +215,10 @@ export class HistoryManager {
     }
 
     private static async _getHtmlForWebview(
-        webview: vscode.Webview,
-        filePath: string,
         extensionUri: vscode.Uri,
+        history: FileHistory,
+        recorded: boolean,
     ): Promise<string> {
-        const history = await storageManager.getFileHistory(filePath);
-
-        if (!history) {
-            return `<!DOCTYPE html>
-            <html lang="en">
-            <body>
-                <h1>No history found for ${htmlText(path.basename(filePath))}</h1>
-            </body>
-            </html>`;
-        }
-
         // Generate diffs
         const diffsHtml = await this._generateDiffsHtml(history);
         const cssStyles = await this._loadCss(extensionUri);
@@ -421,14 +421,17 @@ export class HistoryManager {
         </head>
         <body>
             <h2>파일 수정 기록: ${htmlText(path.basename(history.filePath))}</h2>
-            <p><span id="preparation-status">글쓰기에서 AI가 풀이를 정리해 드려요.</span> <button id="write-btn" class="view-code-btn">글쓰기 열기</button></p>
+            ${recorded ? '<p><span id="preparation-status">글쓰기에서 AI가 풀이를 정리해 드려요.</span> <button id="write-btn" class="view-code-btn">글쓰기 열기</button></p>' : ''}
             ${diffsHtml}
 
             <script nonce="${nonce}">
                 const vscode = acquireVsCodeApi();
                 const version = '${historyFingerprint(history)}';
-                document.getElementById('write-btn').addEventListener('click', () => vscode.postMessage({ type: 'write' }));
-                window.addEventListener('message', ({data}) => { if (data.type === 'preparation') document.getElementById('preparation-status').textContent = data.text; });
+                const writeButton = document.getElementById('write-btn');
+                if (writeButton) {
+                    writeButton.addEventListener('click', () => vscode.postMessage({ type: 'write' }));
+                    window.addEventListener('message', ({data}) => { if (data.type === 'preparation') document.getElementById('preparation-status').textContent = data.text; });
+                }
                 vscode.postMessage({ type: 'ready' });
                 
                 document.querySelectorAll('.view-code-btn[data-index]').forEach(btn => {
@@ -671,7 +674,7 @@ export class HistoryManager {
                     <div class="entry-header">
                         <span class="entry-title">
                             ${statsHtml}
-                            <span class="stat-date">${dateStr}</span>
+                            <time class="stat-date" datetime="${new Date(history.snapshots[i].timestamp).toISOString()}">${dateStr}</time>
                         </span>
                         <div class="entry-actions">
                             ${deleteBtn}
@@ -690,10 +693,9 @@ export class HistoryManager {
         // Initial commit - Show all content (It's all "added")
         if (history.snapshots.length > 0) {
             const firstContent = storageManager.reconstructFileContent(history, 0);
-            if (firstContent) {
+            if (firstContent !== null) {
                 const dateStr = this._formatDate(history.snapshots[0].timestamp);
-                const rawLines = await shikiService.highlight(firstContent, history.language);
-                const lines = this._extractShikiLines(rawLines);
+                const lines = firstContent ? this._extractShikiLines(await shikiService.highlight(firstContent, history.language)) : [];
 
                 let tableRows = '';
                 lines.forEach((line, idx) => {
@@ -715,10 +717,10 @@ export class HistoryManager {
                     <div class="entry-header">
                         <span class="entry-title">
                             ${statsHtml}
-                             <span class="stat-date">${dateStr}</span>
+                            <time class="stat-date" datetime="${new Date(history.snapshots[0].timestamp).toISOString()}">${dateStr}</time>
                         </span>
                          <div class="entry-actions">
-                            <button class="delete-btn" data-index="0" data-is-middle="false">로그 삭제</button>
+                            ${history.snapshots.length > 1 ? '<button class="delete-btn" data-index="0" data-is-middle="false">로그 삭제</button>' : ''}
                             <button class="view-code-btn" data-index="0">이 시점의 코드 보기</button>
                         </div>
                     </div>

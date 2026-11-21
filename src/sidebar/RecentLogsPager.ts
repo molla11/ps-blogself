@@ -1,4 +1,4 @@
-import { SessionIndexItem } from '../types';
+import type { ListedFile } from './CodeDiscovery';
 
 const PAGE_SIZE = 20;
 
@@ -8,7 +8,7 @@ export class RecentLogsPager {
     private _revision = 0;
     private _queue: Promise<void> = Promise.resolve();
 
-    constructor(private readonly _read: () => Promise<SessionIndexItem[]>) {}
+    constructor(private readonly _read: () => Promise<ListedFile[]>) {}
 
     public get searchId() { return this._search.id; }
 
@@ -17,7 +17,7 @@ export class RecentLogsPager {
         this._search = { id, query: query.trim(), limit: PAGE_SIZE, visiblePaths: new Set<string>() };
     }
 
-    public load(moreAfter?: number) {
+    public load(moreAfter?: number, keepVisible = true) {
         // Capture the search so an in-flight read cannot expand a later query's page.
         const search = this._search;
         const read = this._queue.then(async () => {
@@ -35,13 +35,15 @@ export class RecentLogsPager {
             if (Number.isInteger(moreAfter) && moreAfter! >= 0 && moreAfter! <= limit) {
                 limit = Math.max(limit, moreAfter! + PAGE_SIZE);
             }
-            // New entries and reordered files must not evict already loaded rows.
-            logs.forEach((log, index) => {
-                if (search.visiblePaths.has(log.filePath)) limit = Math.max(limit, index + 1);
-            });
+            // Preserve loaded history when newer edits move it down the list.
+            if (keepVisible) {
+                logs.forEach((log, index) => {
+                    if (search.visiblePaths.has(log.filePath)) limit = Math.max(limit, index + 1);
+                });
+            }
             const recentLogs = logs.slice(0, limit);
             search.limit = limit;
-            search.visiblePaths = new Set(recentLogs.map(log => log.filePath));
+            search.visiblePaths = new Set(recentLogs.filter(log => !('source' in log)).map(log => log.filePath));
             return {
                 recentLogs,
                 hasMoreRecentLogs: recentLogs.length < logs.length,

@@ -60,6 +60,8 @@ export interface WritingDraft extends WritingPreferences {
     editor?: { owner: import('../storage/WindowSession').SessionOwner; token: string };
     filePath: string;
     history: FileHistory;
+    /** Writing started from the saved source before the recorder had a snapshot. */
+    fromSavedFile?: boolean;
     fingerprint: string;
     plan?: WritingPlan;
     instructions: string;

@@ -20,7 +20,7 @@ async function main() {
     const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), 'ps-blogself-host-'));
     const workspace = path.join(sandbox, 'workspace');
     await fs.mkdir(path.join(workspace, '.vscode'), { recursive: true });
-    await fs.writeFile(path.join(workspace, 'solve.py'), 'print(1)\n');
+    await fs.writeFile(path.join(workspace, 'solve.py'), '# 풀이\nvalue = "<코드>&"\nprint(value)\n');
     await fs.writeFile(
         path.join(workspace, '.vscode/settings.json'),
         JSON.stringify({
@@ -28,6 +28,7 @@ async function main() {
             'workbench.startupEditor': 'none',
             'window.restoreWindows': 'none',
             'window.dialogStyle': 'custom',
+            'files.simpleDialog.enable': true,
             'telemetry.telemetryLevel': 'off',
             'update.mode': 'none',
         }),
@@ -67,7 +68,7 @@ async function main() {
             });
         }
         const requests = await inspectRequests();
-        if (requests.length !== 3)
+        if (requests.length !== 4)
             throw new Error(
                 'Reopening unexpectedly generated another paid job: ' + requests.length,
             );

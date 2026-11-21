@@ -1,3 +1,6 @@
+import { renderModifiedTime } from '../../webview/modifiedTime';
+import { bindWriterTools } from './writerTools';
+
 const vscode = acquireVsCodeApi();
 let noticesKey = '';
 function renderNotices(notices = []) {
@@ -42,19 +45,6 @@ const logsSearchToggle = document.getElementById('toggle-logs-search-btn');
 const logsSearch = document.getElementById('logs-search');
 const logsSearchInput = document.getElementById('logs-search-input');
 
-const rtf = new Intl.RelativeTimeFormat('ko', { numeric: 'auto' });
-
-function timeAgo(timestamp) {
-    const seconds = Math.floor((Date.now() - timestamp) / 1000);
-    if (seconds < 60) return rtf.format(-seconds, 'second');
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return rtf.format(-minutes, 'minute');
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return rtf.format(-hours, 'hour');
-    const days = Math.floor(hours / 24);
-    return rtf.format(-days, 'day');
-}
-
 // Store logs globally to re-render
 let currentLogs = [];
 const writingActivities = new Map();
@@ -96,10 +86,17 @@ let recentLogsNeedsSearch = false;
 let recentLogsSearchTimer;
 let recentLogsComposing = false;
 let recentLogsAutoLoad = true;
+let discovering = false;
+let discoveryFailed = false;
 let selectedPath = vscode.getState()?.selectedPath || '';
+function updateGenerateButton() {
+    const button = document.getElementById('generate-blog-btn');
+    button.disabled = !currentLogs.length;
+}
 function selectPath(filePath) {
     selectedPath = filePath;
     vscode.setState({ selectedPath });
+    updateGenerateButton();
     document.querySelectorAll('.log-item').forEach((item) => {
         const selected = item.dataset.path === selectedPath;
         item.classList.toggle('selected', selected);
@@ -114,10 +111,10 @@ class FileActionsMenu {
         this.element = element;
         this.owner = null;
         this.point = null;
-        this.items = [...element.querySelectorAll('[role="menuitem"]')];
     }
 
     get isOpen() { return this.owner !== null; }
+    get items() { return [...this.element.querySelectorAll('[role="menuitem"]:not([hidden])')]; }
 
     open(row, { point = null, focus = false, last = false } = {}) {
         this.close();
@@ -234,22 +231,20 @@ function renderLogs(logs, container = logsContainer) {
             info.className = 'log-info';
             const name = document.createElement('span');
             name.className = 'log-name';
-            const meta = document.createElement('span');
+            const meta = document.createElement('time');
             meta.className = 'log-meta';
             info.append(name, meta);
             row.append(info);
         }
         row.dataset.name = log.fileName;
+        row.dataset.source = log.source || '';
         rememberWritingActivity(log);
         renderWritingActivity(row);
         row.title = log.filePath;
         row.classList.toggle('selected', log.filePath === selectedPath);
         row.setAttribute('aria-pressed', String(log.filePath === selectedPath));
         row.querySelector('.log-name').textContent = log.fileName;
-        const meta = row.querySelector('.log-meta');
-        meta.dataset.language = log.language;
-        meta.dataset.timestamp = log.lastModified;
-        meta.textContent = `${log.language} • ${timeAgo(log.lastModified)}`;
+        renderModifiedTime(row.querySelector('.log-meta'), log);
         return row;
     });
 
@@ -270,7 +265,9 @@ function renderLogs(logs, container = logsContainer) {
         const empty = document.createElement('div');
         empty.className = 'empty-logs';
         empty.setAttribute('role', 'status');
-        empty.textContent = container === logsContainer && recentLogsQuery ? '검색 결과가 없습니다.' : '기록된 변경 사항이 없습니다.';
+        empty.textContent = container !== logsContainer ? '기록된 변경 사항이 없습니다.'
+            : discovering ? '코드 파일을 찾는 중…' : discoveryFailed ? '폴더의 코드 파일을 불러오지 못했습니다.'
+            : recentLogsQuery ? '검색 결과가 없습니다.' : '표시할 코드 파일이 없습니다.';
         container.insertBefore(empty, tail);
     }
     if (anchor?.isConnected) container.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
@@ -284,7 +281,7 @@ function updateRecentLogsStatus() {
     recentLogsLoader.hidden = !hasMoreRecentLogs && !loading && !recentLogsError;
     recentLogsStatus.textContent = recentLogsError || (loading ? (recentLogsQuery ? '검색 중…' : '기록을 불러오는 중…') : '');
     retryLogsButton.hidden = !recentLogsError;
-    document.getElementById('generate-blog-btn').disabled = !currentLogs.length;
+    updateGenerateButton();
 }
 
 function requestMoreRecentLogs() {
@@ -308,8 +305,20 @@ function checkRecentLogsEnd() {
 
 function applyRecentLogs(message) {
     if ((message.recentLogsSearchId ?? 0) !== recentLogsSearchId) return;
+    if (typeof message.discovering === 'boolean') {
+        discovering = message.discovering;
+        discoveryFailed = message.discoveryFailed;
+    }
     if (typeof message.recentLogsRevision === 'number') {
-        if (message.recentLogsRevision <= recentLogsRevision) return;
+        if (message.recentLogsRevision <= recentLogsRevision) {
+            // Activity can arrive after the matching rows or a newer discovery page.
+            const enriched = message.recentLogs.filter(log => log.writingActivity);
+            if (enriched.length) {
+                enriched.forEach(rememberWritingActivity);
+                logsContainer.querySelectorAll('.log-item').forEach(renderWritingActivity);
+            }
+            return;
+        }
         recentLogsRevision = message.recentLogsRevision;
     }
     currentLogs = message.recentLogs;
@@ -507,31 +516,23 @@ window.addEventListener('resize', closeMenus);
 window.addEventListener('blur', closeMenus);
 document.addEventListener('visibilitychange', () => { if (document.hidden) closeMenus(); });
 
+const showWriter = bindWriterTools(vscode, filePath => {
+    showView(mainView);
+    selectPath(filePath);
+}, closeMenus);
+
 function showView(view) {
     closeMenus();
     for (const candidate of [mainView, fullLogsView]) candidate.classList.toggle('hidden', candidate !== view);
     if (view === mainView) checkRecentLogsEnd();
 }
 
-function updateRelativeTimes() {
-    const metas = document.querySelectorAll('.log-meta');
-    metas.forEach((meta) => {
-        const timestamp = parseInt(meta.getAttribute('data-timestamp') || '0');
-        const language = meta.getAttribute('data-language') || '';
-        if (timestamp > 0) {
-            meta.innerText = `${language} • ${timeAgo(timestamp)}`;
-        }
-    });
-
-    const nextTick = 1000 - (Date.now() % 1000);
-    setTimeout(updateRelativeTimes, nextTick);
-}
-
-updateRelativeTimes();
-
 window.addEventListener('message', (event) => {
     const message = event.data;
     switch (message.type) {
+        case 'sidebarWriter':
+            showWriter(message.writer);
+            break;
         case 'writingActivity':
             rememberWritingActivity(message);
             document.querySelectorAll('.log-item').forEach(row => {

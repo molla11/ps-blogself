@@ -5,7 +5,7 @@ import { getSidebarHtml } from './getSidebarHtml';
 import { HistoryManager } from '../services/HistoryManager';
 import { BlogPostManager } from '../services/BlogPostManager';
 import { RecentLogsPager } from './RecentLogsPager';
-import { SessionIndexItem } from '../types';
+import type { CodeDiscovery, ListedFile } from './CodeDiscovery';
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'psb.sidebar';
@@ -13,7 +13,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private _stateRevision = 0;
     private _activityRevision = 0;
-    private _recentLogs = new RecentLogsPager(() => storageManager.getRecentFiles());
+    private _recentLogs = this.createPager();
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
@@ -22,7 +22,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         private readonly _onUseWorkspaceRoot: (directory: string) => void,
         private readonly _onToggleRecording: () => void,
         private readonly _onToggleLanguage: (lang: string) => void,
+        private readonly codeFiles: CodeDiscovery,
     ) {}
+
+    private createPager() {
+        return new RecentLogsPager(async () => this.codeFiles.withHistory(await storageManager.getRecentFiles()));
+    }
 
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
@@ -30,7 +35,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         _token: vscode.CancellationToken,
     ) {
         this._view = webviewView;
-        const recentLogs = this._recentLogs = new RecentLogsPager(() => storageManager.getRecentFiles());
+        const recentLogs = this._recentLogs = this.createPager();
 
         webviewView.webview.options = {
             enableScripts: true,
@@ -64,6 +69,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         break;
                     }
                     case 'getInitialData': {
+                        BlogPostManager.setSidebarVisible(webviewView.visible);
+                        this.codeFiles.start();
                         await this.updateState();
                         void BlogPostManager.refreshUsage();
                         void BlogPostManager.refreshNotices();
@@ -80,7 +87,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         try {
                             const page = await recentLogs.load(searching ? undefined : data.count);
                             const enrichedLogs = await this.writingLogs(page.recentLogs);
-                            await webviewView.webview.postMessage({ type: 'recentLogsPage', requestId: data.requestId, ...page, recentLogs: enrichedLogs });
+                            await webviewView.webview.postMessage({
+                                type: 'recentLogsPage', requestId: data.requestId,
+                                discovering: this.codeFiles.searching, discoveryFailed: this.codeFiles.failed,
+                                ...page, recentLogs: enrichedLogs,
+                            });
                         } catch {
                             await webviewView.webview.postMessage({ type: 'recentLogsPage', requestId: data.requestId, recentLogsSearchId: data.searchId, error: '기록을 불러오지 못했습니다.' });
                         }
@@ -96,7 +107,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         break;
                     }
                     case 'viewHistory': {
-                        await HistoryManager.openHistory(this._extensionUri, data.path);
+                        const discovered = this.codeFiles.files.find(file => file.filePath === data.path);
+                        await HistoryManager.openHistory(this._extensionUri, data.path, discovered?.language);
                         break;
                     }
                     case 'manageLogs': {
@@ -122,20 +134,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     case 'sample':
                         await vscode.commands.executeCommand('psb.sample');
                         break;
-                    case 'generateBlog': {
-                        const logs = await storageManager.getRecentFiles();
-                        const target = logs.find((log) => log.filePath === data.path) || logs[0];
-                        if (target) {
-                            await BlogPostManager.openPage(this._extensionUri, target.filePath);
-                        } else {
-                            vscode.window.showInformationMessage(
-                                '아직 기록이 없습니다. 파일을 저장하면 글을 만들 수 있어요.',
-                            );
-                        }
+                    case 'generateBlog':
+                    case 'selectLogForBlog': {
+                        const discovered = this.codeFiles.files.find(file => file.filePath === data.path);
+                        if (typeof data.path === 'string') await BlogPostManager.openPage(this._extensionUri, data.path, { language: discovered?.language });
                         break;
                     }
-                    case 'selectLogForBlog': {
-                        await BlogPostManager.openPage(this._extensionUri, data.path);
+                    case 'writerAction': {
+                        BlogPostManager.sidebarAction(data.filePath, data.action, data.value);
                         break;
                     }
                 }
@@ -143,6 +149,31 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 vscode.window.showErrorMessage(
                     error instanceof Error ? error.message : String(error),
                 );
+            }
+        });
+
+        const discovery = this.codeFiles.onDidChange(async () => {
+            // A directory scan can insert thousands of newer files ahead of the visible page.
+            const page = await recentLogs.load(undefined, false);
+            const rows = await this.writingLogs(page.recentLogs);
+            if (this._view === webviewView) {
+                await webviewView.webview.postMessage({
+                    type: 'recentLogsPage', activeFile: vscode.window.activeTextEditor?.document.uri.fsPath,
+                    discovering: this.codeFiles.searching, discoveryFailed: this.codeFiles.failed, ...page, recentLogs: rows,
+                });
+            }
+        });
+        const controls = BlogPostManager.onDidChangeControls(() => {
+            if (this._view === webviewView && webviewView.visible) {
+                void webviewView.webview.postMessage({ type: 'sidebarWriter', writer: BlogPostManager.sidebarWriter });
+            }
+        });
+        webviewView.onDidDispose(() => {
+            controls.dispose();
+            discovery.dispose();
+            if (this._view === webviewView) {
+                this._view = undefined;
+                BlogPostManager.setSidebarVisible(false);
             }
         });
 
@@ -162,7 +193,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         };
         const usageTimer = setInterval(refreshServiceState, 30000);
         usageTimer.unref();
-        const visibility = webviewView.onDidChangeVisibility(refreshServiceState);
+        const visibility = webviewView.onDidChangeVisibility(() => {
+            BlogPostManager.setSidebarVisible(webviewView.visible);
+            refreshServiceState();
+        });
         const focus = vscode.window.onDidChangeWindowState(refreshServiceState);
         webviewView.onDidDispose(() => { clearInterval(usageTimer); visibility.dispose(); focus.dispose(); });
         const settingsUpdate = configManager.onDidChange(() => { void this.updateState(); });
@@ -176,7 +210,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // Ideally we should dispose this listener when webview is disposed.
     }
 
-    private async writingLogs(logs: SessionIndexItem[]) {
+    private async writingLogs(logs: ListedFile[]) {
         const writingActivityRevision = ++this._activityRevision;
         return (await BlogPostManager.withWritingActivity(logs)).map(log => ({ ...log, writingActivityRevision }));
     }
@@ -200,6 +234,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         await view.webview.postMessage({
                             type: 'recentLogsPage',
                             activeFile: vscode.window.activeTextEditor?.document.uri.fsPath,
+                            discovering: this.codeFiles.searching, discoveryFailed: this.codeFiles.failed,
                             ...page,
                         });
                     }

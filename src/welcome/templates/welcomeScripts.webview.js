@@ -1,23 +1,76 @@
+import { renderModifiedTime } from '../../webview/modifiedTime';
+
 const vscode = acquireVsCodeApi();
-const buttons = [...document.querySelectorAll('[data-action]')];
 const status = document.getElementById('welcome-status');
 const error = document.getElementById('welcome-error');
+const list = document.getElementById('code-files');
 let busy = false;
-for (const button of buttons) {
-    button.addEventListener('click', () => {
-        if (busy) return;
-        busy = true;
-        for (const item of buttons) item.disabled = true;
-        error.hidden = true;
-        status.textContent = button.dataset.action === 'connect' ? '계정을 확인하고 있어요…' : '열고 있어요…';
-        vscode.postMessage({ type: 'action', action: button.dataset.action });
-    });
+
+function setBusy(value) {
+    busy = value;
+    for (const button of document.querySelectorAll('[data-action]')) button.disabled = value;
 }
-window.addEventListener('message', event => {
-    if (event.data?.type !== 'actionResult') return;
-    busy = false;
-    for (const button of buttons) button.disabled = false;
-    status.textContent = '';
-    error.textContent = event.data.error || '';
-    error.hidden = !event.data.error;
+
+function showFiles({ files, total, searching, failed }) {
+    const activePath = document.activeElement?.dataset.path;
+    const activeAction = document.activeElement?.dataset.action;
+    const rows = [];
+    for (const file of files) {
+        const row = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'file-link';
+        button.dataset.action = 'openFile';
+        button.dataset.path = file.filePath;
+        button.title = file.filePath;
+        button.disabled = busy;
+        const name = document.createElement('span');
+        name.className = 'file-name';
+        name.textContent = file.fileName;
+        const modified = document.createElement('time');
+        renderModifiedTime(modified, file);
+        button.append(name, modified);
+        const write = document.createElement('button');
+        write.type = 'button';
+        write.className = 'file-write';
+        write.dataset.action = 'write';
+        write.dataset.path = file.filePath;
+        write.textContent = '글쓰기';
+        write.setAttribute('aria-label', file.fileName + ' 글쓰기');
+        write.disabled = busy;
+        row.append(button, write);
+        rows.push(row);
+    }
+    list.replaceChildren(...rows);
+    if (activePath) {
+        [...list.querySelectorAll('button')].find(button => button.dataset.path === activePath && button.dataset.action === activeAction)
+            ?.focus({ preventScroll: true });
+    }
+    const count = document.getElementById('file-count');
+    count.hidden = !total;
+    count.textContent = total > files.length ? `${total}개 중 ${files.length}개` : `${total}개`;
+    document.getElementById('open-folder').hidden = searching || total > 0;
+    document.getElementById('files-status').textContent = searching ? '코드 파일을 찾는 중…'
+        : failed ? '폴더를 읽지 못했습니다.'
+        : total ? '' : '.c, .cpp, .py 파일이 있는 폴더나 파일을 열어 보세요.';
+}
+
+document.addEventListener('click', event => {
+    const button = event.target.closest('button[data-action]');
+    if (!button || busy) return;
+    setBusy(true);
+    error.hidden = true;
+    const action = button.dataset.action;
+    status.textContent = action === 'connect' ? '계정을 확인하고 있어요…' : '열고 있어요…';
+    vscode.postMessage({ type: 'action', action, ...(button.dataset.path ? { path: button.dataset.path } : {}) });
 });
+window.addEventListener('message', event => {
+    const message = event.data;
+    if (message?.type === 'codeFiles') { showFiles(message); return; }
+    if (message?.type !== 'actionResult') return;
+    setBusy(false);
+    status.textContent = '';
+    error.textContent = message.error || '';
+    error.hidden = !message.error;
+});
+vscode.postMessage({ type: 'ready' });

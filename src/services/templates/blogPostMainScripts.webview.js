@@ -1,3 +1,4 @@
+import { connectWriterSidebar } from './writerSidebar.webview.js';
 import { createArticleEditor } from './articleEditor.webview.js';
 import { observeCodeHighlighting } from './codeHighlighting.js';
 import { DEFAULT_WRITING_MODEL } from '../../writing/WritingModels';
@@ -19,6 +20,7 @@ let model,
     selectedVersion = '',
     readyVersion = '',
     restoreRequest;
+const updateSidebar = connectWriterSidebar(vscode, () => model);
 const dirty = new Set(),
     sent = new Map();
 const recovered = vscode.getState();
@@ -260,6 +262,7 @@ function renderSteps() {
     el('memo-limit').hidden = plan.steps.length < MAX_MEMOS;
 }
 function switchTab(tab) {
+    updateSidebar();
     activeTab = tab;
     el('plan-options').hidden = tab !== 'plan';
     el('plan-view').hidden = tab !== 'plan';
@@ -272,6 +275,7 @@ function switchTab(tab) {
     markDisplayedWriting();
 }
 function renderEditorMode() {
+    updateSidebar();
     const browsing = !!selectedVersion;
     el('rich-editor').hidden = previewMode || sourceMode;
     el('body-field').hidden = previewMode || !sourceMode;
@@ -349,6 +353,7 @@ function renderLoading() {
     return true;
 }
 function renderWritingMode() {
+    updateSidebar();
     const mode = form.writingMode || 'evolution';
     value('writing-mode', mode);
     el('writing-mode-help').textContent = {
@@ -358,6 +363,7 @@ function renderWritingMode() {
     }[mode];
 }
 function renderWritingModel() {
+    updateSidebar();
     const selected = modelOptions.some(option => option.value === form.writingModel) ? form.writingModel : DEFAULT_WRITING_MODEL;
     for (const option of modelOptions) option.setAttribute('aria-selected', String(option.value === selected));
     const selectedOption = modelOptions.find(option => option.value === selected);
@@ -415,7 +421,7 @@ function render() {
     el('generate-btn').disabled = !form.plan || model.pending;
     el('generate-label').textContent = model.pending
         ? (model.pendingKind === 'prepare_blog' || !form.plan ? '준비 중…' : '작성 중…')
-        : form.markdown ? '글 다시 쓰기' : '이대로 글쓰기';
+        : form.markdown ? '글 다시 쓰기' : '글쓰기';
     el('prepare-btn').disabled = model.pending;
     el('retry-btn').disabled = model.running;
     value('instructions', form.instructions);

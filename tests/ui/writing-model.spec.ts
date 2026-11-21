@@ -146,3 +146,24 @@ test('late balance checks cannot overwrite a newer choice, an active request or 
     await expect(page.locator('#writing-model')).toHaveText('high');
     await expect(page.locator('#writing-model')).toBeDisabled();
 });
+
+test('linked sidebar uses the active draft and the same paid-model check as the editor', async ({ page }) => {
+    await openWebview(page);
+    await model(page);
+    const receive = (message: Record<string, unknown>) => page.evaluate(data =>
+        window.dispatchEvent(new MessageEvent('message', { data })), message);
+    const controls = () => page.evaluate(() =>
+        (window as any).__messages.filter((message: any) => message.type === 'writerControls').at(-1)?.controls);
+    await receive({ type: 'writerSidebar', linked: true });
+    await expect(page.locator('#writing-model')).toBeHidden();
+    const action = { type: 'writerAction', action: 'model', value: 'astra' };
+    await receive({ ...action, filePath: '/work/other.c' });
+    expect(await latestCheck(page)).toBeUndefined();
+    await receive({ ...action, filePath: base.filePath });
+    await expect.poll(async () => (await controls()).modelHint).toContain('확인하고');
+    await answerCheck(page, false);
+    await expect.poll(async () => (await controls()).modelHint).toContain('유료 크레딧이 없어');
+    expect((await controls()).model.value).toBe('standard-high');
+    await receive({ type: 'writerSidebar', linked: false });
+    await expect(page.locator('#writing-model')).toBeVisible();
+});

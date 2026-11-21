@@ -44,7 +44,60 @@ exports.run = async () => {
         assert.equal(welcomeTabs().length, 1, 'manual welcome reuses its existing tab');
         const welcome = await surface(browser, '#welcome');
         if (stage === 'first') {
-            assert.equal((await requests()).length, 0, 'welcome does not start AI work');
+            const folderFile = welcome.frame.locator('.file-link').filter({ hasText: 'solve.py' });
+            await folderFile.waitFor();
+            await until(() => welcome.frame.locator('.brand-icon').evaluate(img => img.naturalWidth > 0), 'extension logo loaded');
+            const initialFile = path.join(sandbox, 'workspace', 'solve.py');
+            const diskTime = (await fs.stat(initialFile)).mtime.toISOString();
+            assert.equal(await folderFile.locator('time').getAttribute('datetime'), diskTime);
+            const folderButton = welcome.frame.getByRole('button', { name: '폴더 열기' });
+            await fs.rename(initialFile, initialFile + '.txt');
+            await folderButton.click();
+            const picker = welcome.page.locator('.quick-input-widget input:visible');
+            await picker.waitFor();
+            await picker.press('Escape');
+            await until(() => folderButton.isEnabled(), 'folder picker can be cancelled');
+            await fs.rename(initialFile + '.txt', initialFile);
+            await folderFile.waitFor();
+            assert.ok(await folderButton.isHidden());
+            const nested = path.join(sandbox, 'workspace', 'problems', 'search.CPP');
+            await fs.mkdir(path.dirname(nested), { recursive: true });
+            await fs.writeFile(nested, '');
+            await welcome.frame.locator('.file-link').filter({ hasText: 'search.CPP' }).waitFor();
+            const external = path.join(sandbox, 'outside.c');
+            await fs.writeFile(external, 'int main() {}');
+            await vscode.window.showTextDocument(vscode.Uri.file(external), { preview: false });
+            await vscode.commands.executeCommand('psb.welcome');
+            const externalFile = welcome.frame.locator('.file-link').filter({ hasText: 'outside.c' });
+            await externalFile.waitFor();
+            assert.equal(await externalFile.locator('time').getAttribute('datetime'), (await fs.stat(external)).mtime.toISOString());
+            const initialEditor = await vscode.window.showTextDocument(vscode.Uri.file(initialFile), { preview: false });
+            await initialEditor.edit(edit => edit.insert(new vscode.Position(0, 0), '# 저장 전 변경\n'));
+            await vscode.commands.executeCommand('psb.welcome');
+            assert.equal(await welcome.frame.locator('.file-name').first().innerText(), 'outside.c', 'switching tabs preserves modification order');
+            const latest = new Date(Date.now() + 1000);
+            await fs.utimes(nested, latest, latest);
+            await until(async () => (await welcome.frame.locator('.file-name').first().innerText()) === 'search.CPP', 'disk edits reorder Welcome');
+            await welcome.frame.getByRole('button', { name: 'search.CPP 글쓰기' }).click();
+            const unrecordedTools = (await surface(browser, '#writer-tools')).frame;
+            const unrecordedWriter = (await surface(browser, '#prepare-empty-btn')).frame;
+            await unrecordedTools.getByRole('button', { name: '메모 생성', exact: true }).waitFor();
+            assert.equal(await unrecordedTools.locator('#writer-file-name').innerText(), 'search.CPP');
+            assert.ok(await unrecordedWriter.locator('#prepare-empty-btn').isHidden());
+            assert.equal(await unrecordedTools.locator('#library-toggle').getAttribute('aria-expanded'), 'false');
+            await unrecordedTools.locator('#library-toggle').click();
+            await unrecordedTools.locator('.log-item').filter({ hasText: 'search.CPP' }).click();
+            await unrecordedTools.locator('#ctx-view-history').click();
+            const emptyHistory = (await surface(browser, '.history-entry')).frame;
+            assert.equal(await emptyHistory.locator('.history-entry').count(), 1);
+            assert.equal(await emptyHistory.locator('.stat-added').innerText(), '+0(0)');
+            assert.equal(await emptyHistory.locator('.diff-line').count(), 0);
+            await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+            const emptyWriterTab = vscode.window.tabGroups.all.flatMap(group => group.tabs).find(tab => tab.label.includes('글 만들기') && tab.label.includes('search.CPP'));
+            assert.ok(emptyWriterTab);
+            await vscode.window.tabGroups.close(emptyWriterTab);
+            await vscode.commands.executeCommand('psb.welcome');
+            assert.equal((await requests()).length, 0, 'opening an unrecorded file for writing waits for explicit memo generation');
             await welcome.frame.locator('[data-action="connect"]').click();
             await until(async () => !(await welcome.frame.locator('[data-action="connect"]').isDisabled()), 'welcome account action completes');
             assert.equal((await requests()).length, 0, 'login does not start AI work');
@@ -70,7 +123,31 @@ exports.run = async () => {
             await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
             await vscode.commands.executeCommand('psb.welcome');
             await welcome.frame.locator('[data-action="history"]').click();
-            await surface(browser, '#generate-blog-btn');
+            const files = (await surface(browser, '#generate-blog-btn')).frame;
+            const candidate = files.locator('.log-item').filter({ hasText: 'solve.py' });
+            await candidate.click();
+            assert.equal(await candidate.locator('time').getAttribute('datetime'), diskTime);
+            assert.ok(await files.locator('#generate-blog-btn').isEnabled());
+            await files.locator('#ctx-view-history').click();
+            const preview = (await surface(browser, '.history-entry')).frame;
+            const savedCode = await fs.readFile(initialFile, 'utf8');
+            assert.equal(await preview.locator('h2').innerText(), '파일 수정 기록: solve.py');
+            assert.equal(await preview.locator('.history-entry').count(), 1);
+            assert.equal(await preview.locator('.stat-date').getAttribute('datetime'), diskTime);
+            assert.equal(await preview.locator('.diff-line:not(.diff-added)').count(), 0);
+            assert.equal((await preview.locator('.diff-added .diff-content').allTextContents()).join('\n'), savedCode);
+            await preview.getByRole('button', { name: '이 시점의 코드 보기' }).click();
+            await until(() => {
+                const doc = vscode.window.activeTextEditor?.document;
+                return doc?.isUntitled && doc.languageId === 'python' && doc.getText().endsWith('\n\n' + savedCode);
+            }, 'snapshot opens with the displayed code');
+            await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+            const previewTab = vscode.window.tabGroups.all.flatMap(group => group.tabs).find(tab => tab.label === 'History: solve.py');
+            assert.ok(previewTab);
+            await vscode.window.tabGroups.close(previewTab);
+            await vscode.commands.executeCommand('psb.sidebar.focus');
+            await fs.unlink(nested);
+            await until(async () => !(await files.locator('.log-item').filter({ hasText: 'search.CPP' }).count()), 'removed file leaves the list');
             await welcome.page.screenshot({ path: path.join(sandbox, 'welcome.png') });
         }
         await vscode.window.tabGroups.close(welcomeTabs());
@@ -86,11 +163,12 @@ exports.run = async () => {
         }
         await vscode.commands.executeCommand('psb.sidebar.focus');
         const sidebar = await surface(browser, '#generate-blog-btn');
-        await until(async () => (await sidebar.frame.locator('.log-name').allTextContents()).includes('solve.py'), 'recorded file');
+        const recorded = sidebar.frame.locator('.log-item').filter({ has: sidebar.frame.getByText('solve.py', { exact: true }) });
+        await until(async () => await recorded.count() === 1 && await recorded.getAttribute('data-source') === '', 'discovered file becomes one recorded row');
         const writingCounts = sidebar.frame.locator('.log-item').filter({ has: sidebar.frame.getByText('solve.py', { exact: true }) }).locator('.log-writing');
         if (stage === 'first') {
             assert.equal((await requests()).length, 0, 'ordinary saves must not trigger AI');
-            await sidebar.frame.getByText('solve.py', { exact: true }).click({ button: 'right' });
+            await recorded.click({ button: 'right' });
             await sidebar.frame.locator('#ctx-view-history').click();
             const history = await surface(browser, '#write-btn');
             await until(async () => (await history.frame.locator('#preparation-status').innerText()).includes('끝났어요'), 'history prepares AI automatically');
@@ -99,7 +177,7 @@ exports.run = async () => {
             assert.equal((await requests()).length, 1);
             await history.frame.locator('#write-btn').click();
         } else {
-            await sidebar.frame.getByText('solve.py', { exact: true }).click();
+            await recorded.click();
             await sidebar.frame.locator('#generate-blog-btn').click();
         }
         const writer = await surface(browser, '#generate-btn');
@@ -109,7 +187,14 @@ exports.run = async () => {
             assert.equal(await writer.frame.locator('#summary').inputValue(), 'AI가 미리 정리한 설명');
             assert.equal((await requests()).length, 1, 'opening writer must reuse preparation');
             await writer.frame.locator('#summary').fill('서버 경로에서 수정한 의도');
-            await writer.frame.locator('#generate-btn').click();
+            const controls = sidebar.frame.locator('#writer-tools');
+            await controls.getByRole('button', { name: '글쓰기', exact: true }).waitFor();
+            assert.ok(await writer.frame.locator('#generate-btn').isHidden());
+            await controls.locator('#side-style').selectOption('formal');
+            await until(async () => (await writer.frame.locator('#writing-style').inputValue()) === 'formal', 'sidebar settings apply to the active draft');
+            await controls.locator('#side-model').selectOption('standard');
+            await until(async () => (await writer.frame.locator('#writing-model-value').innerText()) === 'standard', 'sidebar model selection reaches the editor');
+            await controls.getByRole('button', { name: '글쓰기', exact: true }).click();
             await until(async () => (await writer.frame.locator('#stream-preview').innerText()).includes('생성 중인 본문'), 'stream visible before completion');
             assert.ok(await writer.frame.locator('#generate-btn').isDisabled());
             await writer.page.screenshot({ path: path.join(sandbox, 'streaming.png') });
@@ -124,7 +209,7 @@ exports.run = async () => {
             await until(async () => (await writer.frame.locator('#article-preview').innerText()).includes('서버 경로에서 수정한 의도'), 'server respects edited intent');
             if (!autoMode) {
                 await until(async () => (await writingCounts.locator('.log-unread').count()) === 1, 'a newly generated background article has an unread marker');
-                await sidebar.frame.getByText('solve.py', { exact: true }).click();
+                await recorded.click();
                 await sidebar.frame.locator('#ctx-write-blog').click();
                 await until(async () => (await writingCounts.locator('.log-unread').count()) === 0, 'viewing the newly generated article clears its marker');
             }
@@ -137,6 +222,24 @@ exports.run = async () => {
             } else {
                 assert.deepEqual(JSON.parse(await fs.readFile(path.join(sandbox, 'ghost-posts.json'), 'utf8').catch(() => '[]')), [], 'disabled automatic upload keeps completed articles local');
             }
+            const planTab = sidebar.frame.locator('[data-writer-action=plan]');
+            const articleTab = sidebar.frame.locator('[data-writer-action=article]');
+            await planTab.click();
+            await writer.frame.locator('#plan-view').waitFor();
+            await sidebar.frame.locator('#side-style').waitFor();
+            await writer.page.screenshot({ path: path.join(sandbox, 'writer-plan.png') });
+            await articleTab.click();
+            await writer.frame.locator('#article-view').waitFor();
+            await sidebar.frame.locator('#side-version').waitFor();
+            await sidebar.frame.locator('[data-writer-action=preview]').click();
+            await writer.frame.locator('#article-preview').waitFor();
+            await sidebar.frame.getByRole('button', { name: '편집으로 돌아가기' }).click();
+            await writer.frame.locator('#rich-editor').waitFor();
+            await vscode.commands.executeCommand('workbench.action.closeSidebar');
+            await writer.frame.locator('#article-tab').waitFor();
+            await vscode.commands.executeCommand('psb.sidebar.focus');
+            await sidebar.frame.locator('#side-version').waitFor();
+            await writer.page.screenshot({ path: path.join(sandbox, 'writer-article.png') });
             await writer.frame.locator('#source-btn').click();
             await writer.frame.locator('#article-title').fill('에디터에서 고친 제목');
             await writer.frame.locator('#article-body').fill('## 재시작\n\n서버와 무관하게 보존된 로컬 본문');
@@ -152,7 +255,8 @@ exports.run = async () => {
         assert.equal((await requests()).length, stage === 'first' ? 2 : 3, 'reopening must not repeat model work');
         if (stage === 'first') {
             await vscode.commands.executeCommand('psb.sidebar.focus');
-            await sidebar.frame.getByText('solve.py', { exact: true }).click({ button: 'right' });
+            await sidebar.frame.locator('#library-toggle').click();
+            await recorded.click({ button: 'right' });
             await sidebar.frame.locator('#ctx-view-history').click();
             const reviewed = await surface(browser, '#write-btn');
             await until(async () => (await reviewed.frame.locator('#preparation-status').innerText()).includes('끝났어요'), 'review reuses the same history');
@@ -171,6 +275,8 @@ exports.run = async () => {
         }
         await vscode.commands.executeCommand('psb.sidebar.focus');
         const usageSidebar = await surface(browser, '#usage-btn');
+        const libraryToggle = usageSidebar.frame.locator('#library-toggle');
+        if (await libraryToggle.isVisible() && await libraryToggle.getAttribute('aria-expanded') === 'false') await libraryToggle.click();
         // Headless Linux hosts can restart without an OS keyring. An unsigned
         // session must hide usage; explicitly connect before comparing amounts.
         if ((await usageSidebar.frame.locator('#connect-server-btn').innerText()) === '로그인') {
@@ -200,6 +306,24 @@ exports.run = async () => {
         assert.ok(label.includes('유료 ' + credits(usage.creditBalance) + ' 크레딧'));
         assert.doesNotMatch(label, /USD|\$|달러/);
         await writer.page.screenshot({ path: path.join(sandbox, stage + '.png') });
+        if (stage === 'restart') {
+            const filePath = path.join(sandbox, 'workspace', 'sequence.c');
+            await fs.writeFile(filePath, 'int value = 1;\n');
+            await vscode.commands.executeCommand('psb.welcome');
+            const start = await surface(browser, '#welcome');
+            await start.frame.getByRole('button', { name: 'sequence.c 글쓰기' }).click();
+            const tools = sidebar.frame.locator('#writer-tools');
+            const prepare = tools.getByRole('button', { name: '메모 생성', exact: true });
+            await prepare.waitFor();
+            assert.equal((await requests()).length, 3, 'opening the new file starts the writer without generating memos');
+            const latest = 'int value = 42;\n';
+            await fs.writeFile(filePath, latest);
+            await prepare.click();
+            await tools.getByRole('button', { name: '글쓰기', exact: true }).waitFor();
+            const request = (await requests()).at(-1);
+            assert.equal(request.source.fileName, 'sequence.c');
+            assert.equal(request.source.finalCode, latest);
+        }
         await fs.writeFile(path.join(sandbox, stage + '.json'), JSON.stringify({ stage, passed: true }));
     } finally { restoreFetch(); await browser.close(); }
 };

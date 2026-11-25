@@ -1,6 +1,10 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as diff from 'diff';
+import { HistoryStream } from './HistoryStream';
+import { fileWatcher } from '../storage/FileWatcher';
+import historyTemplate from './templates/history.html';
+import historyCss from './templates/history.css';
+import historyScript from './templates/historyScripts.webview.js';
 import { storageManager, HistoryConflict } from '../storage/StorageManager';
 import { readSavedFileHistory } from '../storage/SavedFileHistory';
 import { historyFingerprint } from '../writing/model';
@@ -20,13 +24,22 @@ export class HistoryManager {
             vscode.ViewColumn.One,
             {
                 enableScripts: true,
-                localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')],
+                retainContextWhenHidden: true,
+                localResourceRoots: [],
             },
         );
 
         let recordedHistoryReady = false;
         let disposed = false;
-        let preview: FileHistory | undefined;
+        let revision = 0;
+        let session: {
+            id: string;
+            stream: HistoryStream;
+            preview?: FileHistory;
+            offset: number;
+            busy: boolean;
+            lastReply?: { type: string; loadId: string; offset: number };
+        } | undefined;
         let statusRevision = 0;
         const updatePreparation = async () => {
             const revision = ++statusRevision;
@@ -35,41 +48,63 @@ export class HistoryManager {
         };
         const render = async () => {
             if (disposed) return;
+            const generation = ++revision;
+            session?.stream.dispose();
+            session = undefined;
             recordedHistoryReady = false;
             panel.webview.html = this._getLoadingHtml(panel.webview);
             try {
+                await fileWatcher.flushFile(filePath);
                 const stored = await storageManager.getFileHistory(filePath);
-                let history: FileHistory;
-                if (stored?.snapshots.length) {
-                    preview = undefined;
-                    history = stored;
-                } else {
-                    const language = discoveredLanguage ?? stored?.language;
-                    if (!language) throw new Error('파일을 찾을 수 없습니다.');
-                    preview = await readSavedFileHistory(filePath, language);
-                    history = preview;
-                }
-                const html = await this._getHtmlForWebview(extensionUri, history, !preview);
-                if (!disposed) panel.webview.html = html;
+                const recorded = Boolean(stored?.snapshots.length);
+                const language = discoveredLanguage ?? stored?.language;
+                if (!recorded && !language) throw new Error('파일을 찾을 수 없습니다.');
+                const history = recorded ? stored! : await readSavedFileHistory(filePath, language!);
+                if (disposed || generation !== revision) return;
+                const id = randomBytes(16).toString('hex');
+                session = { id, stream: new HistoryStream(history), preview: recorded ? undefined : history, offset: 0, busy: false };
+                panel.webview.html = this._getHtmlForWebview(history, id, recorded);
             } catch {
-                if (!disposed) panel.webview.html = '<p>기록을 불러오지 못했습니다. 파일을 확인한 뒤 다시 열어 주세요.</p>';
+                if (!disposed && generation === revision) panel.webview.html = '<p>기록을 불러오지 못했습니다. 파일을 확인한 뒤 다시 열어 주세요.</p>';
             }
         };
 
-        panel.webview.onDidReceiveMessage(async (message) => {
+        const messages = panel.webview.onDidReceiveMessage(async (message) => {
+            const current = session;
+            if (disposed || !current || message.loadId !== current.id) return;
             try {
                 switch (message.type) {
                     case 'ready':
-                        if (preview) break;
+                        if (current.preview) break;
                         recordedHistoryReady = true;
                         if (panel.visible) void BlogPostManager.prepareOnReview(filePath);
                         void updatePreparation().catch(() => {});
+                        break;
+                    case 'loadHistory': {
+                        if (current.busy || message.offset !== current.offset) break;
+                        const offset = current.offset;
+                        current.busy = true;
+                        try {
+                            const entry = await current.stream.next();
+                            if (disposed || session !== current || !entry) return;
+                            current.lastReply = { type: 'historyEntry', loadId: current.id, offset, ...entry };
+                            current.offset++;
+                        } catch {
+                            current.lastReply = { type: 'historyError', loadId: current.id, offset };
+                        } finally {
+                            current.busy = false;
+                        }
+                        if (!disposed && session === current && panel.visible) await panel.webview.postMessage(current.lastReply);
+                        break;
+                    }
+                    case 'reloadHistory':
+                        await render();
                         break;
                     case 'write':
                         if (recordedHistoryReady) await BlogPostManager.openPage(extensionUri, filePath);
                         break;
                     case 'viewSnapshot':
-                        await this._openSnapshot(filePath, message.index, message.version, preview);
+                        await this._openSnapshot(filePath, message.index, message.version, current.preview);
                         break;
                     case 'deleteSnapshot':
                         if (recordedHistoryReady && await this._handleDeleteRequest(filePath, message.index, message.version)) {
@@ -87,8 +122,23 @@ export class HistoryManager {
         const preparation = BlogPostManager.onDidChange(changed => {
             if (recordedHistoryReady && changed === filePath) void updatePreparation().catch(() => {});
         });
-        panel.onDidChangeViewState(() => { if (recordedHistoryReady && panel.visible) void BlogPostManager.prepareOnReview(filePath); });
-        panel.onDidDispose(() => { disposed = true; preparation.dispose(); });
+        const visibility = panel.onDidChangeViewState(() => {
+            if (!panel.visible) return;
+            // A retained but suspended webview can miss its in-flight response.
+            // The webview accepts only its pending offset, so replay is idempotent.
+            if (session?.lastReply) void panel.webview.postMessage(session.lastReply);
+            if (recordedHistoryReady) {
+                void BlogPostManager.prepareOnReview(filePath);
+                void updatePreparation().catch(() => {});
+            }
+        });
+        panel.onDidDispose(() => {
+            disposed = true;
+            session?.stream.dispose();
+            messages.dispose();
+            visibility.dispose();
+            preparation.dispose();
+        });
         await render();
     }
 
@@ -220,572 +270,15 @@ export class HistoryManager {
         });
     }
 
-    private static async _getHtmlForWebview(
-        extensionUri: vscode.Uri,
-        history: FileHistory,
-        recorded: boolean,
-    ): Promise<string> {
-        // Generate diffs
-        const diffsHtml = await this._generateDiffsHtml(history);
-        const cssStyles = await this._loadCss(extensionUri);
+    private static _getHtmlForWebview(history: FileHistory, loadId: string, recorded: boolean): string {
         const nonce = randomBytes(24).toString('base64');
-
-        return `<!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none';">
-            <title>수정 기록: ${htmlText(history.filePath)}</title>
-            <style>
-                ${cssStyles}
-                body {
-                    font-family: var(--vscode-font-family);
-                    padding: 20px;
-                    color: var(--vscode-editor-foreground);
-                    background-color: var(--vscode-sideBar-background); /* Use sidebar background for the page canvas */
-                }
-                .d2h-wrapper {
-                    /* Color Overrides for VS Code Theme Adaptation */
-                    --d2h-bg-color: var(--vscode-editor-background);
-                    --d2h-text-color: var(--vscode-editor-foreground);
-                    --d2h-border-color: var(--vscode-widget-border);
-                    
-                    /* Ins/Del Backgrounds */
-                    --d2h-ins-bg-color: var(--vscode-diffEditor-insertedLineBackground, rgba(100, 255, 100, 0.2));
-                    --d2h-ins-border-color: transparent;
-                    --d2h-del-bg-color: var(--vscode-diffEditor-removedLineBackground, rgba(255, 100, 100, 0.2));
-                    --d2h-del-border-color: transparent;
-                    
-                    /* Line Number Colors */
-                    --d2h-line-num-text-color: var(--vscode-editorLineNumber-foreground);
-                    --d2h-line-num-bg-color: var(--vscode-editor-background);
-                    
-                    /* Header */
-                    --d2h-header-bg-color: var(--vscode-sideBarSectionHeader-background);
-                    --d2h-header-text-color: var(--vscode-sideBarSectionHeader-foreground);
-                    --d2h-header-border-color: var(--vscode-widget-border);
-
-                    /* Icons */
-                    --d2h-icon-color: var(--vscode-icon-foreground);
-                }
-
-                /* Apply variables to d2h classes */
-                .d2h-file-header {
-                    background-color: var(--d2h-header-bg-color) !important;
-                    border-bottom: 1px solid var(--d2h-header-border-color) !important;
-                    color: var(--d2h-header-text-color) !important;
-                }
-                .d2h-file-wrapper {
-                    border: 1px solid var(--d2h-border-color) !important;
-                    margin-bottom: 20px;
-                }
-                .d2h-code-line-ctn {
-                    /* Ensure code text color matches editor */
-                    color: var(--vscode-editor-foreground);
-                }
-                .d2h-code-linenumber {
-                    background-color: var(--d2h-line-num-bg-color) !important;
-                    color: var(--d2h-line-num-text-color) !important;
-                    border: none !important;
-                }
-                
-                /* Diff Blocks (Lines) */
-                .d2h-ins {
-                    background-color: var(--d2h-ins-bg-color) !important;
-                    border-color: var(--d2h-ins-border-color) !important;
-                }
-                .d2h-del {
-                    background-color: var(--d2h-del-bg-color) !important;
-                    border-color: var(--d2h-del-border-color) !important;
-                    text-decoration: none !important;
-                }
-
-                /* Apply line number color to deleted text (dimming it) */
-                .d2h-del .d2h-code-line, 
-                .d2h-del .d2h-code-line * {
-                    color: var(--vscode-editorLineNumber-foreground) !important;
-                }
-
-                /* Word-level highlights (Tags inside lines) */
-                .d2h-code-line del {
-                    background-color: var(--vscode-diffEditor-removedTextBackground, #ff0000) !important;
-                    text-decoration: none !important;
-                    border-radius: 2px;
-                }
-                .d2h-code-line ins {
-                    background-color: var(--vscode-diffEditor-insertedTextBackground, #00ff00) !important;
-                    text-decoration: none !important;
-                    border-radius: 2px;
-                }
-                
-                /* Info / Metadata */
-                .d2h-info {
-                    background-color: var(--vscode-editor-lineHighlightBackground) !important;
-                    color: var(--vscode-editor-foreground) !important;
-                    border-color: var(--d2h-border-color) !important;
-                }
-
-                /* Fix icons color if they use SVG fill */
-                .d2h-icon {
-                    fill: var(--d2h-icon-color) !important;
-                    stroke: var(--d2h-icon-color) !important;
-                }
-                .d2h-tag {
-                    display: none; /* Hide 'FILE', 'RENAMED' etc tags to look cleaner like VSCode */
-                }
-
-                h2 {
-                    border-bottom: 1px solid var(--vscode-widget-border);
-                    padding-bottom: 8px;
-                    color: var(--vscode-foreground);
-                }
-
-                .history-entry {
-                    margin-bottom: 30px;
-                    background-color: var(--vscode-editor-background); /* Explicitly set entry background */
-                    border: 1px solid var(--vscode-widget-border);
-                    border-radius: 6px;
-                    overflow: hidden;
-                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-                }
-
-                .entry-header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    padding: 8px 12px;
-                    background-color: var(--vscode-editor-inactiveSelectionBackground); /* Subtle background */
-                    border-bottom: 1px solid var(--vscode-widget-border);
-                }
-
-                .entry-title {
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: var(--vscode-foreground);
-                    display: flex;
-                    gap: 8px;
-                    align-items: center;
-                }
-                
-                .stat-added { color: var(--vscode-charts-green, #89d185); }
-                .stat-removed { color: var(--vscode-charts-red, #f48771); }
-                .stat-date { opacity: 0.8; margin-left: 4px; font-weight: normal; }
-
-                .entry-actions {
-                    display: flex;
-                    align-items: center;
-                }
-
-                .view-code-btn {
-                    background-color: var(--vscode-button-background);
-                    color: var(--vscode-button-foreground);
-                    border: none;
-                    padding: 4px 10px;
-                    cursor: pointer;
-                    font-size: 11px;
-                    border-radius: 2px;
-                    font-family: var(--vscode-font-family);
-                    display: flex;
-                    align-items: center;
-                    gap: 4px;
-                }
-
-                .view-code-btn:hover {
-                    background-color: var(--vscode-button-hoverBackground);
-                }
-
-                .delete-btn {
-                    background-color: var(--vscode-button-secondaryBackground);
-                    color: var(--vscode-button-secondaryForeground);
-                    border: none;
-                    padding: 4px 10px;
-                    cursor: pointer;
-                    font-size: 11px;
-                    border-radius: 2px;
-                    font-family: var(--vscode-font-family);
-                    display: flex; /* Ensure implementation */
-                    align-items: center;
-                    margin-right: 8px;
-                }
-
-                .delete-btn:hover {
-                    background-color: var(--vscode-button-secondaryHoverBackground);
-                }
-                
-                /* Remove bottom margin from d2h-wrapper inside our entry to avoid double spacing */
-                .d2h-wrapper {
-                   margin-bottom: 0 !important;
-                }
-                
-                .d2h-file-wrapper {
-                    margin-bottom: 0 !important;
-                    border: none !important;
-                    border-radius: 0 !important;
-                }
-            </style>
-        </head>
-        <body>
-            <h2>파일 수정 기록: ${htmlText(path.basename(history.filePath))}</h2>
-            ${recorded ? '<p><span id="preparation-status">글쓰기에서 AI가 풀이를 정리해 드려요.</span> <button id="write-btn" class="view-code-btn">글쓰기 열기</button></p>' : ''}
-            ${diffsHtml}
-
-            <script nonce="${nonce}">
-                const vscode = acquireVsCodeApi();
-                const version = '${historyFingerprint(history)}';
-                const writeButton = document.getElementById('write-btn');
-                if (writeButton) {
-                    writeButton.addEventListener('click', () => vscode.postMessage({ type: 'write' }));
-                    window.addEventListener('message', ({data}) => { if (data.type === 'preparation') document.getElementById('preparation-status').textContent = data.text; });
-                }
-                vscode.postMessage({ type: 'ready' });
-                
-                document.querySelectorAll('.view-code-btn[data-index]').forEach(btn => {
-                    btn.addEventListener('click', (e) => {
-                        const index = parseInt(e.currentTarget.getAttribute('data-index'));
-                        vscode.postMessage({
-                            type: 'viewSnapshot',
-                            version,
-                            index: index
-                        });
-                    });
-                });
-
-                document.querySelectorAll('.delete-btn').forEach(btn => {
-                    btn.addEventListener('click', (e) => {
-                        const btn = e.currentTarget;
-                        const indexStr = btn.getAttribute('data-index');
-                        const index = parseInt(indexStr);
-                        
-                        // Send request to backend immediately
-                        vscode.postMessage({
-                            type: 'deleteSnapshot',
-                            version,
-                            index: index
-                        });
-                    });
-                });
-            </script>
-        </body>
-        </html>`;
-    }
-
-    private static async _loadCss(extensionUri: vscode.Uri): Promise<string> {
-        // We only need basic diff styling since Shiki handles syntax highlighting
-        // Shiki's default output needs to be wrapped or styled to fit
-        return `
-            /* Shiki Diff Styling */
-            .diff-container {
-                font-family: var(--vscode-editor-font-family, 'Consolas', 'Courier New', monospace);
-                font-size: var(--vscode-editor-font-size, 14px);
-                line-height: normal; /* Adjust if needed */
-                background-color: var(--vscode-editor-background);
-                border-radius: 4px;
-                overflow-x: auto;
-                margin-bottom: 20px;
-            }
-            .diff-table {
-                width: 100%;
-                border-collapse: collapse;
-            }
-            .diff-line {
-                white-space: pre;
-            }
-            .diff-line-number {
-                width: 40px;
-                text-align: right;
-                padding-right: 10px;
-                color: var(--vscode-editorLineNumber-foreground);
-                user-select: none;
-                vertical-align: top;
-                border-right: 1px solid var(--vscode-editorGutter-background);
-            }
-            .diff-content {
-                padding-left: 10px;
-                vertical-align: top;
-                color: var(--vscode-editor-foreground);
-            }
-            
-            /* Highlighting Backgrounds */
-            .diff-added {
-                background-color: var(--vscode-diffEditor-insertedLineBackground, rgba(100, 255, 100, 0.2));
-            }
-            .diff-removed {
-                background-color: var(--vscode-diffEditor-removedLineBackground, rgba(255, 100, 100, 0.2));
-            }
-            .diff-unchanged {
-                /* No background or transparent */
-            }
-
-            /* Shiki Code Styles overrides if needed */
-            pre.shiki {
-                margin: 0;
-                padding: 0;
-                background-color: transparent !important; /* Let line background show through */
-            }
-            .shiki code {
-                background-color: transparent !important;
-            }
-        `;
-    }
-
-    private static async _generateDiffsHtml(history: FileHistory): Promise<string> {
-        let html = '';
-        const fileName = path.basename(history.filePath);
-        const shikiService = (await import('./ShikiService.js')).ShikiService.getInstance();
-        await shikiService.init();
-
-        const CONTEXT_SIZE = 3; // Number of lines to show around changes
-
-        // Common CSS for separator
-        const separatorHtml = `
-            <tr class="diff-line diff-separator">
-                <td class="diff-line-number">...</td>
-                <td class="diff-line-number">...</td>
-                <td class="diff-content" style="color: var(--vscode-descriptionForeground); font-style: italic;">...</td>
-            </tr>`;
-
-        for (let i = history.snapshots.length - 1; i > 0; i--) {
-            const currentContent = storageManager.reconstructFileContent(history, i);
-            const prevContent = storageManager.reconstructFileContent(history, i - 1);
-
-            if (currentContent !== null && prevContent !== null) {
-                const dateStr = this._formatDate(history.snapshots[i].timestamp);
-
-                const rawPrevHtml = await shikiService.highlight(prevContent, history.language);
-                const rawCurrHtml = await shikiService.highlight(currentContent, history.language);
-
-                const prevLines = this._extractShikiLines(rawPrevHtml);
-                const currLines = this._extractShikiLines(rawCurrHtml);
-
-                const diffResult = diff.diffLines(prevContent, currentContent);
-
-                // 1. Flatten into rows
-                interface DiffRow {
-                    type: 'added' | 'removed' | 'unchanged';
-                    html: string;
-                    lineNumPrev?: number;
-                    lineNumCurr?: number;
-                }
-                const allRows: DiffRow[] = [];
-                let prevIdx = 0;
-                let currIdx = 0;
-
-                // Calculate Stats
-                let addedLines = 0;
-                let addedChars = 0;
-                let removedLines = 0;
-                let removedChars = 0;
-
-                diffResult.forEach((part) => {
-                    const count = part.count || 0;
-                    const chars = part.value.length;
-
-                    if (part.added) {
-                        addedLines += count;
-                        addedChars += chars;
-                        for (let j = 0; j < count; j++) {
-                            allRows.push({
-                                type: 'added',
-                                html: currLines[currIdx + j] || '',
-                                lineNumCurr: currIdx + j + 1,
-                            });
-                        }
-                        currIdx += count;
-                    } else if (part.removed) {
-                        removedLines += count;
-                        removedChars += chars;
-                        for (let j = 0; j < count; j++) {
-                            allRows.push({
-                                type: 'removed',
-                                html: prevLines[prevIdx + j] || '',
-                                lineNumPrev: prevIdx + j + 1,
-                            });
-                        }
-                        prevIdx += count;
-                    } else {
-                        for (let j = 0; j < count; j++) {
-                            allRows.push({
-                                type: 'unchanged',
-                                html: currLines[currIdx + j] || '',
-                                lineNumPrev: prevIdx + j + 1,
-                                lineNumCurr: currIdx + j + 1,
-                            });
-                        }
-                        prevIdx += count;
-                        currIdx += count;
-                    }
-                });
-
-                // 2. Identify rows to show (Changes + Context)
-                const indicesToShow = new Set<number>();
-                for (let r = 0; r < allRows.length; r++) {
-                    if (allRows[r].type !== 'unchanged') {
-                        // Mark range [r - context, r + context]
-                        const start = Math.max(0, r - CONTEXT_SIZE);
-                        const end = Math.min(allRows.length - 1, r + CONTEXT_SIZE);
-                        for (let k = start; k <= end; k++) {
-                            indicesToShow.add(k);
-                        }
-                    }
-                }
-
-                // 3. Render filtered rows
-                let diffTableRows = '';
-                let lastShownIndex = -1;
-
-                const sortedIndices = Array.from(indicesToShow).sort((a, b) => a - b);
-
-                if (sortedIndices.length === 0 && allRows.length > 0) {
-                    diffTableRows = `<tr><td colspan="3" style="padding: 10px; color: var(--vscode-descriptionForeground);">No changes detected.</td></tr>`;
-                } else {
-                    sortedIndices.forEach((idx, arrayPos) => {
-                        // Check for gap
-                        if (lastShownIndex !== -1 && idx > lastShownIndex + 1) {
-                            diffTableRows += separatorHtml;
-                        }
-
-                        const row = allRows[idx];
-                        const className = `diff-line diff-${row.type}`;
-                        const numP = row.lineNumPrev !== undefined ? row.lineNumPrev : '';
-                        const numC = row.lineNumCurr !== undefined ? row.lineNumCurr : '';
-
-                        diffTableRows += `
-                            <tr class="${className}">
-                                <td class="diff-line-number">${numP}</td>
-                                <td class="diff-line-number">${numC}</td>
-                                <td class="diff-content">${row.html}</td>
-                            </tr>`;
-
-                        lastShownIndex = idx;
-                    });
-                }
-
-                // Format Stats
-                let statsHtml = '';
-                if (addedLines > 0 || addedChars > 0) {
-                    statsHtml += `<span class="stat-added">+ ${addedLines}(${addedChars})</span>`;
-                }
-                if (removedLines > 0 || removedChars > 0) {
-                    statsHtml += `<span class="stat-removed">- ${removedLines}(${removedChars})</span>`;
-                }
-
-                const isLastLog = i === history.snapshots.length - 1;
-                const deleteBtn = isLastLog
-                    ? ''
-                    : `<button class="delete-btn" data-index="${i}" data-is-middle="true">로그 삭제</button>`;
-
-                html += `
-                <div class="history-entry">
-                    <div class="entry-header">
-                        <span class="entry-title">
-                            ${statsHtml}
-                            <time class="stat-date" datetime="${new Date(history.snapshots[i].timestamp).toISOString()}">${dateStr}</time>
-                        </span>
-                        <div class="entry-actions">
-                            ${deleteBtn}
-                            <button class="view-code-btn" data-index="${i}">이 시점의 코드 보기</button>
-                        </div>
-                    </div>
-                    <div class="diff-container">
-                        <table class="diff-table">
-                            ${diffTableRows}
-                        </table>
-                    </div>
-                </div>`;
-            }
-        }
-
-        // Initial commit - Show all content (It's all "added")
-        if (history.snapshots.length > 0) {
-            const firstContent = storageManager.reconstructFileContent(history, 0);
-            if (firstContent !== null) {
-                const dateStr = this._formatDate(history.snapshots[0].timestamp);
-                const lines = firstContent ? this._extractShikiLines(await shikiService.highlight(firstContent, history.language)) : [];
-
-                let tableRows = '';
-                lines.forEach((line, idx) => {
-                    tableRows += `
-                        <tr class="diff-line diff-added">
-                            <td class="diff-line-number"></td>
-                            <td class="diff-line-number">${idx + 1}</td>
-                            <td class="diff-content">${line}</td>
-                        </tr>`;
-                });
-
-                // Initial commit stats (all added)
-                const initialChars = firstContent.length;
-                const initialLines = lines.length;
-                const statsHtml = `<span class="stat-added">+${initialLines}(${initialChars})</span>`;
-
-                html += `
-                <div class="history-entry">
-                    <div class="entry-header">
-                        <span class="entry-title">
-                            ${statsHtml}
-                            <time class="stat-date" datetime="${new Date(history.snapshots[0].timestamp).toISOString()}">${dateStr}</time>
-                        </span>
-                         <div class="entry-actions">
-                            ${history.snapshots.length > 1 ? '<button class="delete-btn" data-index="0" data-is-middle="false">로그 삭제</button>' : ''}
-                            <button class="view-code-btn" data-index="0">이 시점의 코드 보기</button>
-                        </div>
-                    </div>
-                     <div class="diff-container">
-                        <table class="diff-table">
-                            ${tableRows}
-                        </table>
-                    </div>
-                </div>`;
-            }
-        }
-
-        return html;
-    }
-
-    private static _formatDate(timestamp: number): string {
-        const date = new Date(timestamp);
-        const months = [
-            'Jan',
-            'Feb',
-            'Mar',
-            'Apr',
-            'May',
-            'Jun',
-            'Jul',
-            'Aug',
-            'Sep',
-            'Oct',
-            'Nov',
-            'Dec',
-        ];
-        const month = months[date.getMonth()];
-        const day = date.getDate().toString().padStart(2, '0');
-        const year = date.getFullYear();
-
-        let hours = date.getHours();
-        const minutes = date.getMinutes().toString().padStart(2, '0');
-        const ampm = hours >= 12 ? 'PM' : 'AM';
-        hours = hours % 12;
-        hours = hours ? hours : 12; // the hour '0' should be '12'
-        const strTime = `${hours}:${minutes} ${ampm}`;
-
-        return `${month} ${day}, ${year} ${strTime}`;
-    }
-
-    private static _extractShikiLines(html: string): string[] {
-        // Strip pre/code tags
-        const match = html.match(/<code[^>]*>([\s\S]*?)<\/code>/);
-        const inner = match ? match[1] : html;
-
-        // Shiki output (v1.x) with theme usually looks like:
-        // <span class="line">...</span>\n<span class="line">...</span>
-        // BUT, createHighlighter default output depends on configuration.
-        // Assuming line-based spans.
-        // If simply raw HTML with newlines, split by \n works for basic text,
-        // but rich text might have embedded newlines in spans?
-        // Shiki usually escapes newlines or puts them outside line spans.
-        // Let's try splitting by \n.
-
-        return inner.split('\n');
+        const values: Record<string, string> = {
+            title: htmlText(history.filePath), fileName: htmlText(path.basename(history.filePath)),
+            total: String(history.snapshots.length), loadId, version: historyFingerprint(history), recorded: String(recorded),
+            csp: `default-src 'none'; style-src 'nonce-${nonce}'; style-src-attr 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none';`,
+            styles: `<style nonce="${nonce}">${historyCss}</style>`,
+            script: `<script nonce="${nonce}">${historyScript}</script>`,
+        };
+        return historyTemplate.replace(/\{\{(\w+)\}\}/g, (_match, key) => values[key] ?? '');
     }
 }

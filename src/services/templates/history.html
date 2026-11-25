@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="{{csp}}">
+    <title>수정 기록: {{title}}</title>
+    {{styles}}
+</head>
+<body>
+    <h2>파일 수정 기록: {{fileName}}</h2>
+    <p id="writing-actions" hidden><span id="preparation-status">글쓰기에서 AI가 풀이를 정리해 드려요.</span> <button id="write-btn" class="view-code-btn">글쓰기 열기</button></p>
+    <p id="history-progress" role="status">0 / {{total}}개 불러오는 중…</p>
+    <button id="history-retry" hidden>다시 불러오기</button>
+    <main id="history-entries" data-recorded="{{recorded}}" data-load-id="{{loadId}}" data-version="{{version}}" data-total="{{total}}" aria-busy="true"></main>
+
+    {{script}}
+</body>
+</html>

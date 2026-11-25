@@ -537,6 +537,9 @@ export class BlogPostManager {
             status: view.status,
             error: view.error,
             candidate: !!draft.candidate,
+            planNotices: draft.planNotices,
+            articleNotices: draft.articleNotices,
+            candidateNotices: draft.candidate?.notices,
             versions: previousArticleVersions(draft).map((v) => ({ id: articleVersionKey(v), at: v.at, title: v.title })),
             streamHtml: view.partial ? new MarkdownIt({ html: false }).render(view.partial) : '',
         });
@@ -816,7 +819,7 @@ export class BlogPostManager {
             case 'previewVersion': {
                 const version = this.version(view.draft, message.versionId);
                 void view.panel?.webview.postMessage({
-                    type: 'versionPreview', versionId: message.versionId, title: version.title,
+                    type: 'versionPreview', versionId: message.versionId, title: version.title, notices: version.notices,
                     html: documentHtml(version.document || documentFromMarkdown(version.markdown), this.imageSources(view, version)),
                 });
                 break;
@@ -855,7 +858,7 @@ export class BlogPostManager {
                 await this.edit(view, message.fields);
                 mergeResult(
                     view.draft,
-                    { title: version.title, markdown: version.markdown, document: version.document },
+                    { title: version.title, markdown: version.markdown, document: version.document, notices: version.notices },
                     view.draft.revision,
                 );
                 await this.store.save(view.draft);

@@ -293,6 +293,34 @@ function renderEditorMode() {
     richEditor.setActive(!browsing && !previewMode && !sourceMode);
     document.querySelectorAll('textarea').forEach(height);
 }
+const displayedNotices = new WeakMap();
+function renderAuthorNotices(id, notices = [], fixLabel = '본문에 반영') {
+    const panel = el(id);
+    const key = JSON.stringify(notices);
+    if (displayedNotices.get(panel) === key) return;
+    displayedNotices.set(panel, key);
+    const list = panel.querySelector('div');
+    list.replaceChildren();
+    panel.hidden = !notices.length;
+    for (const notice of notices) {
+        const entry = document.createElement('details');
+        entry.open = true;
+        const summary = document.createElement('summary');
+        summary.textContent = `${notice.source === 'code' ? '코드' : '메모'} · ${notice.title}`;
+        entry.appendChild(summary);
+        if (notice.detail) {
+            const detail = document.createElement('p');
+            detail.textContent = notice.detail;
+            entry.appendChild(detail);
+        }
+        if (notice.appliedFix) {
+            const fix = document.createElement('p');
+            fix.textContent = fixLabel + ' · ' + notice.appliedFix;
+            entry.appendChild(fix);
+        }
+        list.appendChild(entry);
+    }
+}
 function renderVersions() {
     renderGhost();
     const versions = model.versions || [], select = el('version-select');
@@ -339,6 +367,7 @@ function chooseVersion(id) {
     readyVersion = '';
     el('version-title').textContent = '';
     el('version-body').replaceChildren();
+    renderAuthorNotices('version-notices');
     el('version-status').textContent = '이전 버전을 불러오는 중…';
     renderVersions();
     if (id) send('previewVersion', { versionId: id });
@@ -412,6 +441,9 @@ function render() {
     el('cancel-btn').hidden = !model.pending;
     el('discard-pending-btn').hidden = !!model.running;
     el('candidate-box').hidden = !model.candidate;
+    renderAuthorNotices('candidate-notices', model.candidateNotices, '반영한 수정');
+    renderAuthorNotices('plan-notices', model.planNotices, '메모에 반영');
+    renderAuthorNotices('article-notices', model.articleNotices);
     el('preparing').hidden = !!form.plan || busy;
     el('prepare-empty-btn').hidden = !!model.pending || !!model.running || !!model.candidate;
     el('preparing').querySelector('p').textContent = model.error
@@ -553,6 +585,7 @@ window.addEventListener('message', (event) => {
         el('version-status').textContent = '이전 버전 미리보기';
         el('version-title').textContent = message.title || '제목 없음';
         renderArticlePreview(el('version-body'), message.html);
+        renderAuthorNotices('version-notices', message.notices);
         renderVersions();
     } else if (message.type === 'diff') {
         document.querySelectorAll(`[data-diff="${message.index}"]`).forEach((pre) => {

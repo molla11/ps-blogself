@@ -38,6 +38,28 @@ export interface WritingRequest {
     instructions: string;
     priority?: 'interactive' | 'prefetch';
 }
+export interface AuthorNotice {
+    source: 'code' | 'plan';
+    title: string;
+    detail: string;
+    appliedFix: string;
+}
+
+// Notices are optional metadata. A malformed notice must never cost the author their generated draft.
+export function resultNotices(value: unknown): AuthorNotice[] {
+    const notices: AuthorNotice[] = [];
+    if (!Array.isArray(value)) return notices;
+    for (const item of value) {
+        if (!item || (item.source !== 'code' && item.source !== 'plan') ||
+            typeof item.title !== 'string' || !item.title.trim() || item.title.trim().length > 200 ||
+            typeof item.detail !== 'string' || item.detail.length > 2000 ||
+            typeof item.appliedFix !== 'string' || item.appliedFix.length > 1000) continue;
+        notices.push({ source: item.source, title: item.title.trim(), detail: item.detail, appliedFix: item.appliedFix });
+        if (notices.length === 3) break;
+    }
+    return notices;
+}
+
 export interface WritingJob {
     model?: WritingModel;
     id: string;
@@ -45,7 +67,7 @@ export interface WritingJob {
     progress: number;
     error?: string;
     errorCode?: string;
-    result?: { plan?: WritingPlan; title?: string; markdown?: string };
+    result?: { plan?: WritingPlan; title?: string; markdown?: string; notices?: AuthorNotice[] };
     partial?: string;
 }
 export interface ArticleVersion {
@@ -53,6 +75,7 @@ export interface ArticleVersion {
     markdown: string;
     document?: ArticleDocument;
     at: number;
+    notices?: AuthorNotice[];
 }
 export interface WritingDraft extends WritingPreferences {
     writingModel?: WritingModel;
@@ -84,7 +107,9 @@ export interface WritingDraft extends WritingPreferences {
         history?: FileHistory;
         cancelRequested?: boolean;
     };
-    candidate?: { plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory };
+    candidate?: { plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory; notices?: AuthorNotice[] };
+    planNotices?: AuthorNotice[];
+    articleNotices?: AuthorNotice[];
     articleVersions: ArticleVersion[];
     /** Only newly generated articles opt into unread notifications. Legacy drafts have none. */
     newArticleKeys?: string[];
@@ -303,12 +328,14 @@ export function mergeResult(
             plan: validatePlan(result.plan, (result.history || draft.history).snapshots.length),
         };
     }
+    const notices = resultNotices(result.notices);
     if (draft.revision !== baseRevision) {
-        draft.candidate = result;
+        draft.candidate = { ...result, notices };
         return;
     }
     if (result.plan) {
         draft.plan = result.plan;
+        draft.planNotices = notices;
         draft.preparedPlanHash = planFingerprint(result.plan);
         if (result.history) {
             draft.history = result.history;
@@ -318,12 +345,13 @@ export function mergeResult(
     if (typeof result.markdown === 'string' && typeof result.title === 'string') {
         if (articleVersionKey(draft) !== articleVersionKey({ title: result.title, markdown: result.markdown })) {
             if (draft.markdown.trim()) {
-                draft.articleVersions.push({ title: draft.title, markdown: draft.markdown, document: draft.document, at: Date.now() });
+                draft.articleVersions.push({ title: draft.title, markdown: draft.markdown, document: draft.document, notices: draft.articleNotices, at: Date.now() });
             }
             draft.title = result.title;
             draft.markdown = result.markdown;
             draft.document = result.document;
         }
+        draft.articleNotices = notices;
         draft.articleVersions = previousArticleVersions(draft);
     }
     draft.revision++;

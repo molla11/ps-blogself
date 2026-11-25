@@ -100,11 +100,19 @@
                     ><button class="quiet" id="discard-candidate-btn">현재 내용 유지</button>
                 </div>
             </div>
+            <aside class="author-notices" id="candidate-notices" aria-labelledby="candidate-notices-title" hidden>
+                <h2 id="candidate-notices-title">새 결과의 작성자 알림</h2>
+                <div></div>
+            </aside>
             <section id="stream-box" hidden>
                 <h2>작성 중인 글</h2>
                 <article id="stream-preview" class="article-preview" aria-label="작성 중인 본문"></article>
             </section>
             <section id="plan-view">
+                <aside class="author-notices" id="plan-notices" aria-labelledby="plan-notices-title" hidden>
+                    <h2 id="plan-notices-title">작성자 알림</h2>
+                    <div></div>
+                </aside>
                 <label class="field" id="custom-style-field" hidden>원하는 문체
                     <textarea id="custom-style" rows="2" maxlength="2000"
                         placeholder="예: 짧고 담백한 했다체로, 처음 배우는 사람도 이해할 수 있게. 비워두면 했다/이다체를 사용해요."></textarea>
@@ -235,6 +243,10 @@
                         </div>
                         <div id="block-menu" class="action-menu" popover="auto" aria-label="블록 메뉴"><button data-block-action="up">위로 이동</button><button data-block-action="down">아래로 이동</button><button data-block-action="delete">블록 삭제</button></div>
                         <div class="document-paper" id="current-article">
+                            <aside class="author-notices" id="article-notices" aria-labelledby="article-notices-title" hidden>
+                                <h2 id="article-notices-title">작성자 알림</h2>
+                                <div></div>
+                            </aside>
                             <div class="article-content">
                                 <label class="article-title-field">
                                     <span class="visually-hidden">글 제목</span>
@@ -254,6 +266,10 @@
                             </div>
                         </div>
                         <div class="document-paper" id="version-preview" hidden>
+                            <aside class="author-notices" id="version-notices" aria-labelledby="version-notices-title" hidden>
+                                <h2 id="version-notices-title">작성자 알림</h2>
+                                <div></div>
+                            </aside>
                             <div class="article-content">
                                 <p class="section-description" id="version-status" role="status">이전 버전 미리보기</p>
                                 <h1 id="version-title"></h1>

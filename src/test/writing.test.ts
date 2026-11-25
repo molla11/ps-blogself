@@ -66,6 +66,36 @@ test('a model completion cannot overwrite a newer user explanation or article', 
     assert.equal(draft.markdown, '새 글');
     assert.equal(draft.articleVersions[0].markdown, '편집 중인 글');
 });
+test('author notices stay with the prepared memo, candidate and restored article version', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'psb-author-notices-'));
+    const store = new DraftStore(directory);
+    const draft = newDraft(history);
+    const code = { source: 'code' as const, title: '경계값', detail: '빈 입력에서 멈춘다.', appliedFix: '빈 입력을 처리했다.' };
+    const memo = { source: 'plan' as const, title: '시간 복잡도', detail: '이중 반복이다.', appliedFix: '' };
+    try {
+        mergeResult(draft, { plan, notices: [code] }, draft.revision);
+        mergeResult(draft, { title: '첫 글', markdown: '원래 본문', notices: [memo] }, draft.revision);
+        mergeResult(draft, { title: '새 글', markdown: '새 본문', notices: [null, code] as any }, -1);
+        assert.deepEqual(draft.articleNotices, [memo]);
+        await store.save(draft);
+        const reopened = (await store.read(draft.filePath))!;
+        assert.deepEqual(reopened.candidate?.notices, [code]);
+        mergeResult(reopened, reopened.candidate!, reopened.revision);
+        assert.deepEqual(reopened.planNotices, [code]);
+        assert.deepEqual(reopened.articleNotices, [code]);
+        const previous = reopened.articleVersions[0];
+        assert.deepEqual(previous.notices, [memo]);
+        mergeResult(reopened, previous, reopened.revision);
+        assert.deepEqual(reopened.articleNotices, [memo]);
+        mergeResult(reopened, { title: previous.title, markdown: previous.markdown }, reopened.revision);
+        assert.deepEqual(reopened.articleNotices, []);
+        mergeResult(reopened, { plan }, reopened.revision);
+        assert.deepEqual(reopened.planNotices, []);
+    } finally {
+        await store.close();
+        await rm(directory, { recursive: true, force: true });
+    }
+});
 test('identical articles and trailing whitespace differences do not create a version or rewrite the text', () => {
     const draft = newDraft(history);
     const original = { title: '풀이 기록', markdown: '첫 문장\n\n```python\n    print(1)\n```\n' };

@@ -274,6 +274,32 @@ async function versionPreview(page: Page, versionId: string) {
     })), versionId);
 }
 
+test('private notices follow the active memo, article, candidate and previous version', async ({ page }) => {
+    const notice = { source: 'code', title: '경계값 <b>확인</b>', detail: '빈 입력에서 멈춥니다.', appliedFix: '빈 입력을 처리했습니다.' };
+    await open(page);
+    await model(page, { planNotices: [notice] });
+    const memos = page.locator('#plan-notices');
+    await expect(memos).toBeVisible();
+    await expect(memos.locator('summary')).toHaveText('코드 · 경계값 <b>확인</b>');
+    await expect(memos.locator('b')).toHaveCount(0);
+    await expect(memos.getByText('메모에 반영 · 빈 입력을 처리했습니다.')).toBeVisible();
+    const article = { title: '글', markdown: '게시할 본문', versions, articleNotices: [{ ...notice, source: 'plan', title: '메모 확인', appliedFix: '' }] };
+    await model(page, { ...article, candidate: true, candidateNotices: [notice] });
+    await expect(page.locator('#article-notices summary')).toHaveText('메모 · 메모 확인');
+    await expect(page.locator('#article-notices')).not.toContainText('본문에 반영');
+    await expect(page.locator('#candidate-notices')).toBeVisible();
+    await expect(page.locator('#rich-editor [contenteditable=true]')).toHaveText('게시할 본문');
+    await page.locator('#version-select').selectOption('older');
+    await page.evaluate(note => window.dispatchEvent(new MessageEvent('message', { data: {
+        type: 'versionPreview', versionId: 'older', title: '예전', html: '<p>이전 본문</p>', notices: [note],
+    } })), notice);
+    await expect(page.locator('#version-notices summary')).toHaveText('코드 · 경계값 <b>확인</b>');
+    await expect(page.locator('#article-notices')).toBeHidden();
+    await page.locator('#version-select').selectOption('');
+    await model(page, { ...article, articleNotices: [] });
+    await expect(page.locator('#candidate-notices')).toBeHidden();
+    await expect(page.locator('#article-notices')).toBeHidden();
+});
 test('article tools in the sidebar use the live draft and the selected version', async ({ page, context }) => {
     const sidebar = await context.newPage();
     await sidebar.setViewportSize({ width: 260, height: 700 });

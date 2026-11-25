@@ -9,6 +9,7 @@ const event = (key: string) => (callback: (...args: any[]) => any, context?: unk
     return { dispose: () => { delete listeners[key]; } };
 };
 let recording = true;
+let activeDocument: unknown;
 const saved: string[] = [];
 const original = Module._load;
 Module._load = function(name: string, ...args: any[]) {
@@ -16,7 +17,8 @@ Module._load = function(name: string, ...args: any[]) {
         return {
             TextDocumentSaveReason: { Manual: 1, AfterDelay: 2, FocusOut: 3 },
             workspace: { textDocuments: [], onDidOpenTextDocument: event('open'), onWillSaveTextDocument: event('willSave'), onDidSaveTextDocument: event('save'), onDidChangeTextDocument: event('change'), onDidCloseTextDocument: event('close') },
-            window: { onDidChangeActiveTextEditor: event('editor'), onDidChangeWindowState: event('focus') },
+            tasks: { onDidStartTaskProcess: event('task') }, debug: { onDidStartDebugSession: event('debug') },
+            window: { get activeTextEditor() { return activeDocument ? { document: activeDocument } : undefined; }, onDidStartTerminalShellExecution: event('run'), onDidChangeActiveTextEditor: event('editor'), onDidChangeWindowState: event('focus') },
         };
     }
     if (name === '../config') return { configManager: { isRecording: () => recording, getRootFolder: () => '', getSupportedLanguages: () => ['cpp'], onDidChange: event('config') } };
@@ -79,4 +81,20 @@ test('independent files have independent idle windows and repeated flushes do no
     t.mock.timers.tick(5000); assert.deepEqual(writes, ['a1']);
     await recorder.flushAll(); await recorder.flushAll(); t.mock.timers.tick(30000);
     assert.deepEqual(writes, ['a1', 'b1']);
+});
+
+test('an execution marks only the matching saved source in its working directory', () => {
+    const f = setup();
+    try {
+        activeDocument = f.document;
+        const run = (command: string, cwd: string) => listeners.run({ execution: { commandLine: { value: command }, cwd: { fsPath: cwd } } });
+        run('cat 2527.cpp', '/work');
+        run('g++ 2527.cpp', '/other');
+        assert.deepEqual(saved, []);
+        run('g++ -O2 "2527.cpp"', '/work');
+        assert.equal(saved.length, 1);
+        activeDocument = { ...f.document, isDirty: true };
+        run('g++ 2527.cpp', '/work');
+        assert.equal(saved.length, 1);
+    } finally { activeDocument = undefined; f.dispose(); }
 });

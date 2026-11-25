@@ -26,7 +26,7 @@ const dirty = new Set(),
     sent = new Map();
 const recovered = vscode.getState();
 let localRecovery = recovered?.localRecovery;
-let recoveryApplied = false;
+let recoveryApplied = false, planHistory = recovered?.planHistory;
 const imageRequests = new Map();
 let ghostState = { connected: false };
 const modelOptions = [...el('writing-model-options').querySelectorAll('[role=option]')];
@@ -81,6 +81,7 @@ function stash() {
     vscode.setState({
         filePath: model?.filePath || recovered?.filePath,
         editToken: model?.editToken || recovered?.editToken,
+        planHistory,
         fields: Object.fromEntries([...dirty].map((key) => [key, form[key]])),
         localRecovery,
     });
@@ -89,7 +90,7 @@ function send(type, extra = {}, fields = false) {
     const id = String(++counter),
         payload = fields ? JSON.parse(JSON.stringify(form)) : undefined;
     if (fields) sent.set(id, payload);
-    vscode.postMessage({ type, id, editToken: model?.editToken, ...(fields ? { fields: payload } : {}), ...extra });
+    vscode.postMessage({ type, id, editToken: model?.editToken, ...(fields ? { fields: payload, dirtyKeys: [...dirty], planHistory } : {}), ...extra });
     return id;
 }
 function changed(key) {
@@ -374,7 +375,7 @@ function chooseVersion(id) {
     document.querySelectorAll('textarea').forEach(height);
 }
 function renderLoading() {
-    const busy = model.backendEnabled !== false && !!(model.pending || model.running) && !model.error;
+    const busy = !model.updatingMemos && model.backendEnabled !== false && !!(model.pending || model.running) && !model.error;
     el('generation-loading').hidden = !busy;
     if (!busy) return false;
     const kind = model.pendingKind || (form.plan ? 'write_blog' : 'prepare_blog');
@@ -405,7 +406,7 @@ function renderWritingModel() {
         : modelSelectionNotice;
     el('writing-model').setAttribute('aria-busy', String(!!modelSelectionRequest));
     if (el('writing-model-hint').textContent) el('writing-model').setAttribute('aria-describedby', [paidOnly ? 'writing-model-help' : '', 'writing-model-hint'].filter(Boolean).join(' '));
-    el('writing-model').disabled = model.backendEnabled === false || model.editable === false || !!model.pending || !!model.running;
+    el('writing-model').disabled = model.backendEnabled === false || model.editable === false || (!model.updatingMemos && (!!model.pending || !!model.running));
     if (el('writing-model').disabled) closeModelOptions();
 }
 function closeModelOptions(restoreFocus = false) {
@@ -450,11 +451,12 @@ function render() {
         ? '안내를 확인한 뒤 다시 시도할 수 있어요.'
         : '코드의 변경사항을 순서대로 정리해 드릴게요.';
     el('plan-content').hidden = !form.plan;
-    el('generate-btn').disabled = !form.plan || model.pending;
-    el('generate-label').textContent = model.pending
+    el('memo-updating').hidden = !model.updatingMemos;
+    el('generate-btn').disabled = !form.plan || (model.pending && !model.updatingMemos);
+    el('generate-label').textContent = model.pending && !model.updatingMemos
         ? (model.pendingKind === 'prepare_blog' || !form.plan ? '준비 중…' : '작성 중…')
         : form.markdown ? '글 다시 쓰기' : '글쓰기';
-    el('prepare-btn').disabled = model.pending;
+    el('prepare-btn').disabled = model.pending && !model.updatingMemos;
     el('retry-btn').disabled = model.running;
     value('instructions', form.instructions);
     renderWritingMode();
@@ -501,7 +503,7 @@ window.addEventListener('message', (event) => {
         const request = modelSelectionRequest;
         if (!request || message.id !== request.id) return;
         modelSelectionRequest = undefined;
-        if (model?.editable !== false && !model.pending && !model.running
+        if (model?.editable !== false && (!model.pending && !model.running || model.updatingMemos)
             && request.editToken === model.editToken) {
             if (message.allowed === true && message.editToken === request.editToken && message.writingModel === request.value) {
                 form.writingModel = request.value;
@@ -520,7 +522,7 @@ window.addEventListener('message', (event) => {
         setArticleImagePolicy(message.backendEnabled !== false, message.localImageBase);
         document.body.classList.toggle('writing-locked', message.writingAllowed === false);
         setWritingVisibility(message.writingVisible !== false);
-        if (message.editable === false || message.pending || message.running || message.editToken !== model?.editToken) {
+        if (message.editable === false || ((message.pending || message.running) && !message.updatingMemos) || message.editToken !== model?.editToken) {
             modelSelectionRequest = undefined;
             modelSelectionNotice = '';
         }
@@ -530,6 +532,7 @@ window.addEventListener('message', (event) => {
             if (dirty.size) localRecovery = Object.fromEntries([...dirty].map(key => [key, structuredClone(form[key])]));
             dirty.clear(); sent.clear(); clearTimeout(editTimer);
         }
+        if (!dirty.has('plan') && (recoveryApplied || !recovered?.fields?.plan)) planHistory = message.historyVersion;
         model = message;
         if (!model.showAdvancedWritingViews) {
             sourceMode = false;

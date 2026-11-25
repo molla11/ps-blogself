@@ -13,6 +13,7 @@ import {
     reconstructContents,
     sourceFor,
     preparationSource,
+    appendMemoResult,
     mergeResult,
     validatePlan,
     articleVersionKey,
@@ -296,12 +297,19 @@ test('article requests identify only changed memo text after insertion, deletion
     assert.equal(outgoing.steps[1].body, '마지막 원문 사용자가 덧붙인 주장');
 });
 
-test('candidate plans replace memo originals only after acceptance and legacy drafts retain unknown authorship', () => {
+test('an appended batch keeps originals across remapped snapshots and replaces them only on candidate acceptance', () => {
     const draft = newDraft(history);
-    mergeResult(draft, { plan }, draft.revision);
+    mergeResult(draft, { plan: { ...plan, start: 1, end: 2, steps: [{ ...plan.steps[0], start: 1, end: 2 }] } }, draft.revision);
     draft.plan!.steps[0].body = '고친 메모';
-    mergeResult(draft, { plan: { ...plan, summary: '다시 준비한 메모' } }, -1);
+    const extended = { ...history, snapshots: [...history.snapshots.slice(1), { content: 'print(3)', hash: 'd', timestamp: 4 }] };
+    const tail = { title: '다음 단계', summary: '새 결과', start: 2, end: 2, steps: [] };
+    assert.ok(appendMemoResult(draft, extended, tail));
     assert.deepEqual(articleRequestPlan(draft)!.edits, [{ field: 'steps[0].body', aiText: plan.steps[0].body }]);
+    draft.plan!.steps[1].title += ' 수정';
+    mergeResult(draft, { plan: tail }, -1);
+    assert.deepEqual(articleRequestPlan(draft)!.edits, [
+        { field: 'steps[0].body', aiText: plan.steps[0].body }, { field: 'steps[1].title', aiText: tail.title },
+    ]);
     mergeResult(draft, draft.candidate!, draft.revision);
     assert.deepEqual(articleRequestPlan(draft)!.edits, []);
     const legacy = newDraft(history);

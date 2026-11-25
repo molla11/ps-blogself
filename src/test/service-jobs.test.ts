@@ -104,6 +104,12 @@ test('turning requests off aborts active streams and prevents new fetches until 
     } finally { backendRequests.setEnabled(true); }
 });
 
+test('prefetch requires the server to advertise free-only billing', async () => {
+    const { jobs, calls } = harness();
+    await assert.rejects(jobs.create({ ...request, priority: 'prefetch' }, await jobs.target()), /무료 자동 메모/);
+    assert.deepEqual(calls.map(call => call[0]), ['/config']);
+});
+
 test('resubmission preserves the notice capability stored with the request ID', async () => {
     const { jobs, calls } = harness(), target = await jobs.target();
     const plan = { title: '풀이', summary: '', start: 0, end: 0, steps: [] };

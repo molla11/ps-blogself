@@ -13,7 +13,7 @@ export interface Account {
     usage?: AccountUsage;
 }
 interface Credentials { token: string; user: Account }
-export class ServiceError extends Error { constructor(message: string, readonly status: number) { super(message); } }
+export class ServiceError extends Error { constructor(message: string, readonly status: number, readonly code?: string, readonly retryAt?: number) { super(message); } }
 export class ServiceConnection {
     readonly changed = new vscode.EventEmitter<void>();
     readonly notices: NoticeFeed;
@@ -125,7 +125,7 @@ export class ServiceConnection {
                 headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
                 body: body === undefined ? undefined : JSON.stringify(body),
             });
-        } catch { throw new Error('글쓰기 서비스에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.'); }
+        } catch { throw new ServiceError('글쓰기 서비스에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.', 0); }
         const data = await response.json().catch(() => ({})) as any;
         if (!response.ok) {
             if (response.status === 401 && token && (await this.saved(base))?.token === token) {
@@ -135,7 +135,7 @@ export class ServiceConnection {
                 try { await this.rememberUsage(base, token, usageView(accountUsage(data.usage))); }
                 catch { /* Preserve the original server error if usage is unavailable. */ }
             }
-            throw new ServiceError(data.message || `요청을 처리하지 못했습니다 (${response.status}).`, response.status);
+            throw new ServiceError(data.message || `요청을 처리하지 못했습니다 (${response.status}).`, response.status, data.code, typeof data.retryAt === 'string' ? Date.parse(data.retryAt) : undefined);
         }
         return data as T;
     }

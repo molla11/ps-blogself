@@ -504,3 +504,15 @@ test('contest request blocking also covers images in the editor and previews', a
     await model(page, { ...article, backendEnabled: false });
     await expect(onlineImages).toHaveCount(0);
 });
+
+test('existing notes stay editable and can be used for writing during automatic preparation', async ({ page }) => {
+    await open(page);
+    await model(page, { pending: true, running: true, pendingKind: 'prepare_blog', updatingMemos: true });
+    await expect(page.locator('#memo-updating')).toBeVisible();
+    await expect(page.locator('#generation-loading')).toBeHidden();
+    await page.locator('#summary').fill('직접 수정한 설명');
+    await page.getByRole('button', { name: '글쓰기', exact: true }).click();
+    const request = (await messages(page)).find((m: any) => m.type === 'generate');
+    expect(request.fields.plan.summary).toBe('직접 수정한 설명');
+    expect(request.dirtyKeys).toContain('plan');
+});

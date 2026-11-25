@@ -16,16 +16,13 @@ async function until(fn, description) {
     }
     throw new Error('Timed out: ' + description);
 }
-async function surface(browser, selector) {
+async function surface(browser, selector, previousFrames) {
     return until(async () => {
         for (const context of browser.contexts())
             for (const page of context.pages())
                 for (const frame of page.frames()) {
                     try {
-                        if (!(await frame.locator(selector).count())) continue;
-                        let owner = frame;
-                        while (owner.parentFrame() && await (await owner.frameElement()).isVisible()) owner = owner.parentFrame();
-                        if (!owner.parentFrame()) return { page, frame };
+                        if (!previousFrames?.has(frame) && await frame.locator(selector).count()) return { page, frame };
                     } catch {}
                 }
     }, selector);
@@ -175,9 +172,10 @@ exports.run = async () => {
         const writingCounts = sidebar.frame.locator('.log-item').filter({ has: sidebar.frame.getByText('solve.py', { exact: true }) }).locator('.log-writing');
         if (stage === 'first') {
             assert.equal((await requests()).length, 0, 'a burst of saves has no immediate AI request');
-            await until(async () => (await writingCounts.innerText()).includes('메모 1'), 'memo is ready before the first review');
-            assert.equal((await requests()).length, 1, 'related saves are prepared in one background job');
             await recorded.click({ button: 'right' });
+            await until(async () => (await writingCounts.innerText()).includes('메모 1'), 'file menu prepares memos before entering history');
+            assert.equal((await requests()).length, 1, 'related saves are prepared in one background job');
+            if (!(await sidebar.frame.locator('#ctx-view-history').isVisible())) await recorded.click({ button: 'right' });
             await sidebar.frame.locator('#ctx-view-history').click();
             const history = await surface(browser, '#write-btn:visible');
             await until(async () => (await history.frame.locator('#preparation-status').innerText()).includes('끝났어요'), 'history prepares AI automatically');
@@ -278,9 +276,11 @@ exports.run = async () => {
         if (stage === 'first') {
             await vscode.commands.executeCommand('psb.sidebar.focus');
             await sidebar.frame.locator('#library-toggle').click();
+            // The earlier history panel is retained while the new webview opens.
+            const previousFrames = new Set(browser.contexts().flatMap(ctx => ctx.pages().flatMap(page => page.frames())));
             await recorded.click({ button: 'right' });
             await sidebar.frame.locator('#ctx-view-history').click();
-            const reviewed = await surface(browser, '#write-btn:visible');
+            const reviewed = await surface(browser, '#write-btn:visible', previousFrames);
             await until(async () => (await reviewed.frame.locator('#preparation-status').innerText()).includes('끝났어요'), 'review reuses the same history');
             assert.equal((await requests()).length, 2);
             await reviewed.frame.locator('#write-btn').click();
@@ -354,6 +354,23 @@ exports.run = async () => {
             const request = (await requests()).at(-1);
             assert.equal(request.source.fileName, 'sequence.c');
             assert.equal(request.source.finalCode, latest);
+            const sequence = (await surface(browser, '#file-name:text-is("sequence.c")')).frame;
+            await sequence.locator('#summary').fill('직접 확인한 반복문의 범위');
+            await until(async () => (await tools.locator('#side-save-status').innerText()) === '저장됨', 'edited summary saved');
+            const active = await vscode.window.showTextDocument(doc);
+            const updated = latest.replace('i < n', 'i <= n');
+            await active.edit(edit => edit.replace(new vscode.Range(0, 0, doc.lineCount, 0), updated));
+            await doc.save();
+            await vscode.workspace.getConfiguration('psb').update('prepareOnReview', true, vscode.ConfigurationTarget.Workspace);
+            await vscode.commands.executeCommand('psb.welcome');
+            await start.frame.getByRole('button', { name: 'sequence.c 글쓰기' }).click();
+            await sequence.getByLabel('메모 #2 내용', { exact: true }).waitFor();
+            assert.equal(await sequence.locator('#summary').inputValue(), '직접 확인한 반복문의 범위');
+            const tail = (await requests()).at(-1);
+            assert.equal(tail.priority, 'prefetch');
+            assert.deepEqual(tail.source.changes.map(c => c.index), [1]);
+            assert.equal(tail.source.initialCode, latest);
+            assert.equal(tail.source.finalCode, updated);
         }
         await fs.writeFile(path.join(sandbox, stage + '.json'), JSON.stringify({ stage, passed: true }));
     } finally { restoreFetch(); await browser.close(); }

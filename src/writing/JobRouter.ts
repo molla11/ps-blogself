@@ -25,9 +25,12 @@ export class JobRouter {
         // Resend the persisted payload verbatim if the first acknowledgement was lost.
         validateRequest(request);
         const submit = () => this.connection.request<WritingJob>('/jobs', 'POST', request, target.base, target.owner);
-        if (request.model) {
-            return this.connection.request<{ writingModels?: { id: string }[] }>('/config', 'GET', undefined, target.base, target.owner).then(config => {
-                if (!config.writingModels?.some(model => model.id === request.model)) {
+        if (request.model || request.priority === 'prefetch') {
+            return this.connection.request<{ freeOnlyPrefetch?: boolean; writingModels?: { id: string }[] }>('/config', 'GET', undefined, target.base, target.owner).then(config => {
+                if (request.priority === 'prefetch' && config.freeOnlyPrefetch !== true) {
+                    throw new Error('서버 업데이트 후 무료 자동 메모를 준비합니다.');
+                }
+                if (request.model && !config.writingModels?.some(model => model.id === request.model)) {
                     throw new Error('서버가 선택한 모델을 지원하지 않습니다. 서버 업데이트 후 다시 시도해 주세요.');
                 }
                 return submit();

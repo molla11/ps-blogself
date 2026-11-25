@@ -4,7 +4,11 @@ export interface SnapshotDiff {
     newText: string;
 }
 
+export type SnapshotTrigger = 'save' | 'autosave' | 'idle' | 'deadline' | 'blur' | 'switch' | 'close' | 'review' | 'run' | 'debug' | 'task';
+export type Checkpoint = 'save' | 'run' | 'debug' | 'task';
 export interface Snapshot {
+    trigger?: SnapshotTrigger;
+    checkpoints?: Checkpoint[];
     timestamp: number;
     content?: string;
     diff?: SnapshotDiff;

@@ -1,6 +1,6 @@
 import { configManager } from '../config';
 import { PendingMemos } from '../writing/PendingMemos';
-import { MemoPreparationQueue, MEMO_COOLDOWN, meritsAutomaticMemo } from '../writing/MemoPreparation';
+import { MemoPreparationQueue, MEMO_COOLDOWN, looksLikeNewSolution, meritsAutomaticMemo } from '../writing/MemoPreparation';
 import type { FileHistory } from '../types';
 import { fileWatcher } from '../storage/FileWatcher';
 import { Logger } from './logger';
@@ -34,7 +34,7 @@ import {
     newDraft,
     sourceFor,
     writingSourceFor,
-    preparationSource,
+    preparationSource, memoTailStart, memoSnapshotIndex, appendMemoResult,
     validatePlan,
     historyFingerprint, preparationBaseRevision,
     articleVersionKey,
@@ -52,6 +52,8 @@ interface View {
     draft: WritingDraft;
     queue: Promise<unknown>;
     task?: Promise<void>;
+    previousMemoHistory?: { history: FileHistory; fingerprint: string };
+    memoRetryAt?: number;
     error: string;
     status: string;
     progress: number;
@@ -146,7 +148,7 @@ export class BlogPostManager {
         this.jobs = new JobRouter(this.connection);
         this.pendingMemos = new PendingMemos(path.join((context.storageUri ?? context.globalStorageUri).fsPath, 'pending-memos.json'),
             error => Logger.warn('메모 대기 목록을 저장하지 못했습니다.', error));
-        this.memoQueue = new MemoPreparationQueue(file => this.prepareAutomaticMemo(file).catch(error => {
+        this.memoQueue = new MemoPreparationQueue((file, review) => this.prepareAutomaticMemo(file, review).catch(error => {
             Logger.warn('자동 메모를 준비하지 못했습니다.', error);
         }), file => this.pendingMemos.finish(file));
         const pendingFiles = await this.pendingMemos.restore().catch(error => {
@@ -162,6 +164,13 @@ export class BlogPostManager {
             this.pendingMemos.mark(file);
             this.memoQueue.schedule(file);
         }));
+        const trackEditor = (editor?: vscode.TextEditor) => {
+            this.memoQueue.setEditor(editor && fileWatcher.isTrackedDocument(editor.document) ? editor.document.uri.fsPath : undefined);
+        };
+        trackEditor(vscode.window.activeTextEditor);
+        this.memoQueue.setFocus(vscode.window.state.focused);
+        context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(trackEditor),
+            vscode.window.onDidChangeWindowState(state => this.memoQueue.setFocus(state.focused)));
         let requestsEnabled = backendRequests.enabled;
         let writingAllowed = this.writingAllowed;
         context.subscriptions.push(configManager.onDidChange(() => {
@@ -262,7 +271,20 @@ export class BlogPostManager {
     static async preparationStatus(filePath: string) {
         const view = this.views.get(filePath);
         const draft = view?.draft ?? await this.store.read(filePath);
-        return view?.error ? '글쓰기 준비를 다시 시도할 수 있어요.' : draft?.pending ? 'AI가 글쓰기 내용을 준비하고 있어요…' : draft?.plan ? '글쓰기 준비가 끝났어요.' : '글쓰기에서 메모를 생성할 수 있어요.';
+        if (view?.error) return '글쓰기 준비를 다시 시도할 수 있어요.';
+        if (draft?.pending) {
+            return draft.plan && draft.pending.request.priority === 'prefetch'
+                ? '기존 메모에 최근 변경을 반영하고 있어요…' : 'AI가 글쓰기 내용을 준비하고 있어요…';
+        }
+        if (!draft?.plan) return '글쓰기에서 메모를 생성할 수 있어요.';
+        if (draft.candidate?.plan) return '글쓰기에서 새 메모를 확인할 수 있어요.';
+        const history = await storageManager.getFileHistory(filePath);
+        const saved = draft.history.snapshots.at(-1), latest = history?.snapshots.at(-1);
+        if (history && latest && latest.hash !== saved?.hash) {
+            if (memoTailStart(draft, history) === undefined) return '기존 메모가 저장돼 있어요. 최근 기록은 메모 다시 생성으로 정리할 수 있어요.';
+            if (this.automaticMemoDue(history, true, draft) !== undefined) return '기존 메모가 저장돼 있어요. 최근 변경은 아직 반영되지 않았어요.';
+        }
+        return '글쓰기 준비가 끝났어요.';
     }
     private static async loadView(filePath: string, discoveredLanguage?: string): Promise<View | undefined> {
         if (this.views.has(filePath)) return this.views.get(filePath);
@@ -299,35 +321,34 @@ export class BlogPostManager {
         if (this.autoMemos) this.memoQueue.schedule(filePath, true);
     }
 
-    // Compare the net change since the last submitted batch, including small edits
-    // which did not previously qualify. History deletion can invalidate an old index.
-    private static automaticMemoDue(history: FileHistory, draft?: WritingDraft) {
-        const last = history.snapshots.at(-1);
-        const mark = draft?.lastPreparation;
-        if (!last || draft?.candidate || mark?.hash === last.hash) return;
-        if (!mark && draft?.preparationKey && draft.preparationKey === historyFingerprint(history)) return;
+    private static automaticMemoDue(history: FileHistory, review: boolean, draft?: WritingDraft) {
+        if (draft?.candidate) return;
+        const declined = draft?.declinedMemo, last = history.snapshots.at(-1);
+        if (declined && declined.historyId === history.id && declined.timestamp === last?.timestamp && declined.hash === last.hash) return;
+        const start = draft ? memoTailStart(draft, history) : 0;
+        if (start === undefined || start >= history.snapshots.length) return;
         const read = (index: number) => storageManager.reconstructFileContent(history, index);
-        let before: string | null | undefined;
-        if (mark && history.snapshots[mark.index]?.hash === mark.hash) before = read(mark.index);
-        if ((before === null || before === undefined) && draft?.plan) before = storageManager.reconstructFileContent(draft.history, draft.history.snapshots.length - 1);
-        before ??= history.memoBaseline === null ? read(0) : history.memoBaseline;
+        const before = start ? read(start - 1) : history.memoBaseline === null ? read(0) : history.memoBaseline;
         const after = read(history.snapshots.length - 1);
-        if (after !== null && meritsAutomaticMemo(before ?? '', after, history.language)) return mark ? mark.at + MEMO_COOLDOWN : 0;
+        if (after !== null && meritsAutomaticMemo(before ?? '', after, history.language)) {
+            return review || !draft?.plan ? 0 : (draft.lastPreparation?.at ?? 0) + MEMO_COOLDOWN;
+        }
     }
 
-    private static async prepareAutomaticMemo(filePath: string): Promise<number | void> {
+    private static async prepareAutomaticMemo(filePath: string, review: boolean) {
         if (!this.autoMemos || !await this.connection.account()) return;
         const history = await storageManager.getFileHistory(filePath);
         if (!history?.snapshots.length) return;
         const saved = await this.store.read(filePath);
         if (!saved?.pending) {
-            const due = this.automaticMemoDue(history, saved);
-            if (due === undefined || due > Date.now()) return due;
+            const due = this.automaticMemoDue(history, review, saved);
+            if (due === undefined) return;
+            if (due > Date.now()) return { cooldown: due };
         }
         if (!this.autoMemos) return;
         const view = await this.loadView(filePath);
         if (!view) return;
-        let retryAt: number | undefined;
+        let retryAt: number | { cooldown: number } | undefined;
         let joined = false;
         try {
             await this.enqueue(view, async () => {
@@ -339,12 +360,13 @@ export class BlogPostManager {
                     if (!view.error) this.run(view);
                     return;
                 }
-                const due = this.automaticMemoDue(history, view.draft);
-                if (due === undefined || due > Date.now()) { retryAt = due; return; }
+                const due = this.automaticMemoDue(history, review, view.draft);
+                if (due === undefined || due > Date.now()) { retryAt = due && { cooldown: due }; return; }
                 await this.start(view, 'prepare_blog', undefined, true, history);
             });
             // Job completion itself uses the draft queue. Await it outside the lock.
             await view.task;
+            if (view.memoRetryAt) return view.memoRetryAt;
             if (joined && !view.draft.pending && !view.error) retryAt = Date.now() + 1;
             return retryAt;
         } finally {
@@ -388,6 +410,7 @@ export class BlogPostManager {
         if (!this.checkWritingAccess(restoredPanel)) return;
         if (view?.panel && !restoredPanel) {
             view.panel.reveal();
+            this.prepareOnReview(filePath);
             return;
         }
         if (!view) {
@@ -471,6 +494,7 @@ export class BlogPostManager {
     private static enqueue(view: View, action: () => Promise<void>) {
         const next = view.queue.then(action);
         view.queue = next.catch((error) => {
+            if (error?.name === 'AbortError') return;
             view.error = error instanceof Error ? error.message : String(error);
             this.render(view);
         });
@@ -529,8 +553,10 @@ export class BlogPostManager {
             editable: view.editable,
             editToken: draft.editor?.token,
             count: draft.history.snapshots.length,
+            historyVersion: draft.fingerprint,
             times: draft.history.snapshots.map((s) => s.timestamp),
             pending: !!draft.pending,
+            updatingMemos: draft.pending?.request.priority === 'prefetch' && !!draft.plan,
             pendingId: draft.pending?.request.requestId,
             pendingKind: draft.pending?.request.kind,
             running: !!view.task,
@@ -657,7 +683,7 @@ export class BlogPostManager {
         if (value.writingModel !== undefined) {
             if (!isWritingModel(value.writingModel)) throw new Error('사용할 모델을 선택해 주세요.');
             if (modelChanged) {
-                if (draft.pending || view.task) throw new Error('진행 중인 요청을 마친 뒤 모델을 변경해 주세요.');
+                if ((draft.pending || view.task) && draft.pending?.request.priority !== 'prefetch') throw new Error('진행 중인 요청을 마친 뒤 모델을 변경해 주세요.');
             }
             patch.writingModel = value.writingModel;
         }
@@ -711,6 +737,24 @@ export class BlogPostManager {
         }
         const reading = ['ready', 'takeover', 'viewedWriting', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'rechargeCredits', 'ghostConnect', 'ghostOpen'].includes(message.type);
         if (!reading && (!view.editable || message.editToken !== view.draft.editor?.token)) throw new DraftConflict();
+        if (message.fields && Array.isArray(message.dirtyKeys)) {
+            const fields = Object.fromEntries(Object.entries(message.fields).filter(([key]) => message.dirtyKeys.includes(key)));
+            if (fields.plan && message.planHistory && message.planHistory !== view.draft.fingerprint) {
+                const previous = view.previousMemoHistory;
+                if (previous?.fingerprint !== message.planHistory || !view.draft.plan || !previous) {
+                    throw new Error('메모의 기준 기록이 바뀌었습니다. 입력한 내용을 확인해 주세요.');
+                }
+                const history = previous.history, current = view.draft.history;
+                const edited = validatePlan(fields.plan, history.snapshots.length, true);
+                const remap = (i: number) => memoSnapshotIndex(history, current, i);
+                const last = remap(history.snapshots.length - 1);
+                fields.plan = { ...edited, start: remap(edited.start),
+                    end: edited.end === history.snapshots.length - 1 ? view.draft.plan.end : remap(edited.end),
+                    steps: [...edited.steps.map(step => ({ ...step, start: remap(step.start), end: remap(step.end) })),
+                        ...view.draft.plan.steps.filter(step => step.start > last)] };
+            }
+            message.fields = fields;
+        }
         switch (message.type) {
             case 'viewedWriting':
                 if (this.writingIsVisible(view)
@@ -725,7 +769,7 @@ export class BlogPostManager {
                 view.draft = await this.store.open(view.draft, true);
                 view.editable = true; view.error = '';
                 if (view.draft.pending) this.run(view);
-                else if (!view.draft.fromSavedFile) this.prepareOnReview(view.draft.filePath);
+                else this.prepareOnReview(view.draft.filePath);
                 break;
             }
             case 'ready':
@@ -735,7 +779,7 @@ export class BlogPostManager {
                 await this.refreshGhost(view);
                 this.render(view);
                 if (view.draft.pending) this.run(view);
-                else if (!view.draft.fromSavedFile) this.prepareOnReview(view.draft.filePath);
+                else this.prepareOnReview(view.draft.filePath);
                 break;
             case 'checkWritingModel': {
                 if (!isWritingModel(message.writingModel)) throw new Error('사용할 모델을 선택해 주세요.');
@@ -795,11 +839,14 @@ export class BlogPostManager {
                     this.prepareOnReview(view.draft.filePath);
                 }
                 break;
-            case 'discardCandidate':
+            case 'discardCandidate': {
+                const history = view.draft.candidate?.plan && view.draft.candidate.history, last = history?.snapshots.at(-1);
+                if (history && last) view.draft.declinedMemo = { historyId: history.id, timestamp: last.timestamp, hash: last.hash };
                 delete view.draft.candidate;
                 await this.store.save(view.draft);
                 this.prepareOnReview(view.draft.filePath);
                 break;
+            }
             case 'diff': {
                 const index = Number(message.index),
                     source = sourceFor(view.draft.history, index, index);
@@ -916,8 +963,9 @@ export class BlogPostManager {
     private static async start(view: View, kind: 'prepare_blog' | 'write_blog', target?: JobTarget, prefetch = false, reviewedHistory?: FileHistory) {
         if (!view.editable) return;
         backendRequests.requireEnabled();
-        if (view.draft.pending || view.task) return;
         const draft = view.draft;
+        const background = draft.pending?.request.priority === 'prefetch' && !prefetch ? draft.pending : undefined;
+        if (!background && (draft.pending || view.task)) return;
         let history = draft.history;
         if (kind === 'prepare_blog') {
             const recorded = reviewedHistory ?? await storageManager.getFileHistory(draft.filePath);
@@ -928,20 +976,38 @@ export class BlogPostManager {
         if (kind === 'write_blog' && !plan) {
             throw new Error('AI가 풀이 흐름을 준비한 뒤 글을 만들 수 있습니다.');
         }
+        const tailStart = prefetch ? memoTailStart(draft, history) : 0;
+        if (tailStart === undefined || tailStart >= history.snapshots.length) return;
         const source =
             kind === 'prepare_blog'
-                ? preparationSource(history, prefetch)
+                ? preparationSource(history, prefetch, tailStart)
                 : writingSourceFor(history, plan!.start, plan!.end, plan!.steps.flatMap((step) => [step.start, step.end]));
+        const end = source.changes.at(-1)!.index;
+        if (prefetch && end < history.snapshots.length - 1) {
+            history = { ...history, snapshots: history.snapshots.slice(0, end + 1) };
+            this.pendingMemos.mark(draft.filePath);
+            this.memoQueue.schedule(draft.filePath);
+        }
         checkInputSize({ source });
-        const instructions = writingInstructions(draft);
+        const newSolution = prefetch && tailStart > 0 && looksLikeNewSolution(source.initialCode, source.finalCode, history.language);
+        const instructions = prefetch ? '' : writingInstructions(draft);
         target ||= await this.jobs.target(!prefetch);
         backendRequests.requireEnabled();
         if (prefetch && !this.autoMemos) return;
-        if (kind === 'prepare_blog') {
-            draft.preparationKey = historyFingerprint(history);
-            const index = history.snapshots.length - 1;
-            draft.lastPreparation = { index, hash: history.snapshots[index].hash, at: Date.now() };
+        if (background) {
+            background.cancelRequested = true;
+            view.watcher?.abort();
+            view.watcher = undefined;
+            view.task = undefined;
+            if (background.jobId && isServerTarget(background.target)) {
+                void this.jobs.cancel(background.jobId, background.target).catch(() => {});
+            }
+            if (this.autoMemos) {
+                this.pendingMemos.mark(draft.filePath);
+                this.memoQueue.schedule(draft.filePath);
+            }
         }
+        view.memoRetryAt = undefined;
         draft.pending = {
             target,
             request: {
@@ -955,7 +1021,8 @@ export class BlogPostManager {
                 ...(kind === 'write_blog' ? { plan: structuredClone(plan!) } : {}),
                 instructions,
             },
-            baseRevision: kind === 'prepare_blog' ? preparationBaseRevision(draft, prefetch) : draft.revision,
+            ...(prefetch && draft.plan && !newSolution ? { append: true } : {}),
+            baseRevision: newSolution ? -1 : kind === 'prepare_blog' ? preparationBaseRevision(draft, prefetch) : draft.revision,
             ...(kind === 'prepare_blog' ? { history: structuredClone(history) } : {}),
         };
         await this.store.save(draft);
@@ -964,11 +1031,12 @@ export class BlogPostManager {
     private static run(view: View, retry = false) {
         if (!backendRequests.enabled || this.closing || view.task || !view.draft.pending) return;
         const pending = view.draft.pending;
+        view.memoRetryAt = undefined;
         view.error = '';
         view.partial = '';
         view.watcher = new AbortController();
         const controller = view.watcher, signal = controller.signal;
-        view.status = pending.request.kind === 'prepare_blog' ? '구간과 풀이 설명을 준비하고 있어요…' : '글을 작성하고 있어요…';
+        view.status = pending.append ? '최근 코드 변경을 메모에 반영하고 있어요…' : pending.request.kind === 'prepare_blog' ? '구간과 풀이 설명을 준비하고 있어요…' : '글을 작성하고 있어요…';
         view.task = Promise.resolve().then(async () => {
             try {
                 if (pending.apiUrl || !isServerTarget(pending.target)) {
@@ -1002,6 +1070,7 @@ export class BlogPostManager {
                     return;
                 }
                 let job = pending.jobId ? await this.jobs.job(pending.jobId, target) : await this.jobs.create(pending.request, target);
+                if (signal.aborted && pending.cancelRequested && !pending.jobId) await this.jobs.cancel(job.id, target).catch(() => {});
                 signal.throwIfAborted();
                 await this.enqueue(view, async () => { signal.throwIfAborted(); pending.jobId = job.id; await this.store.save(view.draft); });
                 signal.throwIfAborted();
@@ -1016,7 +1085,17 @@ export class BlogPostManager {
                         signal.throwIfAborted();
                         const applied = view.draft.revision === pending.baseRevision;
                         const previousArticles = writingActivityContent(view.draft).articles;
-                        mergeResult(view.draft, { ...job.result!, ...(pending.history ? { history: pending.history } : {}) }, pending.baseRevision);
+                        if (pending.append && pending.history && job.result!.plan) {
+                            const previous = { history: view.draft.history, fingerprint: view.draft.fingerprint };
+                            if (appendMemoResult(view.draft, pending.history, job.result!.plan, job.result!.notices)) view.previousMemoHistory = previous;
+                        } else {
+                            mergeResult(view.draft, { ...job.result!, ...(pending.history ? { history: pending.history } : {}) }, pending.baseRevision);
+                        }
+                        if (pending.history && !view.draft.candidate) {
+                            const index = pending.history.snapshots.length - 1;
+                            view.draft.lastPreparation = { index, hash: pending.history.snapshots[index].hash, at: Date.now() };
+                            view.draft.preparationKey = historyFingerprint(pending.history);
+                        }
                         if (pending.request.kind === 'write_blog') registerGeneratedArticles(view.draft, previousArticles);
                         delete view.draft.pending;
                         await this.store.save(view.draft);
@@ -1028,13 +1107,34 @@ export class BlogPostManager {
                 } else if (job.status === 'failed') {
                     throw new Error(job.error || '글쓰기에 실패했습니다. 다시 시도할 수 있습니다.');
                 } else if (job.status === 'cancelled') {
+                    if (pending.request.priority === 'prefetch' && job.errorCode === 'PREFETCH_DEFERRED') {
+                        view.memoRetryAt = Date.now() + MEMO_COOLDOWN;
+                    }
                     await this.enqueue(view, async () => { signal.throwIfAborted(); delete view.draft.pending; await this.store.save(view.draft); });
                     view.partial = '';
-                    view.status = '작업을 취소했습니다.';
+                    view.status = view.memoRetryAt ? '' : '작업을 취소했습니다.';
                 }
             } catch (error) {
                 if (error instanceof DraftConflict) await this.enqueue(view, () => this.refresh(view));
-                else if (!signal.aborted) view.error = error instanceof Error ? error.message : String(error);
+                else if (!signal.aborted && view.editable && pending.request.priority === 'prefetch') {
+                    const deferred = error instanceof ServiceError && error.code === 'PREFETCH_DEFERRED';
+                    const transient = error instanceof ServiceError && [402, 429, 503].includes(error.status);
+                    view.memoRetryAt = deferred ? error.retryAt : transient ? Date.now() + MEMO_COOLDOWN : undefined;
+                    if (!deferred && !transient) Logger.warn('자동 메모 준비를 마치지 못했습니다.', error);
+                    await this.enqueue(view, async () => {
+                        if (signal.aborted) return;
+                        // Preserve the request ID after an ambiguous network failure so a retry
+                        // can reconnect to the existing job without starting a duplicate.
+                        if (error instanceof ServiceError && (error.status === 0 || error.status >= 500 && error.status !== 503)) {
+                            view.memoRetryAt = Date.now() + MEMO_COOLDOWN;
+                        } else {
+                            delete view.draft.pending;
+                            await this.store.save(view.draft);
+                        }
+                        view.error = '';
+                        view.status = '';
+                    });
+                } else if (!signal.aborted) view.error = error instanceof Error ? error.message : String(error);
             } finally {
                 if (!this.closing) void this.connection.refreshUsage(true);
                 if (view.watcher === controller) {

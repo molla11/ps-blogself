@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
-import { FileHistory, Snapshot, RequestLog, SessionIndexItem, SnapshotDiff } from '../types';
+import { FileHistory, Snapshot, SnapshotTrigger, RequestLog, SessionIndexItem, SnapshotDiff } from '../types';
 import { getHash, generateUUID, computeDiff } from './utils';
 import { Logger } from '../services/logger';
 import { atomicWrite, observeFile, withFileLock } from './SharedFiles';
@@ -98,7 +98,7 @@ export class StorageManager {
         return this.reconstructFileContent(history, history.snapshots.length - 1);
     }
 
-    public saveSnapshot(document: vscode.TextDocument, baseline?: string): Promise<void> {
+    public saveSnapshot(document: vscode.TextDocument, baseline?: string, trigger?: SnapshotTrigger): Promise<void> {
         const length = typeof document.offsetAt === 'function'
             ? document.offsetAt(new vscode.Position(document.lineCount - 1, Number.MAX_SAFE_INTEGER)) : undefined;
         const content = limitedSnapshotText(length, () => document.getText());
@@ -112,7 +112,7 @@ export class StorageManager {
             return Promise.resolve();
         }
         this.oversized.delete(key);
-        const write = this._saveQueue.then(() => withFileLock(this._indexFileUri!.fsPath, () => this._saveSnapshot(document, content, baseline)));
+        const write = this._saveQueue.then(() => withFileLock(this._indexFileUri!.fsPath, () => this._saveSnapshot(document, content, baseline, trigger)));
         this._saveQueue = write.catch(() => {});
         return write;
     }
@@ -147,7 +147,7 @@ export class StorageManager {
         return filePath;
     }
 
-    private async _saveSnapshot(document: vscode.TextDocument, content: string, baseline?: string): Promise<void> {
+    private async _saveSnapshot(document: vscode.TextDocument, content: string, baseline?: string, trigger?: SnapshotTrigger): Promise<void> {
         if (!this._historyDir) {
             console.warn('StorageManager not initialized');
             return;
@@ -184,12 +184,20 @@ export class StorageManager {
                 };
             }
 
+            const checkpoint = trigger === 'save' || trigger === 'run' || trigger === 'debug' || trigger === 'task' ? trigger : undefined;
+            // Execution identifies an existing saved version. An unsaved buffer may differ from what ran.
+            if (checkpoint && checkpoint !== 'save' && history.snapshots.at(-1)?.hash !== contentHash) return;
+
             // Check content change
             let lastContent: string | null = null;
             if (history.snapshots.length > 0) {
                 const lastSnapshot = history.snapshots[history.snapshots.length - 1];
                 if (lastSnapshot.hash === contentHash) {
-                    return; // No change
+                    if (checkpoint && !lastSnapshot.checkpoints?.includes(checkpoint)) {
+                        (lastSnapshot.checkpoints ??= []).push(checkpoint);
+                        await atomicWrite(historyFileUri.fsPath, history);
+                    }
+                    return;
                 }
                 lastContent = this._getLastSnapshotContent(history);
             }
@@ -197,7 +205,7 @@ export class StorageManager {
             // Determine snapshot type (Full vs Diff)
             let newSnapshot: Snapshot = {
                 timestamp,
-                hash: contentHash,
+                hash: contentHash, trigger, ...(checkpoint ? { checkpoints: [checkpoint] } : {}),
             };
 
             if (lastContent !== null) {

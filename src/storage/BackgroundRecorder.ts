@@ -1,17 +1,18 @@
+import type { SnapshotTrigger } from '../types';
+
 /** Coalesce background edits, but keep explicit checkpoints independent. */
 export class BackgroundRecorder<T> {
     private pending = new Map<string, { value: T; idle: NodeJS.Timeout; deadline: NodeJS.Timeout }>();
 
-    constructor(private readonly record: (value: T) => Promise<void>) {}
+    constructor(private readonly record: (value: T, reason: SnapshotTrigger) => Promise<void>) {}
 
     change(key: string, value: T) {
         const previous = this.pending.get(key);
         if (previous) clearTimeout(previous.idle);
-        const flush = () => { void this.flush(key); };
         this.pending.set(key, {
             value,
-            idle: setTimeout(flush, 10_000),
-            deadline: previous?.deadline ?? setTimeout(flush, 30_000),
+            idle: setTimeout(() => void this.flush(key, 'idle'), 10_000),
+            deadline: previous?.deadline ?? setTimeout(() => void this.flush(key, 'deadline'), 30_000),
         });
     }
 
@@ -24,20 +25,20 @@ export class BackgroundRecorder<T> {
         return pending.value;
     }
 
-    checkpoint(key: string, value: T) {
+    checkpoint(key: string, value: T, reason: SnapshotTrigger = 'save') {
         this.cancel(key);
-        return this.record(value);
+        return this.record(value, reason);
     }
 
-    async flush(key: string) {
+    async flush(key: string, reason: SnapshotTrigger = 'review') {
         const value = this.cancel(key);
-        if (value !== undefined) await this.record(value);
+        if (value !== undefined) await this.record(value, reason);
     }
 
-    async flushAll(matches: (value: T) => boolean = () => true) {
+    async flushAll(reason: SnapshotTrigger = 'close') {
         const writes: Promise<void>[] = [];
-        for (const [key, { value }] of this.pending) {
-            if (matches(value)) writes.push(this.flush(key));
+        for (const key of this.pending.keys()) {
+            writes.push(this.flush(key, reason));
         }
         await Promise.all(writes);
     }

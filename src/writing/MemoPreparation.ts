@@ -42,6 +42,15 @@ function memoTokens(code: string, python: boolean): string[] {
 export function meritsAutomaticMemo(before: string, after: string, language: string): boolean {
     if (before === after || !after.trim()) return false;
     const python = language === 'python' || language === 'py';
+    // Only ignore standalone diagnostics with side-effect-free operands. Keep calls,
+    // assignments and edits inside multiline literals as potentially meaningful.
+    if (!/(?:["']{3}|\/\*|\*\/|R"|\x60)/.test(before + after)) {
+        const stderr = python
+            ? /^[ \t]*print\(\s*(?:\w+|"[^"\\\n]*"|'[^'\\\n]*')(?:\s*,\s*(?:\w+|"[^"\\\n]*"|'[^'\\\n]*'))*\s*,\s*file\s*=\s*sys\.stderr\s*\)\s*$/gm
+            : /^[ \t]*(?:std::)?cerr(?:\s*<<\s*(?:\w+|std::endl|"[^"\\\n]*"|'[^'\\\n]*'))+\s*;[ \t]*$/gm;
+        before = before.replace(stderr, '');
+        after = after.replace(stderr, '');
+    }
     const previous = memoTokens(before, python), current = memoTokens(after, python);
     if (!current.length) return false;
     let from = 0, left = previous.length, right = current.length;
@@ -65,44 +74,93 @@ export function meritsAutomaticMemo(before: string, after: string, language: str
     return size >= 8 || (size >= 3 && [...added, ...removed].some(t => algorithm.test(t)));
 }
 
-export const MEMO_COOLDOWN = 3 * 60_000;
-const QUIET = 15_000, MAX_WAIT = 90_000;
+// Ask for confirmation before joining two sizeable programs with scarcely any
+// shared expressions. Keep small fixes and ordinary algorithm changes on the same plan.
+export function looksLikeNewSolution(before: string, after: string, language: string) {
+    const python = language === 'python' || language === 'py';
+    const phrases = (code: string) => {
+        const tokens = memoTokens(code, python).filter(token => !punctuation.test(token));
+        return new Set(tokens.slice(2).map((token, i) => JSON.stringify([tokens[i], tokens[i + 1], token])));
+    };
+    const old = phrases(before), next = phrases(after);
+    if (Math.min(old.size, next.size) < 24) return false;
+    let shared = 0;
+    for (const phrase of next) if (old.has(phrase)) shared++;
+    return shared < Math.min(old.size, next.size) * 0.1;
+}
 
-/** One background job at a time. Keep edits arriving during an in-flight job for the next pass. */
+export const MEMO_COOLDOWN = 10 * 60_000;
+export const MEMO_IDLE = 5 * 60_000;
+type MemoFile = { idle: number; review: boolean; switched?: number; retryAt: number; cooldown: number };
+type Retry = number | { cooldown: number } | void;
+
 export class MemoPreparationQueue {
-    private files = new Map<string, { first: number; due: number; notBefore: number }>();
+    private files = new Map<string, MemoFile>();
     private timer?: NodeJS.Timeout;
     private active?: string;
+    private editor?: string;
+    private departed?: { file: string; at: number };
+    private blurred?: number;
     private stopped = false;
     private generation = 0;
 
-    constructor(private prepare: (file: string) => Promise<number | void>, private finished: (file: string) => void) {}
+    constructor(private prepare: (file: string, review: boolean) => Promise<Retry>, private finished: (file: string) => void) {}
 
     schedule(file: string, review = false) {
         if (this.stopped) return;
-        const now = Date.now(), previous = this.files.get(file);
-        const first = previous?.first ?? now, notBefore = previous?.notBefore ?? 0;
-        this.files.set(file, { first, notBefore, due: Math.max(notBefore, review ? now : Math.min(now + QUIET, first + MAX_WAIT)) });
+        const now = Date.now();
+        const item = this.files.get(file) ?? { idle: now + MEMO_IDLE, review: false, retryAt: 0, cooldown: 0 };
+        if (review) item.review = true;
+        else item.idle = now + MEMO_IDLE;
+        if (this.departed?.file === file) item.switched ??= this.departed.at;
+        this.files.set(file, item);
         this.arm();
+    }
+
+    setFocus(focused: boolean) {
+        this.blurred = focused ? undefined : this.blurred ?? Date.now();
+        this.arm();
+    }
+
+    setEditor(file?: string) {
+        if (this.editor === file) return;
+        const now = Date.now();
+        this.departed = file && this.editor ? { file: this.editor, at: now } : undefined;
+        for (const [path, item] of this.files) {
+            if (!file || path === file) item.switched = undefined;
+            else if (path === this.editor) item.switched = now;
+        }
+        this.editor = file;
+        this.arm();
+    }
+
+    private due(item: MemoFile) {
+        const event = Math.min(item.idle, (this.blurred ?? Infinity) + 30_000, (item.switched ?? Infinity) + 60_000);
+        return Math.max(item.retryAt, item.review ? 0 : Math.max(item.cooldown, event));
     }
 
     private arm() {
         clearTimeout(this.timer);
         if (this.stopped || this.active || !this.files.size) return;
         let next: string | undefined, due = Infinity;
-        for (const [file, item] of this.files) if (item.due < due) { next = file; due = item.due; }
+        for (const [file, item] of this.files) {
+            const at = this.due(item);
+            if (at < due) { next = file; due = at; }
+        }
         this.timer = setTimeout(() => { void this.run(next!); }, Math.max(0, due - Date.now()));
     }
 
     private async run(file: string) {
-        const generation = this.generation;
+        const generation = this.generation, item = this.files.get(file)!;
         this.active = file;
         this.files.delete(file);
         try {
-            const retryAt = await this.prepare(file);
-            if (retryAt && generation === this.generation && !this.stopped) {
-                const now = Date.now();
-                this.files.set(file, { first: now, notBefore: retryAt, due: retryAt });
+            const retry = await this.prepare(file, item.review);
+            if (retry && generation === this.generation && !this.stopped) {
+                const queued = this.files.get(file) ?? item;
+                if (typeof retry === 'number') queued.retryAt = retry;
+                else queued.cooldown = retry.cooldown;
+                this.files.set(file, queued);
             }
         } finally {
             this.active = undefined;

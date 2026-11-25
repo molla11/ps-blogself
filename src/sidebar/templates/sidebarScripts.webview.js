@@ -120,6 +120,7 @@ class FileActionsMenu {
     get items() { return [...this.element.querySelectorAll('[role="menuitem"]:not([hidden])')]; }
 
     open(row, { point = null, focus = false, last = false } = {}) {
+        if (!row.dataset.source) vscode.postMessage({ type: 'reviewMemos', path: row.dataset.path });
         this.close();
         this.owner = row;
         this.point = point;

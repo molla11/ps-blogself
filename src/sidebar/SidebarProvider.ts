@@ -119,6 +119,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
                         break;
                     }
+                    case 'reviewMemos':
+                        if (typeof data.path === 'string') BlogPostManager.prepareOnReview(data.path);
+                        break;
                     case 'viewHistory': {
                         const discovered = this.codeFiles.files.find(file => file.filePath === data.path);
                         await HistoryManager.openHistory(this._extensionUri, data.path, discovered?.language);

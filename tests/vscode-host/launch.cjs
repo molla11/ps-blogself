@@ -68,9 +68,9 @@ async function main() {
             });
         }
         const requests = await inspectRequests();
-        if (requests.length !== 4)
+        if (requests.length !== 5)
             throw new Error(
-                'Reopening unexpectedly generated another paid job: ' + requests.length,
+                'Unexpected number of writing and memo requests: ' + requests.length,
             );
         if (requests[0].source.changes.length !== 2 || requests[0].source.finalCode !== 'total = 0\nfor value in [1, 2, 3]:\n    total += value\nprint(total)\n') throw new Error('Rapid saves were not preserved');
         await fs.writeFile(path.join(sandbox, 'requests.json'), JSON.stringify(requests, null, 2));

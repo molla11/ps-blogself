@@ -28,7 +28,7 @@ export interface WritingPlan {
 export interface WritingSource {
     fileName: string;
     language: string;
-    changes: { index: number; at: string; diff: string }[];
+    changes: { index: number; at: string; diff: string; checkpoint?: boolean }[];
     initialCode: string;
     finalCode: string;
 }
@@ -102,6 +102,7 @@ export interface WritingDraft extends WritingPreferences {
     lastPreparation?: { index: number; hash: string; at: number };
     preparedPlanHash?: string;
     memoOriginals?: MemoOriginals;
+    declinedMemo?: { historyId: string; hash: string; timestamp: number };
     pending?: {
         request: WritingRequest;
         /** Retained only to detect unfinished requests from an older client. */
@@ -111,6 +112,7 @@ export interface WritingDraft extends WritingPreferences {
         baseRevision: number;
         history?: FileHistory;
         cancelRequested?: boolean;
+        append?: boolean;
     };
     candidate?: { plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory; notices?: AuthorNotice[] };
     planNotices?: AuthorNotice[];
@@ -215,12 +217,12 @@ function buildSource(
             throw new InputSizeError('코드 파일은 UTF-8 기준 512KiB 이하여야 합니다. 파일 크기나 선택한 기록을 확인해 주세요.');
         }
         if (retained && !retained.has(index)) {
-            if (automatic) {
+            if (automatic && !history.snapshots[index].checkpoints?.length) {
                 const time = history.snapshots[index].timestamp;
                 const quiet = history.snapshots[index + 1].timestamp - time >= 15_000;
                 const longBatch = time - history.snapshots[lastKept].timestamp >= 90_000;
                 if ((!quiet && !longBatch) || !meritsAutomaticMemo(previous, content, language)) continue;
-            } else if (isCosmeticChange(previous, content, language)) continue;
+            } else if (!automatic && isCosmeticChange(previous, content, language)) continue;
         }
         lastKept = index;
         if (retained && (reconstructedBytes += utf8Bytes(content)) > MAX_RECONSTRUCTED_BYTES) {
@@ -228,6 +230,7 @@ function buildSource(
         }
         changes.push({
             index,
+            ...(automatic && history.snapshots[index].checkpoints?.length ? { checkpoint: true } : {}),
             at: new Date(history.snapshots[index].timestamp).toISOString(),
             diff: createTwoFilesPatch('before', 'after', previous, content, '', '', { context: 3 }),
         });
@@ -261,10 +264,10 @@ export function newDraft(history: FileHistory): WritingDraft {
     };
 }
 
-export function preparationSource(history: FileHistory, automatic = false): WritingSource {
+export function preparationSource(history: FileHistory, automatic = false, tailStart = 0): WritingSource {
     // Keep the UI's complete history. Only bound the material in one model request.
-    let start = Math.max(0, history.snapshots.length - MAX_CHANGES);
-    const end = history.snapshots.length - 1;
+    let start = tailStart || Math.max(0, history.snapshots.length - MAX_CHANGES);
+    let end = history.snapshots.length - 1;
     while (true) {
         try {
             const source = buildSource(history, start, end, new Set([start, end]), automatic);
@@ -276,7 +279,9 @@ export function preparationSource(history: FileHistory, automatic = false): Writ
                 '코드가 한 번에 분석하기에는 너무 큽니다. 512KiB 이하의 파일과 더 짧은 기록 범위를 선택해 주세요.',
             );
         }
-        start += Math.max(1, Math.ceil((end - start) / 3));
+        const trim = Math.max(1, Math.ceil((end - start) / 3));
+        if (tailStart) end -= trim;
+        else start += trim;
     }
 }
 
@@ -309,6 +314,55 @@ export function validatePlan(value: unknown, count: number, allowEmptyTitle = fa
         throw new Error('설명이나 변경 범위가 올바르지 않습니다.');
     }
     return structuredClone(plan);
+}
+
+// A revert can repeat a content hash. Match the saved occurrence, even if a
+// deletion moved its index, and never attach notes to a newly created history.
+export function memoSnapshotIndex(old: FileHistory, current: FileHistory, index: number): number {
+    const snapshot = old.snapshots[index];
+    if (!snapshot || old.id !== current.id) return -1;
+    const same = (s?: typeof snapshot) => s?.hash === snapshot.hash && s.timestamp === snapshot.timestamp;
+    return same(current.snapshots[index]) ? index : current.snapshots.findIndex(s => same(s));
+}
+
+export function memoTailStart(draft: WritingDraft, history: FileHistory): number | undefined {
+    if (!draft.plan) return 0;
+    const end = memoSnapshotIndex(draft.history, history, draft.history.snapshots.length - 1);
+    if (end < 0 || draft.plan.steps.length >= 12) return;
+    const ranges = [draft.plan, ...draft.plan.steps];
+    if (ranges.some(r => memoSnapshotIndex(draft.history, history, r.start) < 0 || memoSnapshotIndex(draft.history, history, r.end) < 0)) return;
+    return end + 1;
+}
+
+export function appendMemoResult(draft: WritingDraft, history: FileHistory, result: WritingPlan, notices?: AuthorNotice[]) {
+    const start = memoTailStart(draft, history), plan = draft.plan;
+    if (!plan || start === undefined) return false;
+    const tail = validatePlan(result, history.snapshots.length);
+    if (tail.start < start || tail.end < start) throw new Error('새 메모 구간이 기존 기록과 겹칩니다.');
+    const remap = (i: number) => memoSnapshotIndex(draft.history, history, i);
+    const steps = plan.steps.map(step => ({ ...step, start: remap(step.start), end: remap(step.end) }));
+    // Group the remainder into its own note if this batch would exceed the editable step limit.
+    const notes = tail.steps.length ? tail.steps : [{ title: tail.title, body: tail.summary, start: tail.start, end: tail.end }];
+    const space = 12 - steps.length;
+    if (notes.length > space) {
+        const rest = notes.splice(space - 1);
+        notes.push({ title: tail.title, body: tail.summary, start: Math.min(...rest.map(n => n.start)), end: Math.max(...rest.map(n => n.end)) });
+    }
+    if (draft.memoOriginals) {
+        // Drop originals for deleted notes before recording the new batch.
+        const kept = new Set(steps.map(step => step.aiStepId));
+        const originals = Object.fromEntries(Object.entries(draft.memoOriginals.steps).filter(([id]) => kept.has(id)));
+        rememberAiSteps(notes, originals);
+        draft.memoOriginals = { ...draft.memoOriginals, steps: originals };
+    }
+    const followEnd = plan.end === draft.history.snapshots.length - 1;
+    draft.plan = { ...plan, start: remap(plan.start), end: followEnd ? tail.end : remap(plan.end), steps: [...steps, ...notes] };
+    draft.history = history;
+    draft.fingerprint = historyFingerprint(history);
+    draft.planNotices = resultNotices(notices);
+    draft.revision++;
+    draft.updatedAt = Date.now();
+    return true;
 }
 
 function planFingerprint(plan: WritingPlan): string {

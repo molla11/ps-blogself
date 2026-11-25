@@ -22,9 +22,9 @@ export class JobRouter {
     }
     create(request: WritingRequest, target: JobTarget) {
         requireTarget(target);
-        const payload = { ...request, supportsAuthorNotices: true };
-        validateRequest(payload);
-        const submit = () => this.connection.request<WritingJob>('/jobs', 'POST', payload, target.base, target.owner);
+        // Resend the persisted payload verbatim if the first acknowledgement was lost.
+        validateRequest(request);
+        const submit = () => this.connection.request<WritingJob>('/jobs', 'POST', request, target.base, target.owner);
         if (request.model) {
             return this.connection.request<{ writingModels?: { id: string }[] }>('/config', 'GET', undefined, target.base, target.owner).then(config => {
                 if (!config.writingModels?.some(model => model.id === request.model)) {

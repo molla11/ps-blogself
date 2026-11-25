@@ -950,6 +950,7 @@ export class BlogPostManager {
                 ...(kind === 'write_blog' ? { model: selectedWritingModel(draft.writingModel) } : {}),
                 priority: prefetch ? 'prefetch' : 'interactive',
                 requestId: randomUUID(),
+                supportsAuthorNotices: true,
                 source,
                 ...(kind === 'write_blog' ? { plan: structuredClone(plan!) } : {}),
                 instructions,
@@ -982,6 +983,7 @@ export class BlogPostManager {
                     delete pending.apiUrl;
                     delete pending.jobId;
                     pending.request.requestId = randomUUID();
+                    pending.request.supportsAuthorNotices = true;
                     pending.target = target;
                     await this.enqueue(view, async () => { signal.throwIfAborted(); await this.store.save(view.draft); });
                 }

@@ -104,13 +104,13 @@ test('turning requests off aborts active streams and prevents new fetches until 
     } finally { backendRequests.setEnabled(true); }
 });
 
-test('prepare and write requests advertise private author notices even for a legacy plan', async () => {
+test('resubmission preserves the notice capability stored with the request ID', async () => {
     const { jobs, calls } = harness(), target = await jobs.target();
     const plan = { title: '풀이', summary: '', start: 0, end: 0, steps: [] };
+    const optedIn = { ...request, supportsAuthorNotices: true };
+    const write = { ...optedIn, kind: 'write_blog' as const, plan };
     await jobs.create(request, target);
-    await jobs.create({ ...request, kind: 'write_blog', plan }, target);
-    assert.deepEqual(calls.map(call => call[2]), [
-        { ...request, supportsAuthorNotices: true },
-        { ...request, kind: 'write_blog', plan, supportsAuthorNotices: true },
-    ]);
+    await jobs.create(optedIn, target);
+    await jobs.create(write, target);
+    assert.deepEqual(calls.map(call => call[2]), [request, optedIn, write]);
 });

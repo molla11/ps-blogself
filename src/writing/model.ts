@@ -35,6 +35,7 @@ export interface WritingSource {
 export interface WritingRequest {
     model?: WritingModel;
     kind: 'prepare_blog' | 'write_blog';
+    supportsAuthorNotices?: boolean;
     requestId: string;
     source: WritingSource;
     plan?: WritingPlan & { edits?: MemoEdit[] };

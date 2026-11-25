@@ -76,8 +76,7 @@ test('notes never send read receipts; only displayed article versions become rea
 test('unsaved article edits do not acknowledge different server content hidden behind those edits', async ({ page }) => {
     await openWebview(page);
     await post(page, { ...base, writingVisible: false, title: '제목', markdown: '기존 본문' });
-    await page.locator('#source-btn').click();
-    await page.locator('#article-body').fill('직접 편집 중인 글');
+    await page.locator('.prose-editor').fill('직접 편집 중인 글');
     await post(page, { ...base, writingVisible: true, title: '제목', markdown: '새 서버 글',
         activity: { notes: [note], articles: ['d'.repeat(64)] } });
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));

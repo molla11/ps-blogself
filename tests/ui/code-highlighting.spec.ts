@@ -3,7 +3,7 @@ import { openWebview } from './webview';
 import MarkdownIt from 'markdown-it';
 
 const base = {
-    type: 'model', filePath: '/work/solve.cpp', fileName: 'solve.cpp', editable: true, editToken: 'window-a',
+    type: 'model', showAdvancedWritingViews: true, filePath: '/work/solve.cpp', fileName: 'solve.cpp', editable: true, editToken: 'window-a',
     title: '코드 설명', instructions: '', markdown: '', count: 1, times: [1], versions: [],
     pending: false, running: false, error: '', candidate: false,
     plan: { title: '코드 설명', summary: '풀이 과정', start: 0, end: 0, steps: [] },

@@ -4,13 +4,14 @@ import sidebarHtml from './templates/sidebar.html';
 import sidebarCss from './templates/sidebar.css';
 import sidebarJs from './templates/sidebarScripts.webview.js';
 
-export function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
+export function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri, contest: boolean): string {
     const codiconsUri = webview.asWebviewUri(
         vscode.Uri.joinPath(extensionUri, 'media', 'codicons', 'codicon.css'),
     );
 
     const nonce = randomBytes(24).toString('base64');
     return sidebarHtml
+        .replace('{{contestClass}}', contest ? 'contest-mode' : '')
         .replace(
             '{{csp}}',
             `default-src 'none'; style-src ${webview.cspSource} 'nonce-${nonce}'; script-src 'nonce-${nonce}'; font-src ${webview.cspSource};`,

@@ -17,8 +17,8 @@
         </form>
     </section>
     <section aria-labelledby="writing-heading"><h2 id="writing-heading">글쓰기</h2>
-        <label class="check-row"><input id="prepare-on-review" type="checkbox" aria-describedby="prepare-description"><span>수정 기록을 볼 때 글쓰기 미리 준비</span></label>
-        <p id="prepare-description">'수정 기록 보기'를 클릭하면 자동으로 변경 구간을 선택하고, 메모 작성을 시작합니다. AI 이용량에 포함됩니다.</p>
+        <label class="check-row"><input id="prepare-on-review" type="checkbox" aria-describedby="prepare-description"><span>수정 기록으로 메모 자동 생성</span></label>
+        <p id="prepare-description">로그인하면 풀이에 영향을 주는 변경을 모아 AI 메모를 미리 만듭니다. AI 이용량에 포함됩니다. 끄면 글쓰기 화면에서 직접 메모를 생성할 수 있습니다.</p>
     </section>
     <section aria-labelledby="export-heading"><h2 id="export-heading">내보내기</h2>
         <label class="check-row"><input id="ghost-auto-upload" type="checkbox" aria-describedby="ghost-auto-description"><span>Ghost 자동 업로드</span></label>
@@ -36,6 +36,9 @@
             <p id="export-tags-formats">Ghost 태그, Markdown 메타데이터, HTML 키워드에 추가합니다. 비워두면 태그를 추가하지 않습니다.</p>
         </form>
     </section>
+    <details class="advanced"><summary>고급</summary>
+        <label class="check-row"><input id="advanced-writing-views" type="checkbox"><span>글쓰기에서 Markdown·미리보기 표시</span></label>
+    </details>
     <p id="status" role="status" aria-live="polite"></p><p id="error" role="alert" hidden></p>
     <footer>문의 · 크레딧 충전 <a id="contact" href="mailto:hsjang635@gmail.com">hsjang635@gmail.com</a></footer>
 </main>{{script}}</body></html>

@@ -1,3 +1,10 @@
+import { configManager } from '../config';
+import { PendingMemos } from '../writing/PendingMemos';
+import { MemoPreparationQueue, MEMO_COOLDOWN, meritsAutomaticMemo } from '../writing/MemoPreparation';
+import type { FileHistory } from '../types';
+import { fileWatcher } from '../storage/FileWatcher';
+import { Logger } from './logger';
+import { backendRequests } from '../writing/BackendRequests';
 import { GhostConnection } from '../ghost/GhostConnection';
 import { GhostPublisher, GhostState, articleHash, PublishArticle } from '../ghost/GhostPublisher';
 import { ArticleAssets, imageRefs, mapImages } from '../ghost/ArticleAssets';
@@ -28,7 +35,7 @@ import {
     writingSourceFor,
     preparationSource,
     validatePlan,
-    historyFingerprint,
+    historyFingerprint, preparationBaseRevision,
     articleVersionKey,
     previousArticleVersions,
 } from '../writing/model';
@@ -40,6 +47,7 @@ interface View {
     panel?: vscode.WebviewPanel;
     controls?: Record<string, unknown>;
     sidebarLinked?: boolean;
+    sidebarAvailable?: boolean;
     draft: WritingDraft;
     queue: Promise<unknown>;
     task?: Promise<void>;
@@ -68,6 +76,11 @@ export class BlogPostManager {
     private static assets: ArticleAssets;
     private static exports = new Set<Promise<void>>();
     private static ghostUploads = new Map<string, Promise<void>>();
+    private static memoQueue: MemoPreparationQueue;
+    private static pendingMemos: PendingMemos;
+    private static get autoMemos() {
+        return !this.closing && backendRequests.enabled && vscode.workspace.getConfiguration('psb').get('prepareOnReview', true);
+    }
     private static jobs: JobRouter;
     private static connection: ServiceConnection;
     private static loads = new Map<string, Promise<View | undefined>>();
@@ -77,6 +90,16 @@ export class BlogPostManager {
     private static sidebarVisible = false;
     private static controlsChanged = new vscode.EventEmitter<void>();
     static readonly onDidChangeControls = this.controlsChanged.event;
+
+    private static get writingAllowed() { return configManager.contest?.writing ?? true; }
+    private static get showAdvancedWritingViews() { return vscode.workspace.getConfiguration('psb').get('showAdvancedWritingViews', false); }
+
+    private static checkWritingAccess(restoredPanel?: vscode.WebviewPanel) {
+        if (this.writingAllowed) return true;
+        if (restoredPanel) restoredPanel.dispose();
+        else void vscode.window.showInformationMessage('대회 모드에서 글쓰기 화면 진입을 차단했습니다.');
+        return false;
+    }
 
     static get sidebarWriter() {
         const active = [...this.views.values()].find(view => view.panel?.active && view.sidebarLinked);
@@ -91,12 +114,14 @@ export class BlogPostManager {
     }
 
     private static syncSidebar() {
+        const available = !configManager.contest;
         for (const view of this.views.values()) {
-            const linked = this.sidebarVisible && !!view.panel?.active;
-            if (view.sidebarLinked === linked) continue;
+            const linked = this.sidebarVisible && available && !!view.panel?.active;
+            if (view.sidebarLinked === linked && view.sidebarAvailable === available) continue;
             view.sidebarLinked = linked;
+            view.sidebarAvailable = available;
             if (!linked) view.controls = undefined;
-            if (view.ready) void view.panel?.webview.postMessage({ type: 'writerSidebar', linked });
+            if (view.ready) void view.panel?.webview.postMessage({ type: 'writerSidebar', linked, available });
         }
         this.controlsChanged.fire();
     }
@@ -107,7 +132,7 @@ export class BlogPostManager {
             void view.panel.webview.postMessage({ type: 'writerAction', filePath, action, value });
         }
     }
-    static init(context: vscode.ExtensionContext, development: ConnectionEnvironment = {}) {
+    static async init(context: vscode.ExtensionContext, development: ConnectionEnvironment = {}) {
         this.assets = new ArticleAssets(path.join(context.globalStorageUri.fsPath, 'article-assets'));
         this.ghost = new GhostConnection(context);
         this.publisher = new GhostPublisher(path.join(context.globalStorageUri.fsPath, 'ghost-publications'), this.assets);
@@ -118,10 +143,48 @@ export class BlogPostManager {
         context.subscriptions.push(this.activity);
         this.connection = new ServiceConnection(context, development);
         this.jobs = new JobRouter(this.connection);
+        this.pendingMemos = new PendingMemos(path.join((context.storageUri ?? context.globalStorageUri).fsPath, 'pending-memos.json'),
+            error => Logger.warn('메모 대기 목록을 저장하지 못했습니다.', error));
+        this.memoQueue = new MemoPreparationQueue(file => this.prepareAutomaticMemo(file).catch(error => {
+            Logger.warn('자동 메모를 준비하지 못했습니다.', error);
+        }), file => this.pendingMemos.finish(file));
+        const pendingFiles = await this.pendingMemos.restore().catch(error => {
+            Logger.warn('메모 대기 목록을 불러오지 못했습니다.', error);
+            return [];
+        });
+        for (const file of pendingFiles) {
+            if (this.autoMemos) this.memoQueue.schedule(file);
+            else this.pendingMemos.finish(file);
+        }
+        context.subscriptions.push(this.memoQueue, storageManager.onDidSaveSnapshot(file => {
+            if (!this.autoMemos) return;
+            this.pendingMemos.mark(file);
+            this.memoQueue.schedule(file);
+        }));
+        let requestsEnabled = backendRequests.enabled;
+        let writingAllowed = this.writingAllowed;
+        context.subscriptions.push(configManager.onDidChange(() => {
+            if (!this.autoMemos) this.memoQueue.clear();
+            const resume = !requestsEnabled && backendRequests.enabled;
+            this.syncSidebar();
+            if (requestsEnabled === backendRequests.enabled && writingAllowed === this.writingAllowed) return;
+            requestsEnabled = backendRequests.enabled;
+            writingAllowed = this.writingAllowed;
+            for (const view of this.views.values()) {
+                if (!requestsEnabled && view.task) {
+                    view.watcher?.abort();
+                    view.status = '대회 모드에서 온라인 요청을 차단했습니다.';
+                }
+                if (resume && (view.editable || view.panel)) this.run(view);
+                this.render(view);
+            }
+        }));
         context.subscriptions.push(
             vscode.commands.registerCommand('psb.connect', () => this.connect()),
             vscode.commands.registerCommand('psb.connectGhost', async () => { await this.ghost.configure(); }),
-            vscode.commands.registerCommand('psb.sample', async () => this.openPage(context.extensionUri, await storageManager.installSampleHistory())),
+            vscode.commands.registerCommand('psb.sample', async () => {
+                if (this.checkWritingAccess()) await this.openPage(context.extensionUri, await storageManager.installSampleHistory());
+            }),
             this.connection.changed.event(() => this.updates.fire('')),
             this.connection.changed,
             vscode.window.onDidChangeWindowState(() => {
@@ -130,6 +193,8 @@ export class BlogPostManager {
                 }
             }),
             vscode.workspace.onDidChangeConfiguration(event => {
+                if (event.affectsConfiguration('psb.prepareOnReview') && !this.autoMemos) this.memoQueue.clear();
+                if (event.affectsConfiguration('psb.showAdvancedWritingViews')) for (const view of this.views.values()) this.render(view);
                 if (event.affectsConfiguration('psb.exportTags')) for (const view of this.views.values()) this.sendGhost(view);
             }),
         );
@@ -152,6 +217,7 @@ export class BlogPostManager {
     }
     static async flush() {
         this.closing = true;
+        this.memoQueue?.dispose();
         for (const view of this.views.values()) {
             view.sync?.dispose(); clearInterval(view.ownerCheck); view.watcher?.abort();
         }
@@ -159,6 +225,7 @@ export class BlogPostManager {
         await Promise.allSettled([...this.exports]);
         await this.publisher?.close();
         await this.store?.close();
+        await this.pendingMemos?.flush();
     }
     static async connect() {
         await this.connection.configure();
@@ -188,12 +255,13 @@ export class BlogPostManager {
         return result;
     }
     static notices() { return this.connection.notices.current(); }
-    static refreshNotices() { return this.connection.notices.refresh(); }
+    static async refreshNotices() { if (backendRequests.enabled) await this.connection.notices.refresh(); }
     static dismissNotice(id: string) { return this.connection.notices.dismiss(id); }
     static showUsage() { return this.connection.showUsage(); }
-    static preparationStatus(filePath: string) {
+    static async preparationStatus(filePath: string) {
         const view = this.views.get(filePath);
-        return view?.error ? '글쓰기 준비를 다시 시도할 수 있어요.' : view?.draft.pending ? 'AI가 글쓰기 내용을 준비하고 있어요…' : view?.draft.plan ? '글쓰기 준비가 끝났어요.' : '글쓰기에서 AI가 풀이를 정리해 드려요.';
+        const draft = view?.draft ?? await this.store.read(filePath);
+        return view?.error ? '글쓰기 준비를 다시 시도할 수 있어요.' : draft?.pending ? 'AI가 글쓰기 내용을 준비하고 있어요…' : draft?.plan ? '글쓰기 준비가 끝났어요.' : '글쓰기에서 메모를 생성할 수 있어요.';
     }
     private static async loadView(filePath: string, discoveredLanguage?: string): Promise<View | undefined> {
         if (this.views.has(filePath)) return this.views.get(filePath);
@@ -226,35 +294,80 @@ export class BlogPostManager {
         this.loads.set(filePath, loading);
         return loading;
     }
-    static async prepareOnReview(filePath: string) {
-        if (!vscode.workspace.getConfiguration('psb').get('prepareOnReview', true)) return;
+    static prepareOnReview(filePath: string) {
+        if (this.autoMemos) this.memoQueue.schedule(filePath, true);
+    }
+
+    // Compare the net change since the last submitted batch, including small edits
+    // which did not previously qualify. History deletion can invalidate an old index.
+    private static automaticMemoDue(history: FileHistory, draft?: WritingDraft) {
+        const last = history.snapshots.at(-1);
+        const mark = draft?.lastPreparation;
+        if (!last || draft?.candidate || mark?.hash === last.hash) return;
+        if (!mark && draft?.preparationKey && draft.preparationKey === historyFingerprint(history)) return;
+        const read = (index: number) => storageManager.reconstructFileContent(history, index);
+        let before: string | null | undefined;
+        if (mark && history.snapshots[mark.index]?.hash === mark.hash) before = read(mark.index);
+        if ((before === null || before === undefined) && draft?.plan) before = storageManager.reconstructFileContent(draft.history, draft.history.snapshots.length - 1);
+        before ??= history.memoBaseline === null ? read(0) : history.memoBaseline;
+        const after = read(history.snapshots.length - 1);
+        if (after !== null && meritsAutomaticMemo(before ?? '', after, history.language)) return mark ? mark.at + MEMO_COOLDOWN : 0;
+    }
+
+    private static async prepareAutomaticMemo(filePath: string): Promise<number | void> {
+        if (!this.autoMemos || !await this.connection.account()) return;
+        const history = await storageManager.getFileHistory(filePath);
+        if (!history?.snapshots.length) return;
+        const saved = await this.store.read(filePath);
+        if (!saved?.pending) {
+            const due = this.automaticMemoDue(history, saved);
+            if (due === undefined || due > Date.now()) return due;
+        }
+        if (!this.autoMemos) return;
+        const view = await this.loadView(filePath);
+        if (!view) return;
+        let retryAt: number | undefined;
+        let joined = false;
         try {
-            const target = await this.jobs.target(false); // Reviewing never opens a login prompt.
-            const view = await this.loadView(filePath);
-            if (!view) return;
             await this.enqueue(view, async () => {
                 await this.refresh(view, true);
-                if (!view.editable) return;
-                if (view.draft.pending) { this.run(view); return; }
-                const history = await storageManager.getFileHistory(filePath);
-                if (!history?.snapshots.length) return;
-                // Preparation does not depend on the selected model, so only the history matters.
-                const fingerprint = historyFingerprint(history);
-                if (view.draft.preparationKey === fingerprint || (view.draft.plan && view.draft.fingerprint === fingerprint)) return;
-                await this.start(view, 'prepare_blog', target, true);
+                if (!this.autoMemos) return;
+                if (!view.editable) { retryAt = Date.now() + MEMO_COOLDOWN; return; }
+                if (view.draft.pending) {
+                    joined = true;
+                    if (!view.error) this.run(view);
+                    return;
+                }
+                const due = this.automaticMemoDue(history, view.draft);
+                if (due === undefined || due > Date.now()) { retryAt = due; return; }
+                await this.start(view, 'prepare_blog', undefined, true, history);
             });
-        } catch { /* Optional preparation must not interrupt history viewing. */ }
+            // Job completion itself uses the draft queue. Await it outside the lock.
+            await view.task;
+            if (joined && !view.draft.pending && !view.error) retryAt = Date.now() + 1;
+            return retryAt;
+        } finally {
+            await this.enqueue(view, async () => {
+                if (view.panel || view.draft.pending || view.task || this.openings.has(filePath)) return;
+                if (view.editable) await this.store.release(filePath);
+                if (view.panel || this.openings.has(filePath)) return;
+                view.sync?.dispose();
+                clearInterval(view.ownerCheck);
+                this.views.delete(filePath);
+            });
+        }
     }
     public static async openPage(
         extensionUri: vscode.Uri,
         filePath: string,
         options: { panel?: vscode.WebviewPanel; language?: string } = {},
     ) {
+        if (!this.checkWritingAccess(options.panel)) return;
         if (!options.panel) await vscode.commands.executeCommand('psb.sidebar.focus', { preserveFocus: true });
         const opening = this.openings.get(filePath);
         if (opening) {
             await opening;
-            this.views.get(filePath)?.panel?.reveal();
+            if (this.checkWritingAccess(options.panel)) this.views.get(filePath)?.panel?.reveal();
             return;
         }
         const operation = this.openPageInternal(extensionUri, filePath, options.panel, options.language).finally(() =>
@@ -269,7 +382,9 @@ export class BlogPostManager {
         restoredPanel?: vscode.WebviewPanel,
         discoveredLanguage?: string,
     ) {
+        await fileWatcher.flushFile(filePath);
         const view = await this.loadView(filePath, discoveredLanguage);
+        if (!this.checkWritingAccess(restoredPanel)) return;
         if (view?.panel && !restoredPanel) {
             view.panel.reveal();
             return;
@@ -313,6 +428,13 @@ export class BlogPostManager {
             }
         });
         panel.webview.onDidReceiveMessage((message) => {
+            if (message?.type === 'openWriterSidebar') {
+                if (current.panel === panel && panel.active && !configManager.contest) {
+                    void vscode.commands.executeCommand('psb.sidebar.focus').then(undefined, () =>
+                        panel.webview.postMessage({ type: 'writerSidebar', linked: false, available: false }));
+                }
+                return;
+            }
             if (message?.type === 'writerControls') {
                 if (current.panel === panel && message.controls && typeof message.controls === 'object') {
                     current.controls = message.controls;
@@ -370,7 +492,7 @@ export class BlogPostManager {
         if (view.draft.pending && (view.editable || view.panel)) this.run(view);
     }
     private static writingIsVisible(view: View) {
-        return !!view.panel?.visible && !!view.panel.active && vscode.window.state.focused;
+        return this.writingAllowed && !!view.panel?.visible && !!view.panel.active && vscode.window.state.focused;
     }
     private static render(view: View) {
         if (!view.activity || view.activityVersion !== view.draft.storageVersion) {
@@ -387,6 +509,10 @@ export class BlogPostManager {
             fileName: path.basename(draft.filePath),
             activity: view.activity.visible,
             writingVisible: this.writingIsVisible(view),
+            writingAllowed: this.writingAllowed,
+            showAdvancedWritingViews: this.showAdvancedWritingViews,
+            backendEnabled: backendRequests.enabled,
+            localImageBase: view.panel.webview.asWebviewUri(vscode.Uri.file(this.assets.directory)).toString() + '/',
             plan: draft.plan,
             instructions: draft.instructions,
             writingModel: selectedWritingModel(draft.writingModel),
@@ -576,6 +702,9 @@ export class BlogPostManager {
             throw new Error('화면 요청을 확인할 수 없습니다.');
         }
         await this.refresh(view);
+        if (!this.writingAllowed && !['ready', 'save', 'viewedWriting'].includes(message.type)) {
+            throw new Error('대회 모드에서 글쓰기 화면 진입을 차단했습니다.');
+        }
         const reading = ['ready', 'takeover', 'viewedWriting', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'rechargeCredits', 'ghostConnect', 'ghostOpen'].includes(message.type);
         if (!reading && (!view.editable || message.editToken !== view.draft.editor?.token)) throw new DraftConflict();
         switch (message.type) {
@@ -592,17 +721,17 @@ export class BlogPostManager {
                 view.draft = await this.store.open(view.draft, true);
                 view.editable = true; view.error = '';
                 if (view.draft.pending) this.run(view);
-                else if (!view.draft.plan) await this.start(view, 'prepare_blog');
+                else if (!view.draft.fromSavedFile) this.prepareOnReview(view.draft.filePath);
                 break;
             }
             case 'ready':
                 view.ready = true;
-                void view.panel?.webview.postMessage({ type: 'writerSidebar', linked: !!view.sidebarLinked });
+                void view.panel?.webview.postMessage({ type: 'writerSidebar', linked: !!view.sidebarLinked, available: view.sidebarAvailable });
                 void this.connection.refreshUsage();
                 await this.refreshGhost(view);
                 this.render(view);
                 if (view.draft.pending) this.run(view);
-                else if (!view.draft.plan && view.editable && !view.draft.fromSavedFile) await this.start(view, 'prepare_blog');
+                else if (!view.draft.fromSavedFile) this.prepareOnReview(view.draft.filePath);
                 break;
             case 'checkWritingModel': {
                 if (!isWritingModel(message.writingModel)) throw new Error('사용할 모델을 선택해 주세요.');
@@ -659,11 +788,13 @@ export class BlogPostManager {
                     delete view.draft.candidate;
                     await this.store.save(view.draft);
                     if (article) this.autoUpload(view);
+                    this.prepareOnReview(view.draft.filePath);
                 }
                 break;
             case 'discardCandidate':
                 delete view.draft.candidate;
                 await this.store.save(view.draft);
+                this.prepareOnReview(view.draft.filePath);
                 break;
             case 'diff': {
                 const index = Number(message.index),
@@ -677,6 +808,7 @@ export class BlogPostManager {
             }
             case 'preview': {
                 if (view.editable && message.editToken === view.draft.editor?.token) await this.edit(view, message.fields);
+                if (!this.showAdvancedWritingViews) break;
                 const html = documentHtml(view.draft.document || documentFromMarkdown(view.draft.markdown), this.imageSources(view, view.draft));
                 void view.panel?.webview.postMessage({ type: 'preview', html });
                 break;
@@ -733,6 +865,7 @@ export class BlogPostManager {
             case 'openLink': {
                 const url = new URL(String(message.url));
                 if (['http:', 'https:', 'mailto:'].includes(url.protocol)) {
+                    if (url.protocol !== 'mailto:') backendRequests.requireEnabled();
                     await vscode.env.openExternal(vscode.Uri.parse(url.href));
                 }
                 break;
@@ -747,6 +880,7 @@ export class BlogPostManager {
                 await this.ghost.configure(); await this.refreshGhost(view); break;
             case 'ghostOpen': {
                 await this.refreshGhost(view);
+                backendRequests.requireEnabled();
                 if (view.ghost?.editorUrl) await vscode.env.openExternal(vscode.Uri.parse(view.ghost.editorUrl));
                 break;
             }
@@ -775,13 +909,14 @@ export class BlogPostManager {
     private static markdown(draft: Pick<WritingDraft, 'title' | 'markdown'> & Partial<Pick<WritingDraft, 'plan' | 'document'>>, tags = this.exportTags()) {
         return taggedMarkdown(`# ${draft.title || draft.plan?.title || '풀이 기록'}\n\n${draft.markdown}\n`, tags);
     }
-    private static async start(view: View, kind: 'prepare_blog' | 'write_blog', target?: JobTarget, prefetch = false) {
+    private static async start(view: View, kind: 'prepare_blog' | 'write_blog', target?: JobTarget, prefetch = false, reviewedHistory?: FileHistory) {
         if (!view.editable) return;
+        backendRequests.requireEnabled();
         if (view.draft.pending || view.task) return;
         const draft = view.draft;
         let history = draft.history;
         if (kind === 'prepare_blog') {
-            const recorded = await storageManager.getFileHistory(draft.filePath);
+            const recorded = reviewedHistory ?? await storageManager.getFileHistory(draft.filePath);
             if (recorded?.snapshots.length) history = recorded;
             else if (draft.fromSavedFile) history = await readSavedFileHistory(draft.filePath, history.language);
         }
@@ -805,12 +940,18 @@ export class BlogPostManager {
         }
         const source =
             kind === 'prepare_blog'
-                ? preparationSource(history)
+                ? preparationSource(history, prefetch)
                 : writingSourceFor(history, plan!.start, plan!.end, plan!.steps.flatMap((step) => [step.start, step.end]));
         checkInputSize({ source });
         const instructions = writingInstructions(draft);
         target ||= await this.jobs.target(!prefetch);
-        if (kind === 'prepare_blog') draft.preparationKey = historyFingerprint(history);
+        backendRequests.requireEnabled();
+        if (prefetch && !this.autoMemos) return;
+        if (kind === 'prepare_blog') {
+            draft.preparationKey = historyFingerprint(history);
+            const index = history.snapshots.length - 1;
+            draft.lastPreparation = { index, hash: history.snapshots[index].hash, at: Date.now() };
+        }
         draft.pending = {
             target,
             request: {
@@ -823,14 +964,14 @@ export class BlogPostManager {
                 ...(kind === 'write_blog' ? { plan: structuredClone(plan!) } : {}),
                 instructions,
             },
-            baseRevision: kind === 'prepare_blog' && plan ? -1 : draft.revision,
+            baseRevision: kind === 'prepare_blog' ? preparationBaseRevision(draft, prefetch) : draft.revision,
             ...(kind === 'prepare_blog' ? { history: structuredClone(history) } : {}),
         };
         await this.store.save(draft);
         this.run(view);
     }
     private static run(view: View, retry = false) {
-        if (this.closing || view.task || !view.draft.pending) return;
+        if (!backendRequests.enabled || this.closing || view.task || !view.draft.pending) return;
         const pending = view.draft.pending;
         view.error = '';
         view.partial = '';
@@ -863,7 +1004,7 @@ export class BlogPostManager {
                     }
                     return;
                 }
-                if (pending.cancelRequested && !pending.jobId) {
+                if (!pending.jobId && (pending.cancelRequested || (!retry && pending.request.priority === 'prefetch' && !this.autoMemos))) {
                     await this.enqueue(view, async () => { signal.throwIfAborted(); delete view.draft.pending; await this.store.save(view.draft); });
                     view.status = '작업을 취소했습니다.';
                     return;
@@ -890,8 +1031,8 @@ export class BlogPostManager {
                         if (applied && pending.request.kind === 'write_blog' && !pending.cancelRequested) this.autoUpload(view);
                     });
                     view.partial = '';
-                    view.status = view.draft.candidate ? '수정한 내용을 보존했습니다. 새 결과를 적용할 수 있어요.' : pending.request.kind === 'prepare_blog' ? '준비됐어요. 그대로 글을 쓰거나 설명을 고쳐보세요.' : '글을 완성했습니다.';
-                    if (pending.history && pending.request.source.changes.length < pending.history.snapshots.length) view.status += ` 최근 ${pending.request.source.changes.length}개 변경을 분석했습니다.`;
+                    view.status = view.draft.candidate ? '' : pending.request.kind === 'prepare_blog' ? '준비됐어요. 그대로 글을 쓰거나 설명을 고쳐보세요.' : '글을 완성했습니다.';
+                    if (view.status && pending.history && pending.request.source.changes.length < pending.history.snapshots.length) view.status += ` 최근 ${pending.request.source.changes.length}개 변경을 분석했습니다.`;
                 } else if (job.status === 'failed') {
                     throw new Error(job.error || '글쓰기에 실패했습니다. 다시 시도할 수 있습니다.');
                 } else if (job.status === 'cancelled') {
@@ -906,6 +1047,7 @@ export class BlogPostManager {
                 if (!this.closing) void this.connection.refreshUsage(true);
                 if (view.watcher === controller) {
                     view.task = undefined;
+                    if (signal.aborted && backendRequests.enabled && (view.editable || view.panel)) this.run(view);
                     this.render(view);
                     if (!this.closing && !view.panel && !view.draft.pending) {
                         await this.enqueue(view, async () => {

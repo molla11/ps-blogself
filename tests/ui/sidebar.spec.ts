@@ -214,3 +214,58 @@ test('right-click remains available and leaving the webview dismisses its menu',
     await page.keyboard.press('Escape');
     await expect(row(page, 0)).toBeFocused();
 });
+
+test('contest mode replaces the sidebar, exposes three independent switches and returns focus on exit', async ({ page }) => {
+    const entry = page.getByRole('switch', { name: '대회 모드', exact: true });
+    const exit = page.getByRole('button', { name: '대회 모드 나가기' });
+    const recording = page.getByRole('switch', { name: '수정사항 로컬 로깅 차단', exact: true });
+    const online = page.getByRole('switch', { name: '온라인 요청 차단', exact: true });
+    const writing = page.getByRole('switch', { name: '글쓰기 화면 진입 차단', exact: true });
+    const setMode = (contest?: { recording: boolean; backend: boolean; writing: boolean }) =>
+        page.evaluate(value => window.dispatchEvent(new MessageEvent('message', { data: { type: 'contestMode', contest: value } })), contest);
+    await expect(entry).not.toBeChecked();
+    await entry.check();
+    expect((await messages(page)).at(-1)).toEqual({ type: 'setContestMode', enabled: true });
+    await setMode({ recording: true, backend: false, writing: false });
+    await expect(online).toBeFocused();
+    await expect(page.locator('#contest-view')).not.toContainText(/켜짐|꺼짐/);
+    const layout = await page.locator('.contest-controls').evaluate(group => {
+        const rows = Array.from(group.children, child => child.getBoundingClientRect());
+        return {
+            gapDifference: Math.abs(rows[0].top - (window.innerHeight - rows[3].bottom)),
+            stacked: rows.every((row, i) => i === 0 || row.top > rows[i - 1].bottom),
+            exitAlignedRight: rows[3].right === rows[0].right && rows[3].left > rows[0].left,
+            last: group.lastElementChild?.id,
+        };
+    });
+    expect(layout.gapDifference).toBeLessThanOrEqual(1);
+    expect(layout.stacked).toBe(true);
+    expect(layout.exitAlignedRight).toBe(true);
+    expect(layout.last).toBe('exit-contest');
+    for (const red of ['rgb(161, 38, 13)', 'rgb(244, 135, 113)']) {
+        await page.evaluate(color => document.documentElement.style.setProperty('--vscode-errorForeground', color), red);
+        await expect(exit).toHaveCSS('color', red);
+    }
+    await expect(page.locator('#main-view')).toBeHidden();
+    await expect(page.getByRole('switch')).toHaveCount(3);
+    for (const [option, input, blocked] of [['backend', online, true], ['writing', writing, true], ['recording', recording, false]] as const) {
+        await expect(input).toBeFocused();
+        await expect(input).toBeChecked({ checked: blocked });
+        await page.keyboard.press('Space');
+        expect((await messages(page)).at(-1)).toEqual({ type: 'setContestOption', option, enabled: blocked });
+        await page.keyboard.press('Tab');
+    }
+    await expect(exit).toBeFocused();
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'showFullLogs', logs: [] } })));
+    await expect(page.locator('#full-logs-view')).toBeHidden();
+    await setMode({ recording: false, backend: true, writing: false });
+    await expect(recording).toBeChecked();
+    await expect(online).not.toBeChecked();
+    await expect(writing).toBeChecked();
+    await exit.click();
+    expect((await messages(page)).at(-1)).toEqual({ type: 'setContestMode', enabled: false });
+    await setMode();
+    await expect(entry).toBeFocused();
+    await expect(entry).not.toBeChecked();
+    await expect(row(page, 0)).toBeVisible();
+});

@@ -8,6 +8,8 @@
         {{styles}}
     </head>
     <body>
+        <p id="contest-writing-notice" role="status">대회 모드에서 글쓰기 화면 진입을 차단했습니다.</p>
+        <p id="contest-backend-notice" class="notice" role="status" hidden>대회 모드에서 온라인 요청을 차단했습니다.</p>
         <!-- AI icons: Codicons sparkle-filled; license in media/codicons/LICENSE. -->
         <div class="writing-header" id="writing-header">
             <header class="topbar">
@@ -93,7 +95,6 @@
                 </div>
             </div>
             <div class="notice" id="candidate-box" hidden>
-                <span>새 결과가 준비됐어요. 적용하면 현재 내용이 바뀝니다.</span>
                 <div class="actions">
                     <button id="apply-candidate-btn">새 결과 적용</button
                     ><button class="quiet" id="discard-candidate-btn">현재 내용 유지</button>
@@ -179,8 +180,8 @@
                     <div class="document-controls">
                         <button class="quiet" id="outline-toggle" aria-expanded="false" aria-controls="article-outline">목차</button>
                         <div class="actions">
-                            <button class="quiet" id="source-btn" aria-pressed="false">Markdown</button>
-                            <button class="quiet" id="preview-btn" aria-pressed="false">미리보기</button>
+                            <button class="quiet" id="source-btn" aria-pressed="false" hidden>Markdown</button>
+                            <button class="quiet" id="preview-btn" aria-pressed="false" hidden>미리보기</button>
                             <button class="secondary" id="export-menu-btn" popovertarget="export-menu" aria-haspopup="true">
                                 내보내기
                                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3.14645 5.64645C3.34171 5.45118 3.65829 5.45118 3.85355 5.64645L8 9.79289L12.1464 5.64645C12.3417 5.45118 12.6583 5.45118 12.8536 5.64645C13.0488 5.84171 13.0488 6.15829 12.8536 6.35355L8.35355 10.8536C8.15829 11.0488 7.84171 11.0488 7.64645 10.8536L3.14645 6.35355C2.95118 6.15829 2.95118 5.84171 3.14645 5.64645Z"/></svg>
@@ -264,6 +265,10 @@
                 </div>
             </section>
         </main>
+        <button class="secondary" id="open-writer-sidebar" type="button" hidden>글쓰기 도구 열기</button>
+        <aside id="local-writer-tools" popover="auto" aria-label="글쓰기 도구">
+            <button class="quiet" type="button" popovertarget="local-writer-tools" popovertargetaction="hide">도구 닫기</button>
+        </aside>
         <div id="generation-loading" role="status" aria-live="polite" hidden>
             <span class="loading-spinner" aria-hidden="true"></span>
             <span id="loading-title"></span>

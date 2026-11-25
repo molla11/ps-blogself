@@ -157,3 +157,46 @@ test('oversized snapshots leave existing history intact and recording resumes af
     await a.call('snapshots', {file, contents: ['int a;', 'x'.repeat(512 * 1024 + 1), '가'.repeat(200000), 'int b;']});
     assert.deepEqual(reconstructContents(await a.call('history', file)), ['int a;', 'int b;']);
 }));
+
+test('contest switches control recording and requests across reloads and preserve ordinary settings', () => windows(async (a, b, dir) => {
+    const workspace = path.join(dir, 'contest'), file = path.join(workspace, 'solve.py');
+    await mkdir(workspace);
+    for (const host of [a, b]) await host.call('configInit', { directory: dir, workspace, folders: [workspace], activeFile: file });
+    await a.call('configRecording', false);
+    await a.call('contestMode', true);
+    const defaults = { recording: true, backend: false, writing: false };
+    assert.deepEqual(await a.call('contestState'), { contest: defaults, backend: false });
+    await a.call('recordDocument', { file, content: 'on' });
+    await a.call('contestOption', { option: 'recording', enabled: false });
+    await a.call('recordDocument', { file, content: 'off' });
+    assert.equal((await a.call('history', file)).snapshots.length, 1);
+    await Promise.all([
+        a.call('contestOption', { option: 'writing', enabled: true }),
+        b.call('contestOption', { option: 'backend', enabled: true }),
+    ]);
+    await a.call('configReload');
+    assert.deepEqual(await a.call('contestState'), { contest: { recording: false, backend: true, writing: true }, backend: true });
+    await a.call('contestMode', false);
+    await a.call('configReload');
+    assert.equal((await a.call('configValue')).recording, false);
+    assert.deepEqual(await a.call('contestState'), { backend: true });
+    await a.call('contestMode', true);
+    assert.deepEqual(await a.call('contestState'), { contest: { recording: false, backend: true, writing: true }, backend: true });
+}));
+
+test('a new folderless host restores contest choices without inheriting ordinary recording settings', () => windows(async (a, b, dir) => {
+    const emptyWindow = { directory: dir, folders: [] };
+    await a.call('configInit', emptyWindow);
+    await a.call('configRecording', false);
+    await a.call('contestMode', true);
+    await a.call('contestOption', { option: 'writing', enabled: true });
+    await a.kill();
+    await b.call('configInit', emptyWindow);
+    assert.deepEqual(await b.call('contestState'), { contest: { recording: true, backend: false, writing: true }, backend: false });
+    await b.call('contestMode', false);
+    assert.equal((await b.call('configValue')).recording, true);
+    await b.call('configReload');
+    assert.deepEqual(await b.call('contestState'), { backend: true });
+    await b.call('contestMode', true);
+    assert.equal((await b.call('contestState')).contest.writing, true);
+}));

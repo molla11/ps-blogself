@@ -42,12 +42,24 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             localResourceRoots: [this._extensionUri],
         };
 
-        webviewView.webview.html = getSidebarHtml(webviewView.webview, this._extensionUri);
+        webviewView.webview.html = getSidebarHtml(webviewView.webview, this._extensionUri, !!configManager.contest);
+
+        const sendContestMode = () => webviewView.webview.postMessage({ type: 'contestMode', contest: configManager.contest });
 
         webviewView.webview.onDidReceiveMessage(async (data) => {
             try {
                 if (!data || typeof data !== 'object') return;
                 switch (data.type) {
+                    case 'setContestMode': {
+                        if (typeof data.enabled === 'boolean') await configManager.setContestMode(data.enabled);
+                        break;
+                    }
+                    case 'setContestOption': {
+                        if (typeof data.enabled === 'boolean' && ['recording', 'backend', 'writing'].includes(data.option)) {
+                            await configManager.setContestOption(data.option, data.enabled);
+                        }
+                        break;
+                    }
                     case 'selectRootFolder': {
                         await this._onSelectRootFolder();
                         break;
@@ -70,6 +82,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     }
                     case 'getInitialData': {
                         BlogPostManager.setSidebarVisible(webviewView.visible);
+                        await sendContestMode();
                         this.codeFiles.start();
                         await this.updateState();
                         void BlogPostManager.refreshUsage();
@@ -146,6 +159,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     }
                 }
             } catch (error) {
+                if (data?.type === 'setContestMode' || data?.type === 'setContestOption') await sendContestMode();
                 vscode.window.showErrorMessage(
                     error instanceof Error ? error.message : String(error),
                 );
@@ -153,6 +167,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         });
 
         const discovery = this.codeFiles.onDidChange(async () => {
+            if (configManager.contest) return;
             // A directory scan can insert thousands of newer files ahead of the visible page.
             const page = await recentLogs.load(undefined, false);
             const rows = await this.writingLogs(page.recentLogs);
@@ -184,7 +199,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         webviewView.onDidDispose(() => disposable.dispose());
         const accountUpdate = BlogPostManager.onDidChange(file => {
             if (!file) void this.updateState();
-            else void this.updateWritingActivity(file);
+            else if (!configManager.contest) void this.updateWritingActivity(file);
         });
         webviewView.onDidDispose(() => accountUpdate.dispose());
         const refreshServiceState = () => {
@@ -199,7 +214,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         });
         const focus = vscode.window.onDidChangeWindowState(refreshServiceState);
         webviewView.onDidDispose(() => { clearInterval(usageTimer); visibility.dispose(); focus.dispose(); });
-        const settingsUpdate = configManager.onDidChange(() => { void this.updateState(); });
+        const settingsUpdate = configManager.onDidChange(() => {
+            void sendContestMode();
+            void this.updateState();
+        });
         webviewView.onDidDispose(() => settingsUpdate.dispose());
         const updateDirectory = () => webviewView.webview.postMessage({ type: 'currentDirectory', path: configManager.getCurrentDirectory() });
         const editorUpdate = vscode.window.onDidChangeActiveTextEditor(updateDirectory);
@@ -224,7 +242,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     public async updateState() {
         const revision = ++this._stateRevision;
         const view = this._view;
-        if (view) {
+        if (view && !configManager.contest) {
             const recentLogsPager = this._recentLogs;
             const [page, totalSize, accountLabel, usage, notices] = await Promise.all([
                 recentLogsPager.load().then(async page => {

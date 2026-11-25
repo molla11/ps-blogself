@@ -1,3 +1,4 @@
+import { backendRequests } from '../writing/BackendRequests';
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { JobRouter, isServerTarget } from '../writing/JobRouter';
@@ -82,4 +83,23 @@ test('an old server cannot silently ignore a selected paid model and generate us
     assert.throws(() => jobs.create({ ...request, model: 'openai/gpt-6-astra' as any },
         { kind: 'server', base: 'http://127.0.0.1:4000/api', owner: 'owner' }), /모델/);
     assert.equal(calls.length, 1);
+});
+
+test('turning requests off aborts active streams and prevents new fetches until re-enabled', async t => {
+    let activeSignal: AbortSignal | undefined;
+    const network = t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
+        activeSignal = init.signal!;
+        return Response.json({});
+    });
+    try {
+        await backendRequests.fetch('https://example.test', { signal: AbortSignal.timeout(20000) });
+        backendRequests.setEnabled(false);
+        assert.equal(activeSignal?.aborted, true);
+        await assert.rejects(backendRequests.fetch('https://example.test'), /대회 모드/);
+        assert.equal(network.mock.callCount(), 1);
+        backendRequests.setEnabled(true);
+        await backendRequests.fetch('https://example.test');
+        assert.equal(activeSignal?.aborted, false);
+        assert.equal(network.mock.callCount(), 2);
+    } finally { backendRequests.setEnabled(true); }
 });

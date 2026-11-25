@@ -48,6 +48,7 @@ export class SettingsPanel {
             root: configManager.getRootFolder(), currentDirectory: configManager.getCurrentDirectory(), windowRoot: configManager.isWindowRoot(),
             recording: configManager.isRecording(), extensions: configManager.getSupportedLanguages(),
             prepareOnReview: vscode.workspace.getConfiguration('psb').get('prepareOnReview', true),
+            showAdvancedWritingViews: vscode.workspace.getConfiguration('psb').get('showAdvancedWritingViews', false),
             exportTags: vscode.workspace.getConfiguration('psb').get('exportTags', []),
             ghostAutoUpload: vscode.workspace.getConfiguration('psb').get('ghostAutoUpload', false),
             ghostAutoUploadMode: vscode.workspace.getConfiguration('psb').get('ghostAutoUploadMode', 'draft'),
@@ -88,6 +89,10 @@ export class SettingsPanel {
                     case 'prepareOnReview':
                         if (typeof message.value !== 'boolean') throw new Error('미리 준비 여부를 확인해 주세요.');
                         await vscode.workspace.getConfiguration('psb').update('prepareOnReview', message.value, vscode.workspace.workspaceFolders?.length ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);
+                        break;
+                    case 'showAdvancedWritingViews':
+                        if (typeof message.value !== 'boolean') throw new Error('글쓰기 보기 설정을 확인해 주세요.');
+                        await vscode.workspace.getConfiguration('psb').update('showAdvancedWritingViews', message.value, vscode.ConfigurationTarget.Global);
                         break;
                     case 'exportTags':
                         await vscode.workspace.getConfiguration('psb').update('exportTags', normalizeExportTags(message.value), vscode.workspace.workspaceFolders?.length ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);

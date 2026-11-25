@@ -14,18 +14,22 @@ async function until(fn, description) {
     }
     throw new Error('Timed out: ' + description);
 }
-async function checkGhostExport(writer, sandbox, stage) {
+async function checkGhostExport(writer, sidebar, sandbox, stage) {
+    const exportMenu = sidebar.locator('#side-export');
+    async function exportAction(id) {
+        if (!await exportMenu.evaluate(menu => menu.open)) await exportMenu.locator('summary').click();
+        await exportMenu.locator('[data-writer-action="' + id + '"]').click();
+    }
     const key = '123456789012345678901234:' + 'ab'.repeat(32);
     // Extension tests force VS Code application storage into memory, so re-enter the
     // fixture credential after restart; publication IDs and image cache remain real files.
-    if (!(await writer.frame.locator('#ghost-status').innerText()).includes('ghost.psb.test')) {
-        await writer.frame.locator('#export-menu-btn').click();
-        await writer.frame.locator('#ghost-connect-btn').click();
+    if (!(await sidebar.locator('#side-ghost-status').innerText()).includes('ghost.psb.test')) {
+        await exportAction('ghost-connect-btn');
         const input = writer.page.locator('.quick-input-widget input');
         await input.waitFor({ state: 'visible' }); await input.fill('https://ghost.psb.test'); await input.press('Enter');
         await until(async () => (await writer.page.locator('.quick-input-title').innerText()).includes('Admin API'), 'Ghost key prompt');
         await input.fill(key); await input.press('Enter');
-        await until(async () => (await writer.frame.locator('#ghost-status').innerText()).includes('ghost.psb.test'), 'Ghost connected through SecretStorage');
+        await until(async () => (await sidebar.locator('#side-ghost-status').innerText()).includes('ghost.psb.test'), 'Ghost connected through SecretStorage');
     }
     if (stage === 'first') {
         const editor = writer.frame.getByRole('textbox', { name: '글 본문', exact: true });
@@ -36,12 +40,11 @@ async function checkGhostExport(writer, sandbox, stage) {
             node.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer }));
         });
         await until(async () => await editor.locator('figure img').evaluate(img => img.naturalWidth === 1), 'private local image loads through the webview URI');
-        await until(async () => (await writer.frame.locator('#save-status').innerText()) === '저장됨', 'local image document saved');
+        await until(async () => (await sidebar.locator('#side-save-status').innerText()) === '저장됨', 'local image document saved');
     }
-    await writer.frame.locator('#export-menu-btn').click();
-    await writer.frame.locator('#ghost-save-btn').click();
-    try { await until(async () => (await writer.frame.locator('#ghost-status').innerText()).includes('최신 내용 저장됨'), 'Ghost saved current document'); }
-    catch (error) { throw new Error(error.message + ': ' + await writer.frame.locator('#ghost-status').innerText() + '; ' + await writer.page.locator('.quick-input-title').allTextContents()); }
+    await exportAction('ghost-save-btn');
+    try { await until(async () => (await sidebar.locator('#side-ghost-status').innerText()).includes('최신 내용 저장됨'), 'Ghost saved current document'); }
+    catch (error) { throw new Error(error.message + ': ' + await sidebar.locator('#side-ghost-status').innerText() + '; ' + await writer.page.locator('.quick-input-title').allTextContents()); }
     let posts = JSON.parse(await fs.readFile(path.join(sandbox, 'ghost-posts.json'), 'utf8'));
     assert.equal(posts.length, 1); assert.equal(posts[0].status, stage === 'first' && process.env.PSB_TEST_AUTO_GHOST_MODE !== 'publish' ? 'draft' : 'published');
     assert.deepEqual(posts[0].tags.map(tag => tag.name), ['PS', 'segment tree', '알고리즘']);
@@ -54,8 +57,7 @@ async function checkGhostExport(writer, sandbox, stage) {
         for (const [button, extension] of [['export-btn', 'md'], ['export-html-btn', 'html']]) {
             const exported = path.join(sandbox, `tagged-${stage}.${extension}`);
             vscode.window.showSaveDialog = async () => vscode.Uri.file(exported);
-            await writer.frame.locator('#export-menu-btn').click();
-            await writer.frame.locator('#' + button).click();
+            await exportAction(button);
             const content = await until(() => fs.readFile(exported, 'utf8'), 'tagged file export');
             if (extension === 'md') {
                 assert.ok(content.startsWith('---\ntags: ["PS","segment tree","알고리즘"]\n---\n\n# '));
@@ -76,8 +78,8 @@ async function checkGhostExport(writer, sandbox, stage) {
             assert.match(message, /ghost.psb.test.*공개 게시/); assert.equal(options.modal, true); assert.deepEqual(actions, ['공개 게시']); confirmations++; return '공개 게시';
         };
         try {
-            await writer.frame.locator('#export-menu-btn').click(); await writer.frame.locator('#ghost-publish-btn').click();
-            await until(async () => (await writer.frame.locator('#ghost-status').innerText()).includes('게시됨'), 'explicit Ghost publishing');
+            await exportAction('ghost-publish-btn');
+            await until(async () => (await sidebar.locator('#side-ghost-status').innerText()).includes('게시됨'), 'explicit Ghost publishing');
             posts = JSON.parse(await fs.readFile(path.join(sandbox, 'ghost-posts.json'), 'utf8')); assert.equal(posts[0].status, 'published'); assert.equal(confirmations, 1);
         } finally { vscode.window.showWarningMessage = originalWarning; }
     }

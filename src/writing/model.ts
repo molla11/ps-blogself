@@ -3,6 +3,7 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import { createTwoFilesPatch } from 'diff';
 import { FileHistory } from '../types';
+import { meritsAutomaticMemo } from './MemoPreparation';
 import { isCosmeticChange } from './ChangeFilter';
 import { WritingPreferences } from './WritingStyle';
 import { DEFAULT_WRITING_MODEL, WritingModel } from './WritingModels';
@@ -71,6 +72,8 @@ export interface WritingDraft extends WritingPreferences {
     revision: number;
     updatedAt: number;
     preparationKey?: string;
+    lastPreparation?: { index: number; hash: string; at: number };
+    preparedPlanHash?: string;
     pending?: {
         request: WritingRequest;
         /** Retained only to detect unfinished requests from an older client. */
@@ -111,8 +114,15 @@ export function historyFingerprint(history: FileHistory): string {
 
 // One pass over the original character patches; full and empty snapshots are valid.
 export function reconstructContents(history: FileHistory): string[] {
+    return [...snapshotContents(history, 0, history.snapshots.length - 1)];
+}
+
+function* snapshotContents(history: FileHistory, start: number, end: number): Generator<string, void> {
+    let anchor = start;
+    while (anchor > 0 && history.snapshots[anchor].content === undefined) anchor--;
     let content: string | undefined;
-    return history.snapshots.map((snapshot) => {
+    for (let index = anchor; index <= end; index++) {
+        const snapshot = history.snapshots[index];
         if (snapshot.content !== undefined) content = snapshot.content;
         else if (snapshot.diff && content !== undefined) {
             const patch = snapshot.diff;
@@ -121,8 +131,8 @@ export function reconstructContents(history: FileHistory): string[] {
             }
             content = content.slice(0, patch.start) + patch.newText + content.slice(patch.end);
         } else throw new Error('기준 코드를 찾을 수 없습니다. 원본 기록을 확인해 주세요.');
-        return content;
-    });
+        if (index >= start) yield content;
+    }
 }
 
 export function sourceFor(
@@ -149,6 +159,7 @@ function buildSource(
     start: number,
     end: number,
     retained?: Set<number>,
+    automatic = false,
 ): WritingSource {
     if (
         !Number.isInteger(start) ||
@@ -159,17 +170,29 @@ function buildSource(
     ) {
         throw new Error('글에 사용할 변경 범위를 선택해 주세요.');
     }
-    const contents = reconstructContents(history);
+    const contents = snapshotContents(history, Math.max(0, start - 1), end);
     const language = history.language || 'plaintext';
-    const initialCode = start > 0 ? contents[start - 1] : '';
-    if (retained && [initialCode, ...contents.slice(start, end + 1)].some(code => utf8Bytes(code) > MAX_CODE_BYTES)) {
+    const initialCode = start > 0 ? contents.next().value as string : retained ? history.memoBaseline ?? '' : '';
+    if (retained && utf8Bytes(initialCode) > MAX_CODE_BYTES) {
         throw new InputSizeError('코드 파일은 UTF-8 기준 512KiB 이하여야 합니다. 파일 크기나 선택한 기록을 확인해 주세요.');
     }
     let previous = initialCode, reconstructedBytes = 0;
+    let lastKept = start;
     const changes: WritingSource['changes'] = [];
     for (let index = start; index <= end; index++) {
-        const content = contents[index];
-        if (retained && !retained.has(index) && isCosmeticChange(previous, content, language)) continue;
+        const content = contents.next().value as string;
+        if (retained && utf8Bytes(content) > MAX_CODE_BYTES) {
+            throw new InputSizeError('코드 파일은 UTF-8 기준 512KiB 이하여야 합니다. 파일 크기나 선택한 기록을 확인해 주세요.');
+        }
+        if (retained && !retained.has(index)) {
+            if (automatic) {
+                const time = history.snapshots[index].timestamp;
+                const quiet = history.snapshots[index + 1].timestamp - time >= 15_000;
+                const longBatch = time - history.snapshots[lastKept].timestamp >= 90_000;
+                if ((!quiet && !longBatch) || !meritsAutomaticMemo(previous, content, language)) continue;
+            } else if (isCosmeticChange(previous, content, language)) continue;
+        }
+        lastKept = index;
         if (retained && (reconstructedBytes += utf8Bytes(content)) > MAX_RECONSTRUCTED_BYTES) {
             throw new InputSizeError('복원할 기록이 너무 큽니다. 더 짧은 구간을 선택해 주세요.');
         }
@@ -184,7 +207,7 @@ function buildSource(
         fileName: path.basename(history.filePath),
         language,
         initialCode,
-        finalCode: contents[end],
+        finalCode: previous,
         changes,
     };
 }
@@ -208,13 +231,13 @@ export function newDraft(history: FileHistory): WritingDraft {
     };
 }
 
-export function preparationSource(history: FileHistory): WritingSource {
+export function preparationSource(history: FileHistory, automatic = false): WritingSource {
     // Keep the UI's complete history. Only bound the material in one model request.
     let start = Math.max(0, history.snapshots.length - MAX_CHANGES);
     const end = history.snapshots.length - 1;
     while (true) {
         try {
-            const source = writingSourceFor(history, start, end);
+            const source = buildSource(history, start, end, new Set([start, end]), automatic);
             checkInputSize({ source });
             return source;
         } catch (error) { if (!(error instanceof InputSizeError)) throw error; }
@@ -258,6 +281,17 @@ export function validatePlan(value: unknown, count: number, allowEmptyTitle = fa
     return structuredClone(plan);
 }
 
+function planFingerprint(plan: WritingPlan): string {
+    const steps = plan.steps.map(step => [step.start, step.end, step.title, step.body]);
+    return createHash('sha256').update(JSON.stringify([plan.start, plan.end, plan.title, plan.summary, steps])).digest('hex');
+}
+
+export function preparationBaseRevision(draft: WritingDraft, automatic: boolean): number {
+    if (!draft.plan || (automatic && planFingerprint(draft.plan) === draft.preparedPlanHash)) return draft.revision;
+    // Regeneration of an edited or legacy plan needs the author's explicit acceptance.
+    return -1;
+}
+
 export function mergeResult(
     draft: WritingDraft,
     result: NonNullable<WritingDraft['candidate']>,
@@ -275,6 +309,7 @@ export function mergeResult(
     }
     if (result.plan) {
         draft.plan = result.plan;
+        draft.preparedPlanHash = planFingerprint(result.plan);
         if (result.history) {
             draft.history = result.history;
             draft.fingerprint = historyFingerprint(result.history);

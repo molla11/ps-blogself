@@ -24,6 +24,8 @@ export interface FileHistory {
     language: string;
     startedAt: number;
     lastModified: number;
+    /** Code before the first recorded edit. Null refers to the first snapshot. */
+    memoBaseline?: string | null;
     snapshots: Snapshot[];
     requestLogs: RequestLog[];
 }

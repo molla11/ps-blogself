@@ -1,3 +1,4 @@
+import { backendRequests } from '../writing/BackendRequests';
 import { createHmac } from 'node:crypto';
 
 export interface GhostSettings { url: string; key: string }
@@ -21,9 +22,10 @@ export class GhostClient {
     readonly url: string;
     constructor(private readonly settings: GhostSettings) { this.url = ghostUrl(settings.url); ghostToken(settings.key); }
     private async request(route: string, method = 'GET', body?: object | FormData): Promise<any> {
+        backendRequests.requireEnabled();
         let response: Response;
         try {
-            response = await fetch(new URL('ghost/api/admin/' + route, this.url), {
+            response = await backendRequests.fetch(new URL('ghost/api/admin/' + route, this.url), {
                 method, redirect: 'error', signal: AbortSignal.timeout(30000),
                 headers: { Authorization: 'Ghost ' + ghostToken(this.settings.key), 'Accept-Version': 'v5.0', ...(body && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}) },
                 body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,

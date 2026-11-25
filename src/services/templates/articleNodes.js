@@ -1,5 +1,6 @@
 import { DecoratorNode, $applyNodeReplacement } from 'lexical';
 import { safeArticleUrl } from '../../writing/ArticleDocument';
+import { displayArticleImage } from './articleImages.webview.js';
 
 let imageSources = {};
 export function setImageSources(sources) { imageSources = sources || {}; }
@@ -13,7 +14,7 @@ export class ArticleImageNode extends DecoratorNode {
         const figure = document.createElement('figure'); figure.className = 'article-image';
         const img = document.createElement('img');
         const src = imageSources[this.__src] || safeArticleUrl(this.__src, true);
-        if (src && !src.startsWith('psb-image:')) img.src = src;
+        if (src && !src.startsWith('psb-image:')) displayArticleImage(img, src);
         img.alt = this.__alt; img.draggable = false; figure.appendChild(img);
         if (this.__caption) { const caption = document.createElement('figcaption'); caption.textContent = this.__caption; figure.appendChild(caption); }
         return figure;

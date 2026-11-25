@@ -2,7 +2,8 @@ import { normalizeExtensions } from './settings/RecordingInput';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { isValidFolderPath } from './util';
-import { WorkspaceSettings, defaultRecordingSettings } from './storage/WorkspaceSettings';
+import { backendRequests } from './writing/BackendRequests';
+import { ContestSettings, WorkspaceSettings, defaultRecordingSettings } from './storage/WorkspaceSettings';
 import { atomicWrite, readJson, withFileLock } from './storage/SharedFiles';
 
 export class ConfigManager {
@@ -27,7 +28,9 @@ export class ConfigManager {
 
     public async init(context: vscode.ExtensionContext) {
         this.windowRoot = undefined;
-        this.settings = new WorkspaceSettings(context.storageUri && path.join(context.storageUri.fsPath, 'recording-settings.json'));
+        this.settings = context.storageUri
+            ? new WorkspaceSettings(path.join(context.storageUri.fsPath, 'recording-settings.json'))
+            : new WorkspaceSettings(path.join(context.globalStorageUri.fsPath, 'empty-window-contest.json'), 'contestOnly');
         const migration = path.join(context.globalStorageUri.fsPath, 'recording-settings-migration.json');
         await withFileLock(migration, async () => {
             const initial = defaultRecordingSettings();
@@ -39,7 +42,9 @@ export class ConfigManager {
                 await atomicWrite(migration, { workspace: context.storageUri.toString() });
             } else await this.settings.init();
         });
-        context.subscriptions.push(this.settings.watch(() => this.changed.fire()));
+        const syncBackend = () => backendRequests.setEnabled(this.contest?.backend ?? true);
+        syncBackend();
+        context.subscriptions.push(this.onDidChange(syncBackend), this.settings.watch(() => this.changed.fire()));
         this._lastFile = vscode.window.activeTextEditor?.document.uri;
         context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
             if (editor?.document.uri.scheme === 'file') this._lastFile = editor.document.uri;
@@ -72,17 +77,42 @@ export class ConfigManager {
         this.changed.fire();
     }
 
+    public get contest() { return this.settings.value.contest; }
+
+    public async setContestMode(enabled: boolean) {
+        await this.settings.update(settings => {
+            if (enabled) {
+                settings.contest ??= settings.lastContest ?? { recording: true, backend: false, writing: false };
+                delete settings.lastContest;
+            } else if (settings.contest) {
+                settings.lastContest = settings.contest;
+                delete settings.contest;
+            }
+        });
+        this.changed.fire();
+    }
+
+    public async setContestOption(option: keyof ContestSettings, enabled: boolean) {
+        await this.settings.update(settings => {
+            if (settings.contest) settings.contest[option] = enabled;
+        });
+        this.changed.fire();
+    }
+
     public isRecording(): boolean {
-        return this.settings.value.recording;
+        return this.contest?.recording ?? this.settings.value.recording;
     }
 
     public async setRecording(value: boolean): Promise<void> {
-        await this.settings.update(settings => { settings.recording = value; });
+        await this.settings.update(settings => { (settings.contest ?? settings).recording = value; });
         this.changed.fire();
     }
 
     public async toggleRecording(): Promise<void> {
-        await this.settings.update(settings => { settings.recording = !settings.recording; });
+        await this.settings.update(settings => {
+            const active = settings.contest ?? settings;
+            active.recording = !active.recording;
+        });
         this.changed.fire();
     }
 

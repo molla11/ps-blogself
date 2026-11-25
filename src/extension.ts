@@ -1,3 +1,4 @@
+import { backendRequests } from './writing/BackendRequests';
 import { WelcomePanel } from './welcome/WelcomePanel';
 import { WelcomeState } from './welcome/WelcomeState';
 import { SettingsPanel } from './settings/SettingsPanel';
@@ -16,13 +17,13 @@ export async function activate(context: vscode.ExtensionContext) {
 
     const developmentMode = context.extensionMode !== vscode.ExtensionMode.Production;
     const development = await loadConnectionEnvironment(context.extensionPath, developmentMode);
-    if (developmentMode) await requireBackend(resolveConnectionSettings(process.env, development).apiUrl);
-
-    // Initialize state
     await configManager.init(context);
+    if (developmentMode && backendRequests.enabled) {
+        await requireBackend(resolveConnectionSettings(process.env, development).apiUrl, backendRequests.fetch);
+    }
     storageManager.init(context);
+    await BlogPostManager.init(context, development);
     fileWatcher.init(context);
-    BlogPostManager.init(context, development);
 
     const codeFiles = new CodeDiscovery(() => configManager.getCurrentDirectory());
     context.subscriptions.push(codeFiles);
@@ -133,6 +134,6 @@ async function toggleLanguage(sidebarProvider: SidebarProvider, lang: string) {
 }
 
 export async function deactivate() {
-    await storageManager.flush();
+    await fileWatcher.flush();
     await BlogPostManager.flush();
 }

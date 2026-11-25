@@ -15,7 +15,7 @@ function send(type, extra = {}) {
 function render() {
     if (!state) return;
     for (const field of textFields) { if (!dirty.has(field)) el(field).value = display(field, state); }
-    for (const [id, key] of [['recording', 'recording'], ['prepare-on-review', 'prepareOnReview'], ['ghost-auto-upload', 'ghostAutoUpload']]) {
+    for (const [id, key] of [['recording', 'recording'], ['prepare-on-review', 'prepareOnReview'], ['ghost-auto-upload', 'ghostAutoUpload'], ['advanced-writing-views', 'showAdvancedWritingViews']]) {
         if (![...pending.values()].some(request => request.field === key)) el(id).checked = !!state[key];
     }
     if (![...pending.values()].some(request => request.field === 'ghostAutoUploadMode')) el('ghost-auto-mode').value = state.ghostAutoUploadMode === 'publish' ? 'publish' : 'draft';
@@ -53,6 +53,7 @@ for (const field of textFields) {
 }
 el('recording').onchange = event => send('save', { field: 'recording', value: event.target.checked });
 el('prepare-on-review').onchange = event => send('save', { field: 'prepareOnReview', value: event.target.checked });
+el('advanced-writing-views').onchange = event => send('save', { field: 'showAdvancedWritingViews', value: event.target.checked });
 el('ghost-auto-upload').onchange = event => { renderAutoUpload(); send('save', { field: 'ghostAutoUpload', value: event.target.checked }); };
 el('ghost-auto-mode').onchange = event => { renderAutoUpload(); send('save', { field: 'ghostAutoUploadMode', value: event.target.value }); };
 el('connect-ghost').onclick = () => send('connectGhost');

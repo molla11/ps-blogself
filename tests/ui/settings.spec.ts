@@ -4,6 +4,23 @@ const initial = { type: 'settings', root: '/work', currentDirectory: '/work', re
 const emit = (page: Page, value: any) => page.evaluate(data => window.dispatchEvent(new MessageEvent('message', { data })), value);
 const messages = (page: Page) => page.evaluate(() => (window as any).__messages);
 
+test('advanced writing views are opt-in and follow the saved preference', async ({ page }) => {
+    await openWebview(page, 'settings');
+    await emit(page, initial);
+    const enabled = page.getByLabel('글쓰기에서 Markdown·미리보기 표시');
+    await expect(enabled).toBeHidden();
+    await page.getByText('고급', { exact: true }).click();
+    await expect(enabled).not.toBeChecked();
+    for (const value of [true, false]) {
+        await enabled.setChecked(value);
+        const save = (await messages(page)).at(-1);
+        expect(save).toMatchObject({ type: 'save', field: 'showAdvancedWritingViews', value });
+        await emit(page, { ...initial, showAdvancedWritingViews: value });
+        await emit(page, { type: 'saved', id: save.id });
+        await expect(enabled).toBeChecked({ checked: value });
+    }
+});
+
 test('automatic Ghost upload defaults off, distinguishes Draft and Publish, and persists without uploading', async ({ page }) => {
     await openWebview(page, 'settings'); await emit(page, initial);
     const enabled = page.getByLabel('Ghost 자동 업로드', { exact: true }), mode = page.getByLabel('업로드 방식', { exact: true });

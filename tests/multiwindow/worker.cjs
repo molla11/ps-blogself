@@ -70,6 +70,9 @@ process.on('message', async ({ id, action, data }) => {
                 configSubscriptions.forEach(item => item.dispose()); configSubscriptions = [];
                 await configManager.init({ ...configContext, subscriptions: configSubscriptions });
                 value = configValue(); break;
+            case 'contestMode': await configManager.setContestMode(data); break;
+            case 'contestOption': await configManager.setContestOption(data.option, data.enabled); break;
+            case 'contestState': value = { contest: configManager.contest, backend: require('../../src/writing/BackendRequests.ts').backendRequests.enabled }; break;
             case 'configValue': value = configValue(); break;
             case 'configRoot': await configManager.setRootFolder(data.path ?? configManager.getCurrentDirectory(), !!data.windowOnly); value = configValue(); break;
             case 'configRecording': await configManager.setRecording(data); break;

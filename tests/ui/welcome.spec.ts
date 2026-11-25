@@ -13,19 +13,25 @@ for (const view of ['Welcome', 'recent files', 'full history']) {
         await page.clock.install({ time: new Date(now - 10000) });
         await page.clock.pauseAt(new Date(now));
         await openWebview(page, view === 'Welcome' ? 'welcome' : true);
-        const rows = [{ ...files[2], lastModified: now - 59000 }];
+        const rows = [{ ...files[2], lastModified: now + 1000 }];
         const message = view === 'Welcome' ? { type: 'codeFiles', total: 1, files: rows }
             : view === 'recent files' ? { type: 'recentLogsPage', recentLogs: rows }
             : { type: 'showFullLogs', logs: rows };
         await page.evaluate(data => window.dispatchEvent(new MessageEvent('message', { data })), message);
         const label = page.locator('time:visible');
+        await expect(label).toHaveText('python • 방금');
+        await page.clock.fastForward(1000);
+        await expect(label).toHaveText('python • 방금');
+        await page.clock.fastForward(59000);
         await expect(label).toHaveText('python • 59초 전');
         await page.clock.fastForward(1000);
         await expect(label).toHaveText('python • 1분 전');
-        await page.clock.fastForward(3600000);
+        await page.clock.fastForward(59 * 60_000);
         await expect(label).toHaveText('python • 1시간 전');
-        await page.clock.fastForward(86400000);
-        await expect(label).toHaveText('python • 어제');
+        await page.clock.fastForward(23 * 3_600_000);
+        await expect(label).toHaveText('python • 1일 전');
+        await page.clock.fastForward(24 * 3_600_000);
+        await expect(label).toHaveText('python • 2일 전');
     });
 }
 
@@ -95,7 +101,7 @@ test('keyboard actions prevent duplicate requests and recover after an error', a
     expect(await page.evaluate(() => (window as any).__messages.filter((m: any) => m.type === 'action').length)).toBe(2);
 });
 
-for (const [theme, width] of [['dark', 1000], ['light', 1000], ['dark', 360]] as const) {
+for (const [theme, width, stepRows] of [['dark', 1000, 1], ['light', 1000, 1], ['dark', 800, 2], ['dark', 360, 4]] as const) {
     test(`welcome remains readable in ${theme} at ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 760 });
         await openWebview(page, 'welcome');
@@ -109,6 +115,9 @@ for (const [theme, width] of [['dark', 1000], ['light', 1000], ['dark', 360]] as
             document.head.append(style);
         });
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        const guide = page.getByRole('region', { name: '알고리즘 문제해결 블로그 완전 자동화' });
+        await expect(guide.getByRole('heading', { level: 3 })).toHaveText(['자동 수정기록 저장', '자동 메모 생성', '블로그 생성&편집', '블로그 내보내기']);
+        expect(await guide.getByRole('listitem').evaluateAll(steps => new Set(steps.map(step => step.getBoundingClientRect().top)).size)).toBe(stepRows);
         for (const button of await page.getByRole('button').all()) await expect(button).toBeVisible();
         await page.screenshot({ path: `test-results/welcome-${theme}-${width}.png`, fullPage: true });
     });

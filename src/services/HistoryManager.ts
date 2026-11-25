@@ -27,6 +27,12 @@ export class HistoryManager {
         let recordedHistoryReady = false;
         let disposed = false;
         let preview: FileHistory | undefined;
+        let statusRevision = 0;
+        const updatePreparation = async () => {
+            const revision = ++statusRevision;
+            const text = await BlogPostManager.preparationStatus(filePath);
+            if (!disposed && recordedHistoryReady && revision === statusRevision) await panel.webview.postMessage({ type: 'preparation', text });
+        };
         const render = async () => {
             if (disposed) return;
             recordedHistoryReady = false;
@@ -57,7 +63,7 @@ export class HistoryManager {
                         if (preview) break;
                         recordedHistoryReady = true;
                         if (panel.visible) void BlogPostManager.prepareOnReview(filePath);
-                        void panel.webview.postMessage({ type: 'preparation', text: BlogPostManager.preparationStatus(filePath) });
+                        void updatePreparation().catch(() => {});
                         break;
                     case 'write':
                         if (recordedHistoryReady) await BlogPostManager.openPage(extensionUri, filePath);
@@ -79,7 +85,7 @@ export class HistoryManager {
             }
         });
         const preparation = BlogPostManager.onDidChange(changed => {
-            if (recordedHistoryReady && changed === filePath) void panel.webview.postMessage({ type: 'preparation', text: BlogPostManager.preparationStatus(filePath) });
+            if (recordedHistoryReady && changed === filePath) void updatePreparation().catch(() => {});
         });
         panel.onDidChangeViewState(() => { if (recordedHistoryReady && panel.visible) void BlogPostManager.prepareOnReview(filePath); });
         panel.onDidDispose(() => { disposed = true; preparation.dispose(); });

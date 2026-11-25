@@ -8,14 +8,17 @@
         <link href="{{codiconsUri}}" rel="stylesheet" />
         <!-- {{css}} -->
     </head>
-    <body>
+    <body class="{{contestClass}}">
         <section id="service-notices" aria-label="서비스 공지" aria-live="polite" hidden></section>
         <div id="main-view" class="view-container">
             <section id="writer-tools" aria-label="글쓰기 도구" hidden>
-                <h2 class="writer-file"><i class="codicon codicon-file-code" aria-hidden="true"></i><span id="writer-file-name"></span></h2>
+                <div class="writer-heading">
+                    <h2 class="writer-file"><i class="codicon codicon-file-code" aria-hidden="true"></i><span id="writer-file-name"></span></h2>
+                    <span id="side-save-status" role="status"></span>
+                </div>
                 <nav class="writer-tabs" aria-label="글 작성 화면">
-                    <button data-writer-action="plan" type="button" aria-pressed="true"><i class="codicon codicon-list-tree" aria-hidden="true"></i>변경사항 요약</button>
-                    <button data-writer-action="article" type="button" aria-pressed="false"><i class="codicon codicon-edit" aria-hidden="true"></i>글 확인/수정</button>
+                    <button data-writer-action="plan" type="button" aria-pressed="true">변경사항 요약</button>
+                    <button data-writer-action="article" type="button" aria-pressed="false">글 확인/수정</button>
                 </nav>
                 <div class="writer-options">
                     <div id="writer-plan-options">
@@ -23,17 +26,43 @@
                         <p id="side-mode-hint" class="writer-hint"></p>
                         <label class="writer-field">문체<select id="side-style" data-writer-action="style"></select></label>
                     </div>
-                    <div id="writer-article-options" hidden>
-                        <label class="writer-field">글 버전<select id="side-version" data-writer-action="version"></select></label>
-                        <button class="secondary" data-writer-action="restore" type="button" hidden>이 버전 사용</button>
-                        <button class="secondary" data-writer-action="preview" type="button">미리보기</button>
-                    </div>
                     <label class="writer-field">모델<select id="side-model" data-writer-action="model" aria-describedby="side-model-hint"></select></label>
                     <p class="writer-hint" id="side-model-hint" role="status" hidden></p>
                 </div>
                 <div class="writer-actions">
                     <button class="secondary" data-writer-action="prepare" type="button">메모 생성</button>
                     <button data-writer-action="generate" type="button">글쓰기</button>
+                </div>
+                <div id="side-writer-notices"></div>
+                <details class="writer-disclosure" id="side-stream" hidden>
+                    <summary>작성 중인 글</summary>
+                    <div id="side-stream-text"></div>
+                </details>
+                <div id="writer-article-options" hidden>
+                    <div class="writer-view-modes" id="side-view-modes" role="group" aria-label="본문 보기 방식" hidden>
+                        <button data-writer-action="edit" type="button" aria-pressed="true">편집</button>
+                        <button data-writer-action="source" type="button" aria-pressed="false">Markdown</button>
+                        <button data-writer-action="preview" type="button" aria-pressed="false">미리보기</button>
+                    </div>
+                    <div id="side-history">
+                        <div class="writer-versions">
+                            <label class="writer-field">글 버전<select id="side-version" data-writer-action="version"></select></label>
+                            <button class="secondary" data-writer-action="older" type="button" aria-label="이전 버전" title="이전 버전">‹</button>
+                            <button class="secondary" data-writer-action="newer" type="button" aria-label="다음 버전" title="다음 버전">›</button>
+                        </div>
+                        <button class="secondary" data-writer-action="restore" type="button" hidden>이 버전 사용</button>
+                    </div>
+                    <details class="writer-disclosure" id="side-outline">
+                        <summary>목차</summary>
+                        <div id="side-outline-list"></div>
+                        <p class="writer-hint" id="side-outline-empty">본문에 제목을 넣으면 여기에 표시됩니다.</p>
+                    </details>
+                    <details class="writer-disclosure" id="side-export">
+                        <summary>내보내기</summary>
+                        <div class="writer-export-actions" id="side-file-actions"></div>
+                        <div class="writer-export-actions" id="side-ghost-actions"></div>
+                    </details>
+                    <p class="writer-hint" id="side-ghost-status" role="status" hidden></p>
                 </div>
             </section>
             <button type="button" id="library-toggle" aria-controls="file-library" aria-expanded="true" hidden>
@@ -51,6 +80,14 @@
                         <span class="slider"></span>
                     </label>
                 </div>
+
+                <label class="config-box">
+                    <span class="config-title">대회 모드</span>
+                    <span class="switch">
+                        <input type="checkbox" role="switch" id="enter-contest" />
+                        <span class="slider"></span>
+                    </span>
+                </label>
 
                 <div class="config-box vertical">
                     <div class="config-info">
@@ -135,6 +172,24 @@
             </footer>
             </div>
         </div>
+
+        <section id="contest-view" class="view-container" aria-label="대회 모드">
+            <div class="contest-controls" hidden>
+                <label class="config-box">
+                    <span class="config-title">온라인 요청 차단</span>
+                    <span class="switch"><input type="checkbox" role="switch" data-contest-option="backend" checked /><span class="slider"></span></span>
+                </label>
+                <label class="config-box">
+                    <span class="config-title">글쓰기 화면 진입 차단</span>
+                    <span class="switch"><input type="checkbox" role="switch" data-contest-option="writing" checked /><span class="slider"></span></span>
+                </label>
+                <label class="config-box">
+                    <span class="config-title">수정사항 로컬 로깅 차단</span>
+                    <span class="switch"><input type="checkbox" role="switch" data-contest-option="recording" /><span class="slider"></span></span>
+                </label>
+                <button id="exit-contest" type="button">대회 모드 나가기 <span aria-hidden="true">→</span></button>
+            </div>
+        </section>
 
         <!-- Full Logs View -->
         <div id="full-logs-view" class="view-container hidden">

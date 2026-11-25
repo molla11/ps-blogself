@@ -2,12 +2,20 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { configManager } from '../config';
 import { storageManager } from './StorageManager';
+import { BackgroundRecorder } from './BackgroundRecorder';
+import { limitedSnapshotText } from './SnapshotLimit';
+import { Logger } from '../services/logger';
 
 export class FileWatcher {
     private static _instance: FileWatcher;
-    private _disposable?: vscode.Disposable;
-    private _changeDisposable?: vscode.Disposable;
-    private _debounceTimers: Map<string, NodeJS.Timeout> = new Map();
+    private readonly saveReasons = new WeakMap<vscode.TextDocument, vscode.TextDocumentSaveReason>();
+    private readonly baselines = new WeakMap<vscode.TextDocument, string>();
+    private readonly pending = new BackgroundRecorder<vscode.TextDocument>(async document => {
+        if (this._isValidDocument(document)) {
+            try { await storageManager.saveSnapshot(document, this.baselines.get(document)); }
+            catch (error) { Logger.error('수정 기록을 저장하지 못했습니다.', error); }
+        }
+    });
 
     private constructor() {}
 
@@ -19,57 +27,62 @@ export class FileWatcher {
     }
 
     public init(context: vscode.ExtensionContext) {
-        this._disposable = vscode.workspace.onDidSaveTextDocument(this._onDidSaveDocument, this);
-        this._changeDisposable = vscode.workspace.onDidChangeTextDocument(
-            this._onDidChangeDocument,
-            this,
+        let active = vscode.window.activeTextEditor?.document;
+        const rememberBaseline = (doc: vscode.TextDocument) => {
+            if (!this._isValidDocument(doc)) { this.baselines.delete(doc); return; }
+            if (this.baselines.has(doc)) return;
+            const length = doc.offsetAt(new vscode.Position(doc.lineCount - 1, Number.MAX_SAFE_INTEGER));
+            const text = limitedSnapshotText(length, () => doc.getText());
+            if (text !== undefined) this.baselines.set(doc, text);
+        };
+        vscode.workspace.textDocuments.forEach(rememberBaseline);
+        context.subscriptions.push(
+            vscode.workspace.onDidOpenTextDocument(rememberBaseline),
+            vscode.workspace.onDidChangeTextDocument(({ document, contentChanges }) => {
+                if (contentChanges.length && !document.isClosed && this._isValidDocument(document)) {
+                    this.pending.change(document.uri.toString(), document);
+                }
+            }),
+            vscode.workspace.onWillSaveTextDocument(({ document, reason }) => { this.saveReasons.set(document, reason); }),
+            vscode.workspace.onDidSaveTextDocument(this._onDidSaveDocument, this),
+            vscode.workspace.onDidCloseTextDocument(document => this.pending.flush(document.uri.toString())),
+            vscode.window.onDidChangeActiveTextEditor(editor => {
+                const previous = active;
+                active = editor?.document;
+                // Opening an extension view should preserve the ordinary file list's modification order.
+                const tab = vscode.window.tabGroups?.activeTabGroup.activeTab;
+                if (!active && !configManager.contest && tab && tab.input instanceof vscode.TabInputWebview) return;
+                if (previous && previous !== active) return this.pending.flush(previous.uri.toString());
+            }),
+            vscode.window.onDidChangeWindowState(state => { if (!state.focused) return this.flush(); }),
+            configManager.onDidChange(() => {
+                this.pending.discardWhere(document => !this._isValidDocument(document));
+                vscode.workspace.textDocuments.forEach(rememberBaseline);
+            }),
+            { dispose: () => { void this.flush(); } },
         );
-        context.subscriptions.push(this._disposable);
-        context.subscriptions.push(this._changeDisposable);
-        context.subscriptions.push({
-            dispose: () => {
-                for (const timer of this._debounceTimers.values()) clearTimeout(timer);
-                this._debounceTimers.clear();
-            },
-        });
     }
 
-    private _onDidChangeDocument(event: vscode.TextDocumentChangeEvent) {
-        const document = event.document;
+    public async flushFile(filePath: string) {
+        await this.pending.flush(vscode.Uri.file(filePath).toString());
+        await storageManager.flush();
+    }
 
-        // 1. Basic validation
-        if (!this._isValidDocument(document)) {
-            return;
-        }
-
-        // 2. Debounce logic (10 seconds)
-        const key = document.uri.toString();
-
-        if (this._debounceTimers.has(key)) {
-            clearTimeout(this._debounceTimers.get(key)!);
-        }
-
-        const timer = setTimeout(async () => {
-            this._debounceTimers.delete(key);
-            if (this._isValidDocument(document)) await storageManager.saveSnapshot(document);
-        }, 10000); // 10 seconds debounce
-
-        this._debounceTimers.set(key, timer);
+    public async flush() {
+        await this.pending.flushAll();
+        await storageManager.flush();
     }
 
     private async _onDidSaveDocument(document: vscode.TextDocument) {
-        if (!this._isValidDocument(document)) {
-            return;
-        }
-
-        // Cancel pending debounce if manual save happens
+        const reason = this.saveReasons.get(document);
+        this.saveReasons.delete(document);
+        if (document.isClosed || !this._isValidDocument(document)) return;
         const key = document.uri.toString();
-        if (this._debounceTimers.has(key)) {
-            clearTimeout(this._debounceTimers.get(key)!);
-            this._debounceTimers.delete(key);
+        if (reason !== undefined && reason === vscode.TextDocumentSaveReason.AfterDelay) {
+            this.pending.change(key, document);
+        } else {
+            await this.pending.checkpoint(key, document);
         }
-
-        await storageManager.saveSnapshot(document);
     }
 
     private _isValidDocument(document: vscode.TextDocument): boolean {
@@ -82,7 +95,7 @@ export class FileWatcher {
         const rootFolder = configManager.getRootFolder();
         const relative = rootFolder ? path.relative(rootFolder, document.uri.fsPath) : '';
         if (
-            document.isClosed || document.uri.scheme !== 'file' ||
+            document.uri.scheme !== 'file' ||
             (rootFolder && (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)))
         ) {
             return false;

@@ -81,7 +81,7 @@ export function createArticleEditor({ element, toolbar, outline, onChange, onOpe
         outline.dataset.headings = key; outline.replaceChildren(); el('outline-empty').hidden = !!headings.length;
         headings.forEach((heading, index) => {
             const button = document.createElement('button'); button.className = 'outline-item'; button.textContent = heading.textContent || '제목 없음'; button.dataset.level = heading.tagName.slice(1);
-            button.onclick = () => { const target = element.querySelectorAll('h1,h2,h3,h4,h5,h6')[index]; target?.scrollIntoView({ block: 'center' }); if (innerWidth < 700) el('outline-toggle').click(); };
+            button.onclick = () => { const target = element.querySelectorAll('h1,h2,h3,h4,h5,h6')[index]; target?.scrollIntoView({ block: 'center' }); if (innerWidth < 700 && !el('article-outline').hidden) el('outline-toggle').click(); };
             outline.appendChild(button);
         });
     }

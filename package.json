@@ -75,7 +75,13 @@
                     "type": "boolean",
                     "default": true,
                     "scope": "window",
-                    "description": "로그인한 상태에서 수정 이력을 열면 코드 변경을 AI 서비스로 보내 구간과 설명을 미리 준비합니다. 동일 이력은 재사용하며 AI 이용 횟수에 포함됩니다."
+                    "description": "로그인하면 의미 있는 코드 변경을 모아 AI 서비스로 보내 메모를 미리 생성합니다. AI 이용량에 포함되며, 끄면 메모를 수동으로 생성합니다."
+                },
+                "psb.showAdvancedWritingViews": {
+                    "type": "boolean",
+                    "default": false,
+                    "scope": "application",
+                    "description": "글쓰기 도구에 Markdown 원문 편집과 미리보기 메뉴를 표시합니다."
                 },
                 "psb.exportTags": {
                     "type": "array",
@@ -112,7 +118,7 @@
         "check-types": "tsc --noEmit",
         "lint": "eslint src",
         "test": "pnpm test:host",
-        "test:unit": "node --test --require ./scripts/register-typescript.cjs src/test/storage.test.ts src/test/writing.test.ts src/test/writing-activity.test.ts src/test/writing-style.test.ts src/test/article-export.test.ts src/test/ghost.test.ts src/test/change-filter.test.ts src/test/input-limits.test.ts src/test/sidebar.test.ts src/test/multiwindow.test.ts src/test/connection-settings.test.ts src/test/service-login.test.ts src/test/recording-settings.test.ts src/test/usage.test.ts src/test/notices.test.ts src/test/service-jobs.test.ts src/test/welcome.test.ts",
+        "test:unit": "node --test --require ./scripts/register-typescript.cjs src/test/storage.test.ts src/test/writing.test.ts src/test/writing-activity.test.ts src/test/writing-style.test.ts src/test/article-export.test.ts src/test/ghost.test.ts src/test/change-filter.test.ts src/test/automatic-memos.test.ts src/test/input-limits.test.ts src/test/sidebar.test.ts src/test/multiwindow.test.ts src/test/connection-settings.test.ts src/test/service-login.test.ts src/test/recording-settings.test.ts src/test/recording.test.ts src/test/usage.test.ts src/test/notices.test.ts src/test/service-jobs.test.ts src/test/welcome.test.ts",
         "test:ui": "playwright test",
         "dev": "pnpm check:backend && pnpm compile && node scripts/dev.cjs",
         "package:vsix": "vsce package --no-dependencies --allow-missing-repository --skip-license --out dist/ps-blogself.vsix",

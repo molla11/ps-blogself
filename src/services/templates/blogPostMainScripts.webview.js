@@ -1,5 +1,6 @@
 import { connectWriterSidebar } from './writerSidebar.webview.js';
 import { createArticleEditor } from './articleEditor.webview.js';
+import { renderArticlePreview, setArticleImagePolicy } from './articleImages.webview.js';
 import { observeCodeHighlighting } from './codeHighlighting.js';
 import { DEFAULT_WRITING_MODEL } from '../../writing/WritingModels';
 import { separateArticleTitle } from '../../writing/ArticleContent';
@@ -20,7 +21,7 @@ let model,
     selectedVersion = '',
     readyVersion = '',
     restoreRequest;
-const updateSidebar = connectWriterSidebar(vscode, () => model);
+const updateSidebar = connectWriterSidebar(vscode, () => model, selectEditorMode);
 const dirty = new Set(),
     sent = new Map();
 const recovered = vscode.getState();
@@ -281,7 +282,7 @@ function renderEditorMode() {
     el('body-field').hidden = previewMode || !sourceMode;
     el('article-preview').hidden = !previewMode;
     el('format-bar').hidden = browsing || previewMode || sourceMode;
-    el('source-btn').hidden = browsing;
+    el('source-btn').hidden = el('preview-btn').hidden = browsing || !model?.showAdvancedWritingViews;
     el('source-btn').setAttribute('aria-pressed', String(sourceMode && !previewMode));
     el('preview-btn').setAttribute('aria-pressed', String(previewMode));
     el('preview-btn').textContent = previewMode ? '편집으로 돌아가기' : '미리보기';
@@ -326,7 +327,6 @@ function renderVersions() {
     el('restore-version-btn').disabled = model.editable === false || loading || !!restoreRequest;
     el('current-article').hidden = browsing;
     el('version-preview').hidden = !browsing;
-    el('preview-btn').hidden = browsing;
     el('copy-btn').disabled = loading;
     el('export-btn').disabled = loading;
     el('export-html-btn').disabled = loading;
@@ -345,7 +345,7 @@ function chooseVersion(id) {
     document.querySelectorAll('textarea').forEach(height);
 }
 function renderLoading() {
-    const busy = !!(model.pending || model.running) && !model.error;
+    const busy = model.backendEnabled !== false && !!(model.pending || model.running) && !model.error;
     el('generation-loading').hidden = !busy;
     if (!busy) return false;
     const kind = model.pendingKind || (form.plan ? 'write_blog' : 'prepare_blog');
@@ -376,7 +376,7 @@ function renderWritingModel() {
         : modelSelectionNotice;
     el('writing-model').setAttribute('aria-busy', String(!!modelSelectionRequest));
     if (el('writing-model-hint').textContent) el('writing-model').setAttribute('aria-describedby', [paidOnly ? 'writing-model-help' : '', 'writing-model-hint'].filter(Boolean).join(' '));
-    el('writing-model').disabled = model.editable === false || !!model.pending || !!model.running;
+    el('writing-model').disabled = model.backendEnabled === false || model.editable === false || !!model.pending || !!model.running;
     if (el('writing-model').disabled) closeModelOptions();
 }
 function closeModelOptions(restoreFocus = false) {
@@ -399,7 +399,7 @@ function render() {
     el('recovery-box').hidden = !localRecovery;
     el('recover-input-btn').disabled = !editable;
     el('stream-box').hidden = !model.streamHtml;
-    el('stream-preview').innerHTML = model.streamHtml || '';
+    renderArticlePreview(el('stream-preview'), model.streamHtml || '');
     el('file-name').textContent = model.fileName;
     el('status-text').textContent =
         model.status ||
@@ -442,13 +442,9 @@ function render() {
     value('article-body', form.markdown);
     richEditor.setMarkdown(form.markdown, editable, form.document, model.images);
     el('article-tab').disabled = !form.markdown && !form.title && !model.versions.length && activeTab !== 'article';
-    const previewKey = JSON.stringify([form.markdown, form.document]);
-    if (form.markdown && !lastMarkdown) {
-        switchTab('article');
-        send('preview');
-    } else if (previewKey !== lastPreviewKey && previewMode) {
-        send('preview');
-    }
+    const previewKey = model.showAdvancedWritingViews ? JSON.stringify([form.markdown, form.document]) : '';
+    if (form.markdown && !lastMarkdown) switchTab('article');
+    if (previewKey !== lastPreviewKey && previewMode) send('preview');
     lastMarkdown = form.markdown || '';
     lastPreviewKey = previewKey;
     if (el('article-tab').disabled) switchTab('plan');
@@ -458,6 +454,10 @@ function render() {
     for (const id of ['generate-btn', 'prepare-btn', 'prepare-empty-btn', 'retry-btn', 'cancel-btn', 'discard-pending-btn', 'apply-candidate-btn', 'discard-candidate-btn']) {
         if (!editable) el(id).disabled = true;
         else if (!['generate-btn', 'prepare-btn', 'retry-btn'].includes(id)) el(id).disabled = false;
+    }
+    el('contest-backend-notice').hidden = model.backendEnabled !== false;
+    if (model.backendEnabled === false) {
+        for (const id of ['generate-btn', 'prepare-btn', 'prepare-empty-btn', 'retry-btn', 'cancel-btn']) el(id).disabled = true;
     }
     renderWritingModel();
     stash();
@@ -485,6 +485,8 @@ window.addEventListener('message', (event) => {
     }
     if (message.type === 'ghost') { ghostState = message.state; renderGhost(); return; }
     if (message.type === 'model') {
+        setArticleImagePolicy(message.backendEnabled !== false, message.localImageBase);
+        document.body.classList.toggle('writing-locked', message.writingAllowed === false);
         setWritingVisibility(message.writingVisible !== false);
         if (message.editable === false || message.pending || message.running || message.editToken !== model?.editToken) {
             modelSelectionRequest = undefined;
@@ -497,6 +499,10 @@ window.addEventListener('message', (event) => {
             dirty.clear(); sent.clear(); clearTimeout(editTimer);
         }
         model = message;
+        if (!model.showAdvancedWritingViews) {
+            sourceMode = false;
+            previewMode = false;
+        }
         for (const key of ['plan', 'instructions', 'writingModel', 'writingMode', 'writingStyle', 'customStyle', 'title', 'markdown', 'document']) {
             if (!dirty.has(key)) form[key] = structuredClone(message[key]);
         }
@@ -538,14 +544,15 @@ window.addEventListener('message', (event) => {
             renderVersions();
         }
     } else if (message.type === 'preview') {
-        el('article-preview').innerHTML = message.html;
+        if (!model?.showAdvancedWritingViews) return;
+        renderArticlePreview(el('article-preview'), message.html);
         renderEditorMode();
     } else if (message.type === 'versionPreview') {
         if (!selectedVersion || message.versionId !== selectedVersion) return;
         readyVersion = message.versionId;
         el('version-status').textContent = '이전 버전 미리보기';
         el('version-title').textContent = message.title || '제목 없음';
-        el('version-body').innerHTML = message.html;
+        renderArticlePreview(el('version-body'), message.html);
         renderVersions();
     } else if (message.type === 'diff') {
         document.querySelectorAll(`[data-diff="${message.index}"]`).forEach((pre) => {
@@ -738,18 +745,17 @@ window.addEventListener('pagehide', () => {
 });
 send('ready');
 
-el('preview-btn').addEventListener('click', () => {
-    previewMode = !previewMode;
+function selectEditorMode(mode) {
+    if (!model?.showAdvancedWritingViews && mode !== 'edit') return;
+    previewMode = mode === 'preview';
+    if (!previewMode) sourceMode = mode === 'source';
     renderEditorMode();
     if (previewMode) action('preview');
     else if (sourceMode) el('article-body').focus({ preventScroll: true });
     else richEditor.focus({ preventScroll: true });
-});
-el('source-btn').addEventListener('click', () => {
-    sourceMode = !sourceMode; previewMode = false; renderEditorMode();
-    if (sourceMode) el('article-body').focus({ preventScroll: true });
-    else richEditor.focus({ preventScroll: true });
-});
+}
+el('preview-btn').addEventListener('click', () => selectEditorMode(previewMode ? (sourceMode ? 'source' : 'edit') : 'preview'));
+el('source-btn').addEventListener('click', () => selectEditorMode(sourceMode && !previewMode ? 'edit' : 'source'));
 el('outline-toggle').addEventListener('click', () => { outlineOpen = !outlineOpen; renderEditorMode(); });
 el('export-menu').addEventListener('beforetoggle', event => {
     if (event.newState !== 'open') return;
@@ -778,8 +784,10 @@ document.querySelectorAll('.article-preview').forEach(preview => preview.addEven
 function renderGhost() {
     const g = ghostState;
     el('ghost-save-btn').textContent = g.busy ? 'Ghost 저장 중…' : g.status === 'published' ? 'Ghost 변경 사항 저장' : 'Ghost 초안 저장';
-    el('ghost-save-btn').disabled = el('ghost-publish-btn').disabled = !!g.busy || model?.editable === false || !!selectedVersion;
-    el('ghost-connect-btn').disabled = !!g.busy;
+    const offline = model?.backendEnabled === false;
+    el('ghost-save-btn').disabled = el('ghost-publish-btn').disabled = offline || !!g.busy || model?.editable === false || !!selectedVersion;
+    el('ghost-connect-btn').disabled = offline || !!g.busy;
+    el('ghost-open-btn').disabled = offline;
     el('ghost-open-btn').hidden = !g.editorUrl;
     el('ghost-publish-btn').hidden = g.status === 'published';
     el('ghost-status').hidden = !g.connected && !g.error;

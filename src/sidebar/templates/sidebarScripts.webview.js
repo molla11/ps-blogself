@@ -38,6 +38,9 @@ const logsContainer = document.getElementById('logs-container');
 const fullLogsContainer = document.getElementById('full-logs-container');
 const mainView = document.getElementById('main-view');
 const fullLogsView = document.getElementById('full-logs-view');
+const contestToggle = document.getElementById('enter-contest');
+const exitContest = document.getElementById('exit-contest');
+const contestOptions = document.querySelectorAll('[data-contest-option]');
 const recentLogsLoader = document.getElementById('recent-logs-loader');
 const recentLogsStatus = document.getElementById('recent-logs-status');
 const retryLogsButton = document.getElementById('retry-logs-btn');
@@ -530,6 +533,24 @@ function showView(view) {
 window.addEventListener('message', (event) => {
     const message = event.data;
     switch (message.type) {
+        case 'contestMode': {
+            const active = !!message.contest;
+            const changed = active !== document.body.classList.contains('contest-mode');
+            contestToggle.checked = active;
+            document.body.classList.toggle('contest-mode', active);
+            if (active) {
+                for (const input of contestOptions) {
+                    const option = input.dataset.contestOption;
+                    input.checked = !message.contest[option];
+                }
+                exitContest.parentElement.hidden = false;
+            }
+            if (changed) {
+                showView(mainView);
+                (active ? contestOptions[0] : contestToggle).focus();
+            }
+            break;
+        }
         case 'sidebarWriter':
             showWriter(message.writer);
             break;
@@ -604,11 +625,21 @@ window.addEventListener('message', (event) => {
             break;
         }
         case 'showFullLogs':
+            if (document.body.classList.contains('contest-mode')) break;
             showView(fullLogsView);
             renderLogs(message.logs, fullLogsContainer);
             break;
     }
 });
+
+contestToggle.addEventListener('change', () => vscode.postMessage({ type: 'setContestMode', enabled: contestToggle.checked }));
+exitContest.addEventListener('click', () => vscode.postMessage({ type: 'setContestMode', enabled: false }));
+for (const input of contestOptions) {
+    input.addEventListener('change', () => {
+        const option = input.dataset.contestOption;
+        vscode.postMessage({ type: 'setContestOption', option, enabled: !input.checked });
+    });
+}
 
 recordingToggle.addEventListener('change', () => {
     vscode.postMessage({ type: 'toggleRecording' });

@@ -16,6 +16,60 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
     function send(action, value) {
         if (filePath) vscode.postMessage({ type: 'writerAction', filePath, action, value });
     }
+    function renderButtons(container, actions) {
+        for (const node of [...container.children]) {
+            if (!actions.some(item => item.action === node.dataset.writerAction)) node.remove();
+        }
+        actions.forEach(({ action, label, disabled }, index) => {
+            let node = container.children[index];
+            if (node?.dataset.writerAction !== action) {
+                const next = document.createElement('button');
+                next.type = 'button';
+                next.className = 'secondary';
+                next.dataset.writerAction = action;
+                container.insertBefore(next, node || null);
+                node = next;
+            }
+            if (node.textContent !== label) node.textContent = label;
+            node.disabled = disabled;
+        });
+    }
+    function renderNotices(notices) {
+        const container = el('side-writer-notices');
+        for (const node of [...container.children]) {
+            if (!notices.some(notice => node.id === 'side-' + notice.id)) node.remove();
+        }
+        notices.forEach(({ id, text, actions }, index) => {
+            let notice = el('side-' + id);
+            if (!notice) {
+                notice = document.createElement('div');
+                notice.id = 'side-' + id;
+                notice.className = 'writer-notice';
+                const message = document.createElement('p');
+                message.setAttribute('role', id === 'error-box' ? 'alert' : 'status');
+                notice.append(message, document.createElement('div'));
+                container.insertBefore(notice, container.children[index] || null);
+            }
+            if (notice.firstChild.textContent !== text) notice.firstChild.textContent = text;
+            notice.firstChild.hidden = !text;
+            renderButtons(notice.lastChild, actions);
+        });
+    }
+    function renderOutline(headings) {
+        const list = el('side-outline-list'), key = JSON.stringify(headings);
+        if (list.dataset.headings === key) return;
+        list.dataset.headings = key;
+        list.replaceChildren(...headings.map(([level, label], index) => {
+            const node = document.createElement('button');
+            node.type = 'button';
+            node.dataset.writerAction = 'heading';
+            node.dataset.value = String(index);
+            node.dataset.level = level;
+            node.textContent = node.title = label;
+            return node;
+        }));
+        el('side-outline-empty').hidden = headings.length > 0;
+    }
     function selectTab(plan) {
         button('plan').setAttribute('aria-pressed', String(plan));
         button('article').setAttribute('aria-pressed', String(!plan));
@@ -28,7 +82,7 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         if (!target || target.disabled) return;
         const action = target.dataset.writerAction;
         if (action === 'plan' || action === 'article') selectTab(action === 'plan');
-        send(action);
+        send(action, target.dataset.value);
     });
     tools.addEventListener('change', event => {
         const target = event.target.closest('select[data-writer-action]');
@@ -50,6 +104,7 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         main.classList.toggle('writing', !!writer);
         tools.hidden = toggle.hidden = !writer;
         if (changedFile) {
+            for (const id of ['side-outline', 'side-export', 'side-stream']) el(id).open = false;
             if (filePath) onFileChange(filePath);
             expand(!writer);
         }
@@ -71,7 +126,21 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         button('generate').disabled = c.generateDisabled;
         button('restore').hidden = c.restoreHidden;
         button('restore').disabled = c.restoreDisabled;
-        button('preview').hidden = c.previewHidden;
-        button('preview').textContent = c.previewLabel;
+        el('side-history').hidden = c.versionsHidden;
+        button('older').disabled = c.olderDisabled;
+        button('newer').disabled = c.newerDisabled;
+        el('side-view-modes').hidden = !c.showEditorModes;
+        for (const mode of ['edit', 'source', 'preview']) button(mode).setAttribute('aria-pressed', String(c.editorMode === mode));
+        el('side-outline').hidden = c.browsingVersion || c.editorMode !== 'edit';
+        renderOutline(c.headings);
+        renderButtons(el('side-file-actions'), c.exports.filter(item => !item.action.startsWith('ghost-')));
+        renderButtons(el('side-ghost-actions'), c.exports.filter(item => item.action.startsWith('ghost-')));
+        for (const [id, text] of [['side-save-status', c.saveStatus], ['side-ghost-status', c.ghostStatus], ['side-stream-text', c.stream]]) {
+            const node = el(id);
+            if (node.textContent !== text) node.textContent = text;
+            node.hidden = !text;
+        }
+        el('side-stream').hidden = !c.stream;
+        renderNotices(c.notices);
     };
 }

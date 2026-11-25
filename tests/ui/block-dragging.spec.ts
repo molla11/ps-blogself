@@ -2,7 +2,7 @@ import { test, expect, Page, Locator } from '@playwright/test';
 import { openWebview } from './webview';
 
 const base = {
-    type: 'model', filePath: '/work/solve.py', fileName: 'solve.py', editable: true, editToken: 'window-a',
+    type: 'model', showAdvancedWritingViews: true, filePath: '/work/solve.py', fileName: 'solve.py', editable: true, editToken: 'window-a',
     title: '블록 이동', instructions: '', count: 1, times: [1], versions: [],
     pending: false, running: false, error: '', candidate: false,
     plan: { title: '블록 이동', summary: '풀이 과정', start: 0, end: 0, steps: [] },

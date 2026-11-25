@@ -71,8 +71,12 @@ exports.run = async () => {
             const externalFile = welcome.frame.locator('.file-link').filter({ hasText: 'outside.c' });
             await externalFile.waitFor();
             assert.equal(await externalFile.locator('time').getAttribute('datetime'), (await fs.stat(external)).mtime.toISOString());
-            const initialEditor = await vscode.window.showTextDocument(vscode.Uri.file(initialFile), { preview: false });
-            await initialEditor.edit(edit => edit.insert(new vscode.Position(0, 0), '# 저장 전 변경\n'));
+            const scratch = path.join(sandbox, 'scratch.c');
+            await fs.writeFile(scratch, 'int main() {}');
+            const earlier = new Date(Date.now() - 60_000);
+            await fs.utimes(scratch, earlier, earlier);
+            const scratchEditor = await vscode.window.showTextDocument(vscode.Uri.file(scratch), { preview: false });
+            await scratchEditor.edit(edit => edit.insert(new vscode.Position(0, 0), '// 저장 전 변경\n'));
             await vscode.commands.executeCommand('psb.welcome');
             assert.equal(await welcome.frame.locator('.file-name').first().innerText(), 'outside.c', 'switching tabs preserves modification order');
             const latest = new Date(Date.now() + 1000);
@@ -156,7 +160,7 @@ exports.run = async () => {
         if (stage === 'first') {
             const doc = await vscode.workspace.openTextDocument(path.join(sandbox, 'workspace/solve.py'));
             const editor = await vscode.window.showTextDocument(doc);
-            for (const content of ['print(1 + 2)\n', 'print(1 + 2 + 3)\n']) {
+            for (const content of ['print(1 + 2)\n', 'total = 0\nfor value in [1, 2, 3]:\n    total += value\nprint(total)\n']) {
                 await editor.edit(edit => edit.replace(new vscode.Range(0, 0, doc.lineCount, 0), content));
                 await doc.save();
             }
@@ -167,7 +171,9 @@ exports.run = async () => {
         await until(async () => await recorded.count() === 1 && await recorded.getAttribute('data-source') === '', 'discovered file becomes one recorded row');
         const writingCounts = sidebar.frame.locator('.log-item').filter({ has: sidebar.frame.getByText('solve.py', { exact: true }) }).locator('.log-writing');
         if (stage === 'first') {
-            assert.equal((await requests()).length, 0, 'ordinary saves must not trigger AI');
+            assert.equal((await requests()).length, 0, 'a burst of saves has no immediate AI request');
+            await until(async () => (await writingCounts.innerText()).includes('메모 1'), 'memo is ready before the first review');
+            assert.equal((await requests()).length, 1, 'related saves are prepared in one background job');
             await recorded.click({ button: 'right' });
             await sidebar.frame.locator('#ctx-view-history').click();
             const history = await surface(browser, '#write-btn');
@@ -195,22 +201,25 @@ exports.run = async () => {
             await controls.locator('#side-model').selectOption('standard');
             await until(async () => (await writer.frame.locator('#writing-model-value').innerText()) === 'standard', 'sidebar model selection reaches the editor');
             await controls.getByRole('button', { name: '글쓰기', exact: true }).click();
-            await until(async () => (await writer.frame.locator('#stream-preview').innerText()).includes('생성 중인 본문'), 'stream visible before completion');
+            await until(async () => (await controls.locator('#side-stream-text').textContent()).includes('생성 중인 본문'), 'stream available in sidebar before completion');
             assert.ok(await writer.frame.locator('#generate-btn').isDisabled());
             await writer.page.screenshot({ path: path.join(sandbox, 'streaming.png') });
             if (!autoMode) await vscode.commands.executeCommand('workbench.action.files.newUntitledFile');
             if (autoMode === 'publish') {
                 await writer.frame.locator('#summary').fill('생성 중 수정한 풀이 의도');
-                await until(async () => (await writer.frame.locator('#save-status').innerText()) === '저장됨', 'concurrent edits saved before generation finishes');
-                await until(async () => await writer.frame.locator('#candidate-box').isVisible(), 'edited draft defers the generated candidate');
+                await until(async () => (await controls.locator('#side-save-status').innerText()) === '저장됨', 'concurrent edits saved before generation finishes');
+                await controls.locator('#side-candidate-box').waitFor();
                 assert.deepEqual(JSON.parse(await fs.readFile(path.join(sandbox, 'ghost-posts.json'), 'utf8').catch(() => '[]')), [], 'unapplied candidate cannot publish automatically');
-                await writer.frame.locator('#apply-candidate-btn').click();
+                await controls.getByRole('button', { name: '새 결과 적용' }).click();
             }
-            await until(async () => (await writer.frame.locator('#article-preview').innerText()).includes('서버 경로에서 수정한 의도'), 'server respects edited intent');
+            await until(async () => (await writer.frame.locator('#rich-editor').textContent()).includes('서버 경로에서 수정한 의도'), 'server respects edited intent');
             if (!autoMode) {
                 await until(async () => (await writingCounts.locator('.log-unread').count()) === 1, 'a newly generated background article has an unread marker');
+                await writer.page.bringToFront();
                 await recorded.click();
                 await sidebar.frame.locator('#ctx-write-blog').click();
+                await writer.frame.locator('#article-view').waitFor();
+                await writer.frame.locator('#article-title').click();
                 await until(async () => (await writingCounts.locator('.log-unread').count()) === 0, 'viewing the newly generated article clears its marker');
             }
             if (autoMode) {
@@ -230,28 +239,38 @@ exports.run = async () => {
             await writer.page.screenshot({ path: path.join(sandbox, 'writer-plan.png') });
             await articleTab.click();
             await writer.frame.locator('#article-view').waitFor();
-            await sidebar.frame.locator('#side-version').waitFor();
+            assert.ok(await writer.frame.locator('#writing-header').isHidden());
+            assert.ok(await writer.frame.locator('#article-toolbar').isHidden());
+            await writer.frame.locator('#format-bar').waitFor();
+            assert.ok(await controls.locator('#side-view-modes').isHidden());
+            await vscode.commands.executeCommand('psb.openSettings');
+            const advanced = (await surface(browser, '#advanced-writing-views')).frame;
+            await advanced.getByText('고급', { exact: true }).click();
+            const showViews = advanced.getByLabel('글쓰기에서 Markdown·미리보기 표시');
+            assert.equal(await showViews.isChecked(), false);
+            await showViews.check();
+            await until(() => vscode.workspace.getConfiguration('psb').get('showAdvancedWritingViews') === true, 'advanced writing views saved');
+            await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
             await sidebar.frame.locator('[data-writer-action=preview]').click();
             await writer.frame.locator('#article-preview').waitFor();
-            await sidebar.frame.getByRole('button', { name: '편집으로 돌아가기' }).click();
+            await controls.getByRole('button', { name: '편집', exact: true }).click();
             await writer.frame.locator('#rich-editor').waitFor();
             await vscode.commands.executeCommand('workbench.action.closeSidebar');
-            await writer.frame.locator('#article-tab').waitFor();
-            await vscode.commands.executeCommand('psb.sidebar.focus');
-            await sidebar.frame.locator('#side-version').waitFor();
+            await writer.frame.getByRole('button', { name: '글쓰기 도구 열기' }).click();
+            await controls.locator('#side-view-modes').waitFor();
             await writer.page.screenshot({ path: path.join(sandbox, 'writer-article.png') });
-            await writer.frame.locator('#source-btn').click();
+            await controls.getByRole('button', { name: 'Markdown', exact: true }).click();
             await writer.frame.locator('#article-title').fill('에디터에서 고친 제목');
             await writer.frame.locator('#article-body').fill('## 재시작\n\n서버와 무관하게 보존된 로컬 본문');
-            await until(async () => (await writer.frame.locator('#save-status').innerText()) === '저장됨', 'draft persisted');
+            await until(async () => (await controls.locator('#side-save-status').innerText()) === '저장됨', 'draft persisted');
         }
         await until(async () => (await writer.frame.locator('#article-body').inputValue()).includes('서버와 무관하게 보존된 로컬 본문'), 'local draft restored');
         await until(async () => (await writingCounts.innerText()).includes('글 1'), 'saved article count survives reopening');
-        if ((await writer.frame.locator('#source-btn').getAttribute('aria-pressed')) === 'true') await writer.frame.locator('#source-btn').click();
+        await sidebar.frame.locator('[data-writer-action=edit]').click();
         assert.equal(await writer.frame.locator('#article-title').inputValue(), '에디터에서 고친 제목');
         assert.equal(await writer.frame.locator('.prose-editor > hr').count(), 0);
         assert.equal(await writer.frame.locator('#current-article .article-title-divider').count(), 1);
-        await checkGhostExport(writer, sandbox, stage);
+        await checkGhostExport(writer, sidebar.frame, sandbox, stage);
         assert.equal((await requests()).length, stage === 'first' ? 2 : 3, 'reopening must not repeat model work');
         if (stage === 'first') {
             await vscode.commands.executeCommand('psb.sidebar.focus');
@@ -316,8 +335,17 @@ exports.run = async () => {
             const prepare = tools.getByRole('button', { name: '메모 생성', exact: true });
             await prepare.waitFor();
             assert.equal((await requests()).length, 3, 'opening the new file starts the writer without generating memos');
-            const latest = 'int value = 42;\n';
-            await fs.writeFile(filePath, latest);
+            await vscode.workspace.getConfiguration('psb').update('prepareOnReview', false, vscode.ConfigurationTarget.Workspace);
+            const latest = 'int count(int n) {\n    int total = 0;\n    for (int i = 0; i < n; ++i) total += i;\n    return total;\n}\n';
+            const doc = await vscode.workspace.openTextDocument(filePath);
+            const editor = await vscode.window.showTextDocument(doc);
+            await editor.edit(edit => edit.replace(new vscode.Range(0, 0, doc.lineCount, 0), latest));
+            await doc.save();
+            await vscode.commands.executeCommand('psb.welcome');
+            await start.frame.getByRole('button', { name: 'sequence.c 글쓰기' }).click();
+            await prepare.waitFor();
+            await sleep(16000);
+            assert.equal((await requests()).length, 3, 'manual mode keeps meaningful recorded edits local even after opening the writer');
             await prepare.click();
             await tools.getByRole('button', { name: '글쓰기', exact: true }).waitFor();
             const request = (await requests()).at(-1);

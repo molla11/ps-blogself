@@ -1,7 +1,8 @@
-const rtf = new Intl.RelativeTimeFormat('ko', { numeric: 'auto' });
+const rtf = new Intl.RelativeTimeFormat('ko', { numeric: 'always' });
 
 function timeAgo(timestamp) {
     const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    if (seconds <= 0) return '방금';
     if (seconds < 60) return rtf.format(-seconds, 'second');
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return rtf.format(-minutes, 'minute');

@@ -21,6 +21,8 @@ export class StorageManager {
     private _indexFileUri?: vscode.Uri;
     private _onDidUpdateIndex = new vscode.EventEmitter<void>();
     public readonly onDidUpdateIndex = this._onDidUpdateIndex.event;
+    private readonly snapshotSaved = new vscode.EventEmitter<string>();
+    public readonly onDidSaveSnapshot = this.snapshotSaved.event;
 
     private constructor() {}
 
@@ -96,7 +98,7 @@ export class StorageManager {
         return this.reconstructFileContent(history, history.snapshots.length - 1);
     }
 
-    public saveSnapshot(document: vscode.TextDocument): Promise<void> {
+    public saveSnapshot(document: vscode.TextDocument, baseline?: string): Promise<void> {
         const length = typeof document.offsetAt === 'function'
             ? document.offsetAt(new vscode.Position(document.lineCount - 1, Number.MAX_SAFE_INTEGER)) : undefined;
         const content = limitedSnapshotText(length, () => document.getText());
@@ -110,7 +112,7 @@ export class StorageManager {
             return Promise.resolve();
         }
         this.oversized.delete(key);
-        const write = this._saveQueue.then(() => withFileLock(this._indexFileUri!.fsPath, () => this._saveSnapshot(document, content)));
+        const write = this._saveQueue.then(() => withFileLock(this._indexFileUri!.fsPath, () => this._saveSnapshot(document, content, baseline)));
         this._saveQueue = write.catch(() => {});
         return write;
     }
@@ -145,7 +147,7 @@ export class StorageManager {
         return filePath;
     }
 
-    private async _saveSnapshot(document: vscode.TextDocument, content: string): Promise<void> {
+    private async _saveSnapshot(document: vscode.TextDocument, content: string, baseline?: string): Promise<void> {
         if (!this._historyDir) {
             console.warn('StorageManager not initialized');
             return;
@@ -174,6 +176,7 @@ export class StorageManager {
                     id: generateUUID(),
                     filePath: absolutePath,
                     language: document.languageId,
+                    memoBaseline: baseline === content ? null : baseline,
                     startedAt: timestamp,
                     lastModified: timestamp,
                     snapshots: [],
@@ -218,6 +221,7 @@ export class StorageManager {
 
             // Update Session Index
             await this._updateSessionIndex(document, timestamp, fileHash);
+            this.snapshotSaved.fire(absolutePath);
         } catch (error) {
             Logger.error(`[StorageManager] Failed to save snapshot for ${absolutePath}:`, error);
         }
@@ -468,6 +472,7 @@ export class StorageManager {
                 const nextSnapshotContent = this.reconstructFileContent(history, 1);
 
                 if (nextSnapshotContent !== null) {
+                    history.memoBaseline = null;
                     history.snapshots.splice(0, 1); // Delete index 0
                     // Now index 0 is the old index 1.
                     history.snapshots[0].content = nextSnapshotContent;

@@ -1,3 +1,4 @@
+import { backendRequests } from './BackendRequests';
 import * as vscode from 'vscode';
 import { createHash, randomBytes } from 'crypto';
 import { ConnectionEnvironment, resolveConnectionSettings, serviceUrl, loginUrl } from './ConnectionSettings';
@@ -53,6 +54,7 @@ export class ServiceConnection {
         this.changed.fire();
     }
     async refreshUsage(afterCurrent = false): Promise<void> {
+        if (!backendRequests.enabled) return;
         const base = this.base, saved = await this.saved(base);
         if (!saved) return;
         if (this.usageRequest?.base === base && this.usageRequest.token === saved.token) {
@@ -115,9 +117,10 @@ export class ServiceConnection {
         return value;
     }
     async fetchJson<T>(base: string, route: string, method = 'GET', body?: unknown, token?: string): Promise<T> {
+        backendRequests.requireEnabled();
         let response: Response;
         try {
-            response = await fetch(serviceUrl(base) + route, {
+            response = await backendRequests.fetch(serviceUrl(base) + route, {
                 method, redirect: 'error', signal: AbortSignal.timeout(20000),
                 headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
                 body: body === undefined ? undefined : JSON.stringify(body),
@@ -137,6 +140,7 @@ export class ServiceConnection {
         return data as T;
     }
     async credentials(interactive = true, base = this.base): Promise<Credentials> {
+        backendRequests.requireEnabled();
         const saved = await this.saved(base); if (saved) return saved;
         const config = await this.fetchJson<{ protocol: string; authMode: string }>(base, '/config');
         if (config.protocol !== 'file-writing-v2') throw new Error('글쓰기 서비스 버전을 확인해 주세요.');
@@ -167,6 +171,7 @@ export class ServiceConnection {
                     throw new Error('이 원격 창에서는 자동 로그인 포트를 연결할 수 없습니다. 로컬 VS Code 창에서 로그인해 주세요.');
                 }
                 if (cancellation.isCancellationRequested) throw new Error('로그인을 취소했습니다.');
+                backendRequests.requireEnabled();
                 if (!await vscode.env.openExternal(vscode.Uri.parse(url))) throw new Error('로그인 브라우저를 열 수 없습니다.');
                 while (!cancellation.isCancellationRequested && Date.now() < deadline) {
                     const result = await this.fetchJson<Credentials | { pending: true }>(base, '/auth/exchange', 'POST', { id: flow.id, verifier });
@@ -189,6 +194,7 @@ export class ServiceConnection {
         return this.fetchJson(base, route, method, body, credentials.token);
     }
     async configure() {
+        backendRequests.requireEnabled();
         const saved = await this.saved();
         if (!saved) { await this.credentials(); return; }
         const choice = await vscode.window.showQuickPick(['사용량 확인', '로그아웃'], { title: saved.user.email });

@@ -1,3 +1,4 @@
+import { backendRequests } from './BackendRequests';
 import { serviceUrl } from './ConnectionSettings';
 import { validateRequest } from './RequestValidation';
 import type { ServiceConnection } from './ServiceConnection';
@@ -50,7 +51,7 @@ export class JobRouter {
         try {
             const credentials = await this.connection.credentials(false, target.base);
             if (credentials.user.id !== target.owner) throw new Error('다른 계정의 작업입니다.');
-            const response = await fetch(target.base + '/jobs/' + encodeURIComponent(id) + '/events', {
+            const response = await backendRequests.fetch(target.base + '/jobs/' + encodeURIComponent(id) + '/events', {
                 redirect: 'error', signal, headers: { Authorization: 'Bearer ' + credentials.token },
             });
             if (!response.ok || !response.body) {

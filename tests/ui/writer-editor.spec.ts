@@ -1,7 +1,7 @@
 import { test, expect, Page } from '@playwright/test';
 import { openWebview } from './webview';
 const markdown = '## 풀이의 출발점\n\n먼저 **중복 탐색**을 줄였다. [문제 링크](https://example.com/problem)를 참고했다.\n\n### 집합으로 조회하기\n\n3. 값을 저장한다.\n4. 집합에서 찾는다.\n\n| 방법 | 시간 |\n| --- | --- |\n| 순차 탐색 | O(n) |\n| 집합 조회 | O(1) |\n\n````python\nseen = set()\nprint("```")\n````\n\n- [x] 중복 입력 확인\n- [ ] 경계값 확인\n';
-const base = { type: 'model', filePath: '/work/solve.py', fileName: 'solve.py', editable: true, editToken: 'window-a',
+const base = { type: 'model', showAdvancedWritingViews: true, filePath: '/work/solve.py', fileName: 'solve.py', editable: true, editToken: 'window-a',
     instructions: '', title: '중복 탐색을 집합 조회로 바꾼 과정', markdown, count: 2, times: [1, 2], versions: [],
     pending: false, running: false, progress: 100, status: '', error: '', candidate: false,
     plan: { title: '중복 탐색을 집합 조회로 바꾼 과정', summary: '같은 값을 여러 번 찾던 반복문을 집합 조회로 바꿨다. 입력이 커질 때 탐색 비용이 쌓이는 부분을 먼저 줄였다.', start: 0, end: 1,

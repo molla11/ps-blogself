@@ -95,17 +95,10 @@ test('AI-filled text and range can generate a complete draft without typing', as
     await model(page, { title: '완성 제목', markdown: '## 접근\n\n완성한 글입니다.' });
     await expect(page.locator('#article-view')).toBeVisible();
     await expect(page.locator('#article-title')).toHaveValue('완성 제목');
-    expect((await messages(page)).some((m: any) => m.type === 'preview')).toBe(true);
-    await page.evaluate(() =>
-        window.dispatchEvent(
-            new MessageEvent('message', {
-                data: { type: 'preview', html: '<h2>접근</h2><p>완성한 글입니다.</p>' },
-            }),
-        ),
-    );
-    await expect(page.locator('#article-preview')).toContainText('완성한 글입니다.');
-    await page.locator('#source-btn').click();
-    await expect(page.locator('#article-body')).toBeVisible();
+    expect((await messages(page)).some((m: any) => m.type === 'preview')).toBe(false);
+    await expect(page.locator('#rich-editor')).toContainText('완성한 글입니다.');
+    await expect(page.locator('#source-btn')).toBeHidden();
+    await expect(page.locator('#preview-btn')).toBeHidden();
     await page.screenshot({ path: 'test-results/writer.png' });
 });
 
@@ -205,10 +198,10 @@ test('narrowing and widening a range preserves edited step explanations', async 
 
 test('streaming shows a readable preview without replacing an edited article', async ({ page }) => {
     await open(page);
-    await model(page, { title: '이전 제목', markdown: '사용자가 쓴 본문' });
+    await model(page, { showAdvancedWritingViews: true, title: '이전 제목', markdown: '사용자가 쓴 본문' });
     await page.locator('#source-btn').click();
     await page.locator('#article-body').fill('작성 중에도 보존할 본문');
-    await model(page, { pending: true, running: true, title: '이전 제목', markdown: '사용자가 쓴 본문', streamHtml: '<h2>새로 생성 중</h2><p>본문이 먼저 보입니다.</p>' });
+    await model(page, { showAdvancedWritingViews: true, pending: true, running: true, title: '이전 제목', markdown: '사용자가 쓴 본문', streamHtml: '<h2>새로 생성 중</h2><p>본문이 먼저 보입니다.</p>' });
     await expect(page.locator('#stream-preview')).toContainText('본문이 먼저 보입니다.');
     await expect(page.locator('#article-body')).toHaveValue('작성 중에도 보존할 본문');
     await model(page, { streamHtml: '', candidate: true });
@@ -281,9 +274,105 @@ async function versionPreview(page: Page, versionId: string) {
     })), versionId);
 }
 
+test('article tools in the sidebar use the live draft and the selected version', async ({ page, context }) => {
+    const sidebar = await context.newPage();
+    await sidebar.setViewportSize({ width: 260, height: 700 });
+    await Promise.all([open(page), open(sidebar, true)]);
+    const deliver = (target: Page, data: unknown) => target.evaluate(message =>
+        window.dispatchEvent(new MessageEvent('message', { data: message })), data);
+    const refreshSidebar = async () => {
+        const controls = (await messages(page)).findLast((m: any) => m.type === 'writerControls').controls;
+        await deliver(sidebar, { type: 'sidebarWriter', writer: { filePath: base.filePath, fileName: base.fileName, controls } });
+    };
+    const clickTool = async (name: string) => {
+        await sidebar.getByRole('button', { name, exact: true }).click();
+        await deliver(page, (await messages(sidebar)).at(-1));
+        await refreshSidebar();
+    };
+    await model(page);
+    await deliver(page, { type: 'writerSidebar', linked: true, available: true });
+    await refreshSidebar();
+    await expect(sidebar.locator('.writer-tabs button')).toHaveText(['변경사항 요약', '글 확인/수정']);
+    await expect(sidebar.locator('.writer-tabs :is(i, svg)')).toHaveCount(0);
+    await expect(sidebar.getByRole('button', { name: '글쓰기', exact: true })).toBeVisible();
+    await expect(sidebar.locator('#writer-article-options')).toBeHidden();
+    const article = { title: '현재 제목', markdown: '## 접근\n\n현재 본문', versions };
+    await model(page, { ...article, candidate: true });
+    await refreshSidebar();
+    await expect(sidebar.locator('#side-view-modes')).toBeHidden();
+    await expect(sidebar.locator('#side-candidate-box button')).toHaveText(['새 결과 적용', '현재 내용 유지']);
+    await expect(sidebar.locator('#side-candidate-box p')).toBeHidden();
+    await expect(sidebar.locator('#side-history')).toBeVisible();
+    await expect(sidebar.locator('#side-export')).toBeVisible();
+    await model(page, { ...article, showAdvancedWritingViews: true });
+    await refreshSidebar();
+    const rewrite = sidebar.getByRole('button', { name: '글 다시 쓰기', exact: true });
+    const buttonBottom = await rewrite.evaluate(button => button.getBoundingClientRect().bottom);
+    for (const id of ['side-view-modes', 'side-history', 'side-outline', 'side-export']) {
+        const section = sidebar.locator('#' + id);
+        await expect(section).toBeVisible();
+        expect(await section.evaluate(node => node.getBoundingClientRect().top)).toBeGreaterThanOrEqual(buttonBottom);
+    }
+    await expect(page.locator('#article-toolbar')).toBeHidden();
+    await expect(page.locator('#format-bar')).toBeVisible();
+    await sidebar.locator('#side-outline summary').click();
+    await expect(sidebar.getByRole('button', { name: '접근', exact: true })).toBeVisible();
+    await clickTool('Markdown');
+    await page.locator('#article-body').fill('방금 고친 본문');
+    await sidebar.locator('#side-export summary').click();
+    await clickTool('Markdown 복사');
+    expect((await messages(page)).findLast((m: any) => m.type === 'copy').fields.markdown).toBe('방금 고친 본문');
+    await clickTool('이전 버전');
+    await expect(page.locator('#version-preview')).toBeVisible();
+    await expect(sidebar.getByRole('button', { name: '이 버전 사용' })).toBeDisabled();
+    await versionPreview(page, 'newer');
+    await refreshSidebar();
+    await clickTool('Markdown 복사');
+    expect((await messages(page)).findLast((m: any) => m.type === 'copy')).toMatchObject({ versionId: 'newer' });
+    await clickTool('다음 버전');
+    await expect(page.locator('#article-body')).toHaveValue('방금 고친 본문');
+    await model(page, article);
+    await refreshSidebar();
+    await expect(sidebar.locator('#side-view-modes')).toBeHidden();
+    await expect(page.locator('#rich-editor')).toContainText('방금 고친 본문');
+    await deliver(page, { type: 'writerAction', filePath: base.filePath, action: 'source' });
+    await expect(page.locator('#article-body')).toBeHidden();
+    await model(page, { ...article, showAdvancedWritingViews: true });
+    await refreshSidebar();
+    await clickTool('미리보기');
+    expect((await messages(page)).findLast((m: any) => m.type === 'preview').fields.markdown).toBe('방금 고친 본문');
+    await deliver(page, { type: 'preview', html: '<p>방금 고친 본문</p>' });
+    await expect(page.locator('#article-preview')).toBeVisible();
+    await model(page, article);
+    await deliver(page, { type: 'preview', html: '<p>늦게 도착한 미리보기</p>' });
+    await expect(page.locator('#article-preview')).toBeHidden();
+    await expect(page.locator('#format-bar')).toBeVisible();
+    expect(await sidebar.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('contest writing keeps tools in a local drawer and preserves the draft when the main sidebar returns', async ({ page }) => {
+    await open(page);
+    const sidebar = (linked: boolean, available: boolean) => page.evaluate(data =>
+        window.dispatchEvent(new MessageEvent('message', { data })), { type: 'writerSidebar', linked, available });
+    await model(page, { showAdvancedWritingViews: true, title: '초안', markdown: '현재 본문', backendEnabled: false });
+    await sidebar(false, false);
+    await expect(page.locator('#format-bar')).toBeVisible();
+    await expect(page.locator('#article-toolbar')).toBeHidden();
+    await page.getByRole('button', { name: '글쓰기 도구 열기' }).click();
+    const drawer = page.getByRole('complementary', { name: '글쓰기 도구' });
+    await expect(drawer.locator('#contest-backend-notice')).toBeVisible();
+    await drawer.getByRole('button', { name: 'Markdown', exact: true }).click();
+    await drawer.getByRole('button', { name: '도구 닫기' }).click();
+    await page.locator('#article-body').fill('대회 중에 작성한 본문');
+    await sidebar(true, true);
+    await expect(page.locator('#article-body')).toHaveValue('대회 중에 작성한 본문');
+    await expect(page.locator('#local-writer-tools #article-toolbar')).toHaveCount(0);
+    await expect(page.locator('#article-toolbar')).toBeHidden();
+});
+
 test('version browsing preserves unsaved work, ignores late previews and restores by stable identity', async ({ page }) => {
     await open(page);
-    await model(page, { title: '현재 제목', markdown: '현재 본문', versions });
+    await model(page, { showAdvancedWritingViews: true, title: '현재 제목', markdown: '현재 본문', versions });
     await page.locator('#source-btn').click();
     await page.locator('#article-body').fill('아직 저장 중인 본문');
     await page.locator('#version-older-btn').click();
@@ -298,7 +387,7 @@ test('version browsing preserves unsaved work, ignores late previews and restore
     await expect(page.locator('#version-body')).toHaveText('older 본문');
     await expect(page.locator('#current-article')).toBeHidden();
     expect((await messages(page)).some((m: any) => m.type === 'restore')).toBe(false);
-    await model(page, { title: '현재 제목', markdown: '현재 본문', versions: [...versions, { id: 'latest', at: 1730000700000, title: '추가된 글' }], pending: true });
+    await model(page, { showAdvancedWritingViews: true, title: '현재 제목', markdown: '현재 본문', versions: [...versions, { id: 'latest', at: 1730000700000, title: '추가된 글' }], pending: true });
     await expect(page.locator('#version-select')).toHaveValue('older');
     await expect(page.locator('#version-body')).toHaveText('older 본문');
     await page.locator('#restore-version-btn').click();
@@ -347,4 +436,45 @@ test('version selection supports keyboard navigation and fits narrow editors wit
     await expect(page.locator('#article-tab')).toHaveAttribute('aria-pressed', 'false');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: 'test-results/writer-plan-narrow.png' });
+});
+
+test('an open writer preserves edits while contest switches independently control access and AI actions', async ({ page }) => {
+    await open(page);
+    await model(page);
+    await page.locator('#summary').fill('작성 중인 메모');
+    await model(page, { writingAllowed: false, backendEnabled: false });
+    await expect(page.locator('#contest-writing-notice')).toBeVisible();
+    await expect(page.locator('#summary')).toBeHidden();
+    await model(page, { writingAllowed: true, backendEnabled: false });
+    await expect(page.locator('#summary')).toHaveValue('작성 중인 메모');
+    await expect(page.locator('#contest-backend-notice')).toBeVisible();
+    await expect(page.locator('#generate-btn')).toBeDisabled();
+    await model(page, { writingAllowed: true, backendEnabled: true });
+    await expect(page.locator('#contest-backend-notice')).toBeHidden();
+    await expect(page.locator('#generate-btn')).toBeEnabled();
+});
+
+test('contest request blocking also covers images in the editor and previews', async ({ page }) => {
+    const origin = 'https://contest-images.example.test';
+    const requests: string[] = [];
+    await page.route(origin + '/**', route => {
+        requests.push(route.request().url());
+        return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg"/>' });
+    });
+    await open(page);
+    const article = { showAdvancedWritingViews: true, markdown: `![풀이](${origin}/editor)`, streamHtml: `<img src="${origin}/stream">` };
+    await model(page, { ...article, backendEnabled: false });
+    await page.evaluate(src => window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'preview', html: `<img src="${src}/preview">` },
+    })), origin);
+    for (const [container, path] of [['#rich-editor', 'editor'], ['#stream-preview', 'stream'], ['#article-preview', 'preview']]) {
+        await expect(page.locator(`${container} img[data-blocked-src="${origin}/${path}"]`)).toHaveCount(1);
+    }
+    const onlineImages = page.locator(`img[src^="${origin}/"]`);
+    await expect(onlineImages).toHaveCount(0);
+    expect(requests).toEqual([]);
+    await model(page, { ...article, backendEnabled: true });
+    await expect.poll(() => new Set(requests).size).toBe(3);
+    await model(page, { ...article, backendEnabled: false });
+    await expect(onlineImages).toHaveCount(0);
 });

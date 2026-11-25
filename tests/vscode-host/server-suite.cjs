@@ -22,7 +22,10 @@ async function surface(browser, selector) {
             for (const page of context.pages())
                 for (const frame of page.frames()) {
                     try {
-                        if (await frame.locator(selector).count()) return { page, frame };
+                        if (!(await frame.locator(selector).count())) continue;
+                        let owner = frame;
+                        while (owner.parentFrame() && await (await owner.frameElement()).isVisible()) owner = owner.parentFrame();
+                        if (!owner.parentFrame()) return { page, frame };
                     } catch {}
                 }
     }, selector);
@@ -176,7 +179,7 @@ exports.run = async () => {
             assert.equal((await requests()).length, 1, 'related saves are prepared in one background job');
             await recorded.click({ button: 'right' });
             await sidebar.frame.locator('#ctx-view-history').click();
-            const history = await surface(browser, '#write-btn');
+            const history = await surface(browser, '#write-btn:visible');
             await until(async () => (await history.frame.locator('#preparation-status').innerText()).includes('끝났어요'), 'history prepares AI automatically');
             await until(async () => (await writingCounts.innerText()).includes('메모 1'), 'prepared note bundle appears on its file row');
             assert.equal(await writingCounts.locator('.log-unread').count(), 0, 'prepared notes never show unread notifications');
@@ -277,7 +280,7 @@ exports.run = async () => {
             await sidebar.frame.locator('#library-toggle').click();
             await recorded.click({ button: 'right' });
             await sidebar.frame.locator('#ctx-view-history').click();
-            const reviewed = await surface(browser, '#write-btn');
+            const reviewed = await surface(browser, '#write-btn:visible');
             await until(async () => (await reviewed.frame.locator('#preparation-status').innerText()).includes('끝났어요'), 'review reuses the same history');
             assert.equal((await requests()).length, 2);
             await reviewed.frame.locator('#write-btn').click();

@@ -23,6 +23,7 @@ import { storageManager } from '../storage/StorageManager';
 import { readSavedFileHistory } from '../storage/SavedFileHistory';
 import { ServiceConnection, ServiceError } from '../writing/ServiceConnection';
 import { JobRouter, JobTarget, isServerTarget } from '../writing/JobRouter';
+import { articleRequestPlan } from '../writing/MemoOrigins';
 import { DraftStore, DraftConflict } from '../writing/DraftStore';
 import { registerGeneratedArticles, writingActivityContent, WritingActivityContent, WritingActivityStore, WritingActivitySummary } from '../writing/WritingActivity';
 import { WindowSession } from '../storage/WindowSession';
@@ -923,23 +924,9 @@ export class BlogPostManager {
             if (recorded?.snapshots.length) history = recorded;
             else if (draft.fromSavedFile) history = await readSavedFileHistory(draft.filePath, history.language);
         }
-        const plan = draft.plan
-            ? {
-                  ...draft.plan,
-                  title: draft.plan.title.trim() || path.basename(draft.filePath) + ' 풀이 기록',
-              }
-            : undefined;
+        const plan = kind === 'write_blog' ? articleRequestPlan(draft) : undefined;
         if (kind === 'write_blog' && !plan) {
             throw new Error('AI가 풀이 흐름을 준비한 뒤 글을 만들 수 있습니다.');
-        }
-        if (plan && kind === 'write_blog') {
-            plan.steps = plan.steps
-                .filter((step) => step.end >= plan.start && step.start <= plan.end)
-                .map((step) => ({
-                    ...step,
-                    start: Math.max(step.start, plan.start),
-                    end: Math.min(step.end, plan.end),
-                }));
         }
         const source =
             kind === 'prepare_blog'

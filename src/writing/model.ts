@@ -5,11 +5,14 @@ import { createTwoFilesPatch } from 'diff';
 import { FileHistory } from '../types';
 import { meritsAutomaticMemo } from './MemoPreparation';
 import { isCosmeticChange } from './ChangeFilter';
+import { type MemoOriginals, type MemoEdit, rememberAiSteps } from './MemoOrigins';
 import { WritingPreferences } from './WritingStyle';
 import { DEFAULT_WRITING_MODEL, WritingModel } from './WritingModels';
 import { checkInputSize, MAX_CHANGES, MAX_CODE_BYTES, MAX_RECONSTRUCTED_BYTES, InputSizeError, utf8Bytes } from './InputLimits';
 
 export interface WritingStep {
+    /** Local identity of the generated note, retained when other notes are inserted or removed. */
+    aiStepId?: string;
     title: string;
     body: string;
     start: number;
@@ -34,7 +37,7 @@ export interface WritingRequest {
     kind: 'prepare_blog' | 'write_blog';
     requestId: string;
     source: WritingSource;
-    plan?: WritingPlan;
+    plan?: WritingPlan & { edits?: MemoEdit[] };
     instructions: string;
     priority?: 'interactive' | 'prefetch';
 }
@@ -97,6 +100,7 @@ export interface WritingDraft extends WritingPreferences {
     preparationKey?: string;
     lastPreparation?: { index: number; hash: string; at: number };
     preparedPlanHash?: string;
+    memoOriginals?: MemoOriginals;
     pending?: {
         request: WritingRequest;
         /** Retained only to detect unfinished requests from an older client. */
@@ -334,6 +338,8 @@ export function mergeResult(
         return;
     }
     if (result.plan) {
+        draft.memoOriginals = { title: result.plan.title, summary: result.plan.summary, steps: {} };
+        rememberAiSteps(result.plan.steps, draft.memoOriginals.steps);
         draft.plan = result.plan;
         draft.planNotices = notices;
         draft.preparedPlanHash = planFingerprint(result.plan);

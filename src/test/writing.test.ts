@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { FileHistory } from '../types';
 import { computeDiff } from '../storage/utils';
+import { articleRequestPlan } from '../writing/MemoOrigins';
 import { DraftStore } from '../writing/DraftStore';
 import { documentFromMarkdown } from '../writing/ArticleDocument';
 import {
@@ -263,4 +264,47 @@ test('reopening integrated drafts separates the title in drafts, versions and pe
         await store.close();
         await rm(directory, { recursive: true, force: true });
     }
+});
+
+test('article requests identify only changed memo text after insertion, deletion, narrowing and reopening', async t => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'psb-memo-originals-'));
+    const store = new DraftStore(dir);
+    t.after(async () => { await store.close(); await rm(dir, { recursive: true, force: true }); });
+    const draft = newDraft(history);
+    const step = { ...plan.steps[0], start: 1, end: 2 };
+    mergeResult(draft, { plan: { ...plan, end: 2, steps: [
+        { ...step, start: 0, end: 0 }, step, { ...step, body: '마지막 원문' },
+    ] } }, draft.revision);
+    assert.deepEqual(articleRequestPlan(draft)?.edits, []);
+    const edited = draft.plan!;
+    edited.title = '새 제목';
+    edited.summary = '잠깐 편집한 문장';
+    edited.summary = plan.summary;
+    edited.steps[0].body = '선택 범위 밖 수정';
+    edited.steps.splice(1, 1, { title: '', body: '내가 새로 쓴 메모', start: 1, end: 1 });
+    edited.steps[2].body += ' 사용자가 덧붙인 주장';
+    edited.start = 1;
+    await store.save(draft);
+    const outgoing = articleRequestPlan((await store.read(history.filePath))!)!;
+    assert.deepEqual(outgoing.edits, [
+        { field: 'title', aiText: plan.title },
+        { field: 'steps[0].body', aiText: '' },
+        { field: 'steps[1].body', aiText: '마지막 원문' },
+    ]);
+    assert.equal(outgoing.steps.length, 2);
+    assert.ok(outgoing.steps.every(step => !Object.hasOwn(step, 'aiStepId')));
+    assert.equal(outgoing.steps[1].body, '마지막 원문 사용자가 덧붙인 주장');
+});
+
+test('candidate plans replace memo originals only after acceptance and legacy drafts retain unknown authorship', () => {
+    const draft = newDraft(history);
+    mergeResult(draft, { plan }, draft.revision);
+    draft.plan!.steps[0].body = '고친 메모';
+    mergeResult(draft, { plan: { ...plan, summary: '다시 준비한 메모' } }, -1);
+    assert.deepEqual(articleRequestPlan(draft)!.edits, [{ field: 'steps[0].body', aiText: plan.steps[0].body }]);
+    mergeResult(draft, draft.candidate!, draft.revision);
+    assert.deepEqual(articleRequestPlan(draft)!.edits, []);
+    const legacy = newDraft(history);
+    legacy.plan = plan;
+    assert.equal(Object.hasOwn(articleRequestPlan(legacy)!, 'edits'), false);
 });

@@ -103,3 +103,14 @@ test('turning requests off aborts active streams and prevents new fetches until 
         assert.equal(network.mock.callCount(), 2);
     } finally { backendRequests.setEnabled(true); }
 });
+
+test('prepare and write requests advertise private author notices even for a legacy plan', async () => {
+    const { jobs, calls } = harness(), target = await jobs.target();
+    const plan = { title: '풀이', summary: '', start: 0, end: 0, steps: [] };
+    await jobs.create(request, target);
+    await jobs.create({ ...request, kind: 'write_blog', plan }, target);
+    assert.deepEqual(calls.map(call => call[2]), [
+        { ...request, supportsAuthorNotices: true },
+        { ...request, kind: 'write_blog', plan, supportsAuthorNotices: true },
+    ]);
+});

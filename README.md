@@ -112,9 +112,9 @@ pnpm test:host
 
 [최신 GitHub Release](https://github.com/molla11/ps-blogself/releases/latest)의 **Assets**에서 `ps-blogself-<버전>.vsix`를 받아 VS Code의 **Extensions: Install from VSIX…**로 설치합니다.
 
-`main` 대상 PR과 병합된 커밋에서 GitHub Actions가 단위 테스트와 Chromium UI 테스트를 실행합니다. 타입 검사와 린트를 통과한 VSIX를 새 VS Code 프로필에 설치하고 Welcome 탭이 열리는지 확인합니다. 통과한 패키지는 해당 실행의 **Artifacts**에서 14일간 받을 수 있습니다. 별도의 로컬 테스트 백엔드가 필요한 전체 통합 테스트는 위의 `pnpm test:host`로 실행합니다.
+일상 개발은 `develop`에 직접 커밋하고 `git push origin develop`으로 올립니다. GitHub Actions는 `develop`과 `main`의 푸시 및 두 브랜치 대상 PR에서 단위 테스트와 Chromium UI 테스트를 실행합니다. 타입 검사와 린트를 통과한 VSIX를 새 VS Code 프로필에 설치하고 Welcome 탭이 열리는지 확인합니다. 통과한 패키지는 해당 실행의 **Artifacts**에서 14일간 받을 수 있습니다. 별도의 로컬 테스트 백엔드가 필요한 전체 통합 테스트는 위의 `pnpm test:host`로 실행합니다.
 
-새 버전을 배포하려면 PR에서 `package.json`의 `version`을 올립니다. 병합 후 `main`의 CI가 통과하면 같은 VSIX가 `v<버전>` GitHub Release에 자동으로 올라갑니다. 이미 배포한 버전의 VSIX는 보존합니다.
+새 버전을 배포할 때는 `develop`에서 `package.json`의 `version`을 올리고 `main`으로 병합합니다. `main`의 CI가 통과하면 같은 VSIX가 `v<버전>` GitHub Release에 자동으로 올라갑니다. 이미 배포한 버전의 VSIX는 보존합니다.
 
 ## 설치 패키지 만들기
 

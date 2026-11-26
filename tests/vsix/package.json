@@ -1,0 +1,6 @@
+{
+    "name": "ps-blogself-install-test",
+    "publisher": "test",
+    "version": "0.0.0",
+    "engines": { "vscode": "*" }
+}

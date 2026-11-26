@@ -3,7 +3,7 @@
     "publisher": "Shinem-dev",
     "displayName": "ps-blogself",
     "description": "Generate problem-solving blog from code evolution",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "repository": {
         "type": "git",
         "url": "https://github.com/molla11/ps-blogself.git"
@@ -46,6 +46,10 @@
                 "title": "PS-Blogself: 로그인 / 계정"
             },
             {
+                "command": "psb.linkArticleJob",
+                "title": "PS-Blogself: 기존 로컬 글을 서버 작업에 연결"
+            },
+            {
                 "command": "psb.sample",
                 "title": "PS-Blogself: 샘플로 글 만들기"
             },
@@ -75,7 +79,7 @@
                     "type": "boolean",
                     "default": true,
                     "scope": "window",
-                    "description": "로그인하면 의미 있는 코드 변경을 모아 AI 서비스로 보내 메모를 미리 생성합니다. AI 이용량에 포함되며, 끄면 메모를 수동으로 생성합니다."
+                    "description": "로그인하면 의미 있는 코드 변경을 모아 AI 서비스로 보내 메모를 미리 생성합니다. 이때 보낸 코드와 만든 메모는 작업 또는 계정을 삭제할 때까지 계정에 보관됩니다. AI 이용량에 포함되며, 끄면 메모를 수동으로 생성합니다."
                 },
                 "psb.showAdvancedWritingViews": {
                     "type": "boolean",

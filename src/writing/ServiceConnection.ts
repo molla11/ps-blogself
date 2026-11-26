@@ -193,13 +193,45 @@ export class ServiceConnection {
         if (owner && credentials.user.id !== owner) throw new Error('이 작업을 시작한 계정으로 로그인해 주세요.');
         return this.fetchJson(base, route, method, body, credentials.token);
     }
+    async pickJob(base: string, owner: string, title: string, articleFile?: string) {
+        type RecordItem = { id: string; fileName?: string; title?: string; kind: string; createdAt: string };
+        let before: string | null = null;
+        do {
+            const query = new URLSearchParams();
+            if (before) query.set('before', before);
+            if (articleFile) query.set('articleFile', articleFile);
+            const page: { items: RecordItem[]; next: string | null } = await this.request('/jobs?' + query, 'GET', undefined, base, owner);
+            if (!page.items.length) { void vscode.window.showInformationMessage('선택할 서버 작업 기록이 없습니다.'); return; }
+            const items = page.items.map(job => ({
+                label: job.title || job.fileName || '제목 없는 작업',
+                description: (job.kind === 'write_blog' ? '글 작성' : '메모 준비') + ' · ' + new Date(job.createdAt).toLocaleString(),
+                detail: job.fileName, id: job.id,
+            }));
+            if (page.next) items.push({ label: '이전 작업 더 보기', description: '', detail: undefined, id: '' });
+            const picked = await vscode.window.showQuickPick(items, { title, matchOnDescription: true });
+            if (!picked || picked.id) return picked;
+            before = page.next;
+        } while (before);
+    }
+    private async deleteJobRecord(base: string, owner: string) {
+        const picked = await this.pickJob(base, owner, '서버 작업 기록 삭제');
+        if (!picked) return;
+        const confirmed = await vscode.window.showWarningMessage('“' + picked.label + '” 작업을 서버에서 삭제할까요?',
+            { modal: true, detail: '이 작업에 저장된 코드, 생성 결과와 편집 버전을 함께 삭제합니다. 기기에 저장한 초안은 계속 열 수 있습니다.' }, '삭제');
+        if (confirmed === '삭제') {
+            await this.request('/jobs/' + encodeURIComponent(picked.id), 'DELETE', undefined, base, owner);
+            void vscode.window.showInformationMessage('서버 작업 기록을 삭제했습니다.');
+        }
+    }
     async configure() {
         backendRequests.requireEnabled();
-        const saved = await this.saved();
+        const base = this.base, saved = await this.saved(base);
         if (!saved) { await this.credentials(); return; }
-        const choice = await vscode.window.showQuickPick(['사용량 확인', '로그아웃'], { title: saved.user.email });
+        const choice = await vscode.window.showQuickPick(['사용량 확인', '서버 작업 기록 삭제', '로그아웃'], { title: saved.user.email });
         if (choice === '사용량 확인') {
             await this.showUsage();
+        } else if (choice === '서버 작업 기록 삭제') {
+            await this.deleteJobRecord(base, saved.user.id);
         } else if (choice === '로그아웃') {
             try { await this.request('/logout', 'POST'); } finally { await this.context.secrets.delete(this.key(this.base)); this.changed.fire(); void this.notices.refresh(); }
         }

@@ -25,6 +25,7 @@ import { ServiceConnection, ServiceError } from '../writing/ServiceConnection';
 import { JobRouter, JobTarget, isServerTarget } from '../writing/JobRouter';
 import { articleRequestPlan } from '../writing/MemoOrigins';
 import { DraftStore, DraftConflict } from '../writing/DraftStore';
+import { ArticleSync } from '../writing/ArticleSync';
 import { registerGeneratedArticles, writingActivityContent, WritingActivityContent, WritingActivityStore, WritingActivitySummary } from '../writing/WritingActivity';
 import { WindowSession } from '../storage/WindowSession';
 import { ConnectionEnvironment } from '../writing/ConnectionSettings';
@@ -73,6 +74,7 @@ export class BlogPostManager {
     private static views = new Map<string, View>();
     private static openings = new Map<string, Promise<void>>();
     private static store: DraftStore;
+    private static articleSync: ArticleSync;
     private static activity: WritingActivityStore;
     private static ghost: GhostConnection;
     private static publisher: GhostPublisher;
@@ -145,6 +147,8 @@ export class BlogPostManager {
             file => this.store.read(file), (file, changed) => this.store.watch(file, changed), file => this.updates.fire(file));
         context.subscriptions.push(this.activity);
         this.connection = new ServiceConnection(context, development);
+        this.articleSync = new ArticleSync(this.store, this.connection);
+        await this.articleSync.start();
         this.jobs = new JobRouter(this.connection);
         this.pendingMemos = new PendingMemos(path.join((context.storageUri ?? context.globalStorageUri).fsPath, 'pending-memos.json'),
             error => Logger.warn('메모 대기 목록을 저장하지 못했습니다.', error));
@@ -176,6 +180,7 @@ export class BlogPostManager {
         context.subscriptions.push(configManager.onDidChange(() => {
             if (!this.autoMemos) this.memoQueue.clear();
             const resume = !requestsEnabled && backendRequests.enabled;
+            if (resume) this.articleSync.wake();
             this.syncSidebar();
             if (requestsEnabled === backendRequests.enabled && writingAllowed === this.writingAllowed) return;
             requestsEnabled = backendRequests.enabled;
@@ -191,11 +196,12 @@ export class BlogPostManager {
         }));
         context.subscriptions.push(
             vscode.commands.registerCommand('psb.connect', () => this.connect()),
+            vscode.commands.registerCommand('psb.linkArticleJob', () => this.linkArticleJob()),
             vscode.commands.registerCommand('psb.connectGhost', async () => { await this.ghost.configure(); }),
             vscode.commands.registerCommand('psb.sample', async () => {
                 if (this.checkWritingAccess()) await this.openPage(context.extensionUri, await storageManager.installSampleHistory());
             }),
-            this.connection.changed.event(() => this.updates.fire('')),
+            this.connection.changed.event(() => { this.articleSync.wake(); this.updates.fire(''); }),
             this.connection.changed,
             vscode.window.onDidChangeWindowState(() => {
                 for (const view of this.views.values()) {
@@ -234,6 +240,7 @@ export class BlogPostManager {
         await Promise.all([...this.views.values()].map((view) => view.queue));
         await Promise.allSettled([...this.exports]);
         await this.publisher?.close();
+        await this.articleSync?.close();
         await this.store?.close();
         await this.pendingMemos?.flush();
     }
@@ -668,6 +675,7 @@ export class BlogPostManager {
         if (!fields || typeof fields !== 'object') return;
         const value = fields as Record<string, unknown>,
             draft = view.draft;
+        const articleBefore = JSON.stringify([draft.title, draft.markdown, draft.document]);
         const before = JSON.stringify([
             draft.plan,
             draft.instructions,
@@ -720,7 +728,36 @@ export class BlogPostManager {
             draft.revision++;
             draft.updatedAt = Date.now();
         }
-        await this.store.save(draft);
+        if (articleBefore === JSON.stringify([draft.title, draft.markdown, draft.document])) await this.store.save(draft);
+        else await this.saveArticleEdit(draft);
+    }
+    private static async linkArticleJob() {
+        const view = [...this.views.values()].find(view => view.panel?.active && view.editable);
+        if (!view?.draft.markdown || view.draft.articleOrigin) {
+            void vscode.window.showInformationMessage('서버 작업에 연결할 기존 로컬 글을 편집 화면에서 열어 주세요.');
+            return;
+        }
+        const target = await this.jobs.target();
+        const picked = await this.connection.pickJob(target.base, target.owner,
+            '현재 글과 이후 편집본을 저장할 서버 작업 선택 · ' + target.owner, path.basename(view.draft.filePath));
+        if (!picked) return;
+        await this.enqueue(view, async () => {
+            if (!view.editable || view.draft.articleOrigin || this.connection.base !== target.base ||
+                (await this.connection.saved(target.base))?.user.id !== target.owner) return;
+            view.draft.articleOrigin = { ...target, jobId: picked.id };
+            await this.saveArticleEdit(view.draft);
+        });
+    }
+    private static async saveArticleEdit(draft: WritingDraft) {
+        const origin = draft.articleOrigin;
+        if (!origin || origin.base !== this.connection.base || (await this.connection.saved(origin.base))?.user.id !== origin.owner) {
+            await this.store.save(draft);
+            return;
+        }
+        draft.lastArticleEditAt = Math.max(Date.now(), (draft.lastArticleEditAt ?? 0) + 1);
+        const edit = { origin, id: randomUUID(), editedAt: draft.lastArticleEditAt, title: draft.title, markdown: draft.markdown, document: draft.document };
+        await this.store.save(draft, edit);
+        this.articleSync.schedule(draft.filePath);
     }
     private static async handle(view: View, message: any) {
         if (
@@ -906,10 +943,10 @@ export class BlogPostManager {
                 await this.edit(view, message.fields);
                 mergeResult(
                     view.draft,
-                    { title: version.title, markdown: version.markdown, document: version.document, notices: version.notices },
+                    { ...version, articleOrigin: view.draft.articleOrigin ?? version.articleOrigin },
                     view.draft.revision,
                 );
-                await this.store.save(view.draft);
+                await this.saveArticleEdit(view.draft);
                 view.status = '선택한 버전을 적용했습니다.';
                 break;
             }
@@ -1089,7 +1126,9 @@ export class BlogPostManager {
                             const previous = { history: view.draft.history, fingerprint: view.draft.fingerprint };
                             if (appendMemoResult(view.draft, pending.history, job.result!.plan, job.result!.notices)) view.previousMemoHistory = previous;
                         } else {
-                            mergeResult(view.draft, { ...job.result!, ...(pending.history ? { history: pending.history } : {}) }, pending.baseRevision);
+                            mergeResult(view.draft, { ...job.result!,
+                                ...(pending.request.kind === 'write_blog' && isServerTarget(target) ? { articleOrigin: { ...target, jobId: job.id } } : {}),
+                                ...(pending.history ? { history: pending.history } : {}) }, pending.baseRevision);
                         }
                         if (pending.history && !view.draft.candidate) {
                             const index = pending.history.snapshots.length - 1;

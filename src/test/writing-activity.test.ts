@@ -3,6 +3,9 @@ import * as assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
+import { ArticleSync } from '../writing/ArticleSync';
+import { documentFromMarkdown } from '../writing/ArticleDocument';
+import { backendRequests } from '../writing/BackendRequests';
 import { DraftStore } from '../writing/DraftStore';
 import { newDraft, articleVersionKey, mergeResult, WritingDraft } from '../writing/model';
 import { registerGeneratedArticles, writingActivityContent, WritingActivityStore } from '../writing/WritingActivity';
@@ -111,4 +114,62 @@ test('legacy content, edits, restored versions and repeated generated content do
     mergeResult(value, value.candidate!, value.revision);
     delete value.candidate;
     assert.deepEqual(writingActivityContent(value).newArticles, pending);
+});
+
+test('a pending edit survives reopening and only syncs to the account and job that created the article', () => setup(async (store) => {
+    const value = await store.open(draft());
+    const origin = { kind: 'server' as const, base: 'https://writer.example/api', owner: 'writer', jobId: 'original' };
+    const edit = { id: 'edit-1', editedAt: 123, title: '고친 제목', markdown: '**편집**', document: documentFromMarkdown('**편집**'), origin };
+    Object.assign(value, { title: edit.title, markdown: edit.markdown, document: edit.document, articleOrigin: origin });
+    await store.save(value, edit);
+    assert.deepEqual(await store.pendingFiles(), [value.filePath]);
+    assert.ok(!('pendingArticleEdits' in await store.open(value)));
+    let account = 'other', failure = '';
+    const calls: unknown[][] = [];
+    const connection = { base: origin.base, saved: async () => ({ user: { id: account } }),
+        request: async (...args: unknown[]) => {
+            calls.push(args);
+            if (failure) throw Object.assign(new Error('test'), { code: failure });
+        } };
+    const first = new ArticleSync(store, connection as any);
+    await first.start(); await first.wake(); await first.close();
+    assert.equal(calls.length, 0);
+    account = origin.owner;
+    connection.base += '/other';
+    const reopened = new ArticleSync(store, connection as any);
+    try {
+        await reopened.start(); await reopened.wake();
+        assert.equal(calls.length, 0);
+        connection.base = origin.base;
+        backendRequests.setEnabled(false); await reopened.wake();
+        assert.equal(calls.length, 0);
+        backendRequests.setEnabled(true);
+        failure = 'CONNECTION_LOST'; await reopened.wake();
+        assert.deepEqual(await store.pendingEdits(value.filePath), [edit]);
+        failure = ''; await reopened.wake(); await reopened.wake();
+        const expected = ['/jobs/original/versions/edit-1', 'PUT', { editedAt: edit.editedAt, title: edit.title, markdown: edit.markdown, document: edit.document }, origin.base, origin.owner];
+        assert.deepEqual(calls, [expected, expected]);
+        assert.deepEqual(await store.pendingEdits(value.filePath), []);
+        assert.deepEqual((await store.read(value.filePath))?.document, edit.document);
+
+        const later = { ...edit, id: 'edit-2' };
+        await store.save(value, later);
+        failure = 'JOB_NOT_FOUND'; reopened.schedule(value.filePath); await reopened.wake();
+        assert.deepEqual(await store.pendingFiles(), []);
+        assert.equal((await store.read(value.filePath))?.markdown, edit.markdown);
+        assert.equal(calls.length, 3);
+    } finally { backendRequests.setEnabled(true); await reopened.close(); }
+}));
+
+test('applying a pending generated article carries its own job and preserves the previous article origin', () => {
+    const value = draft();
+    const old = { kind: 'server' as const, base: 'https://writer.example/api', owner: 'writer', jobId: 'old' };
+    const origin = { ...old, jobId: 'new' };
+    value.articleOrigin = old;
+    mergeResult(value, { title: '새 초안', markdown: '새 본문', articleOrigin: origin }, value.revision - 1);
+    assert.deepEqual(value.articleOrigin, old);
+    assert.deepEqual(value.candidate?.articleOrigin, origin);
+    mergeResult(value, value.candidate!, value.revision);
+    assert.deepEqual(value.articleOrigin, origin);
+    assert.deepEqual(value.articleVersions.at(-1)?.articleOrigin, old);
 });

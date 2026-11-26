@@ -264,6 +264,21 @@ exports.run = async () => {
             await writer.frame.locator('#article-title').fill('에디터에서 고친 제목');
             await writer.frame.locator('#article-body').fill('## 재시작\n\n서버와 무관하게 보존된 로컬 본문');
             await until(async () => (await controls.locator('#side-save-status').innerText()) === '저장됨', 'draft persisted');
+            const api = process.env.PSB_API_URL;
+            const { token } = await (await fetch(api + '/auth/local', { method: 'POST' })).json();
+            const get = async route => {
+                const response = await fetch(api + route, { headers: { Authorization: 'Bearer ' + token } });
+                assert.equal(response.status, 200);
+                return response.json();
+            };
+            await until(async () => {
+                const job = (await get('/jobs')).items.find(item => item.kind === 'write_blog' && item.title === '에디터에서 고친 제목');
+                if (!job) return false;
+                const latest = (await get('/jobs/' + job.id + '/versions')).items[0];
+                if (!latest) return false;
+                const version = await get('/jobs/' + job.id + '/versions/' + latest.id);
+                return version.title === '에디터에서 고친 제목' && version.markdown.includes('서버와 무관하게 보존된 로컬 본문');
+            }, 'a saved editor change appears in the latest version of its server job');
         }
         await until(async () => (await writer.frame.locator('#article-body').inputValue()).includes('서버와 무관하게 보존된 로컬 본문'), 'local draft restored');
         await until(async () => (await writingCounts.innerText()).includes('글 1'), 'saved article count survives reopening');

@@ -74,7 +74,9 @@ export interface WritingJob {
     result?: { plan?: WritingPlan; title?: string; markdown?: string; notices?: AuthorNotice[] };
     partial?: string;
 }
+export type ArticleOrigin = import('./JobRouter').JobTarget & { jobId: string };
 export interface ArticleVersion {
+    articleOrigin?: ArticleOrigin;
     title: string;
     markdown: string;
     document?: ArticleDocument;
@@ -82,6 +84,8 @@ export interface ArticleVersion {
     notices?: AuthorNotice[];
 }
 export interface WritingDraft extends WritingPreferences {
+    lastArticleEditAt?: number;
+    articleOrigin?: ArticleOrigin;
     writingModel?: WritingModel;
     schemaVersion: 1;
     storageVersion?: number;
@@ -114,7 +118,7 @@ export interface WritingDraft extends WritingPreferences {
         cancelRequested?: boolean;
         append?: boolean;
     };
-    candidate?: { plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory; notices?: AuthorNotice[] };
+    candidate?: { articleOrigin?: ArticleOrigin; plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory; notices?: AuthorNotice[] };
     planNotices?: AuthorNotice[];
     articleNotices?: AuthorNotice[];
     articleVersions: ArticleVersion[];
@@ -406,12 +410,13 @@ export function mergeResult(
     if (typeof result.markdown === 'string' && typeof result.title === 'string') {
         if (articleVersionKey(draft) !== articleVersionKey({ title: result.title, markdown: result.markdown })) {
             if (draft.markdown.trim()) {
-                draft.articleVersions.push({ title: draft.title, markdown: draft.markdown, document: draft.document, notices: draft.articleNotices, at: Date.now() });
+                draft.articleVersions.push({ articleOrigin: draft.articleOrigin, title: draft.title, markdown: draft.markdown, document: draft.document, notices: draft.articleNotices, at: Date.now() });
             }
             draft.title = result.title;
             draft.markdown = result.markdown;
             draft.document = result.document;
         }
+        draft.articleOrigin = result.articleOrigin;
         draft.articleNotices = notices;
         draft.articleVersions = previousArticleVersions(draft);
     }

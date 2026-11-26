@@ -25,13 +25,19 @@ test('writing stays in the bottom corner without time labels while streaming and
     expect(bounds.y + bounds.height).toBeGreaterThan(page.viewportSize()!.height - 24);
     expect(bounds.width).toBeLessThan(140);
     expect(bounds.height).toBeLessThan(40);
-    await update(page, { progress: 60, streamHtml: '<p>먼저 도착한 본문</p>' });
+    await expect(page.locator('#article-view')).toBeVisible();
+    await expect(page.locator('#article-title')).toHaveJSProperty('readOnly', true);
+    await expect(page.locator('.prose-editor')).toHaveAttribute('contenteditable', 'false');
+    await update(page, { progress: 60, streamMarkdown: '먼저 도착한 본문' });
     await expect(loading).toHaveText('작성 중…');
-    await expect(page.locator('#stream-preview')).toContainText('먼저 도착한 본문');
-    await page.locator('#cancel-btn').click();
+    await expect(page.locator('.prose-editor')).toContainText('먼저 도착한 본문');
+    await expect(page.locator('#progress-box')).toBeHidden();
+    await page.getByRole('button', { name: '글 작성 취소' }).click();
     expect(await page.evaluate(() => (window as any).__messages.at(-1).type)).toBe('cancel');
     await update(page, { pending: false, running: false, status: '작업을 취소했습니다.' });
     await expect(loading).toBeHidden();
+    await expect(page.locator('#plan-view')).toBeVisible();
+    await expect(page.locator('.prose-editor')).not.toContainText('먼저 도착한 본문');
 });
 
 test('preparation, errors, retry and completion update the small status indicator', async ({ page }) => {
@@ -57,9 +63,11 @@ test('loading fits a narrow editor, respects reduced motion and keeps explanatio
     await openWebview(page);
     await update(page);
     await expect(page.locator('.loading-spinner')).toHaveCSS('animation-name', 'none');
+    await page.locator('#plan-tab').click();
     await page.locator('#summary').fill('생성 중에 고친 설명');
     await update(page, { progress: 80 });
     await expect(page.locator('#summary')).toHaveValue('생성 중에 고친 설명');
+    await expect(page.locator('#plan-view')).toBeVisible();
     await expect(page.locator('#generation-loading')).toHaveCSS('pointer-events', 'none');
     const bounds = (await page.locator('#generation-loading').boundingBox())!;
     expect(bounds.x).toBeGreaterThan(0);

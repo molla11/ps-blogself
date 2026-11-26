@@ -89,3 +89,16 @@ test('unsaved article edits do not acknowledge different server content hidden b
     await expect.poll(() => viewed(page)).toHaveLength(1);
     expect((await viewed(page))[0]).toMatchObject({ notes: [], articles: ['e'.repeat(64)] });
 });
+
+test('a background completion is marked read when the finished article replaces the stream and becomes visible', async ({ page }) => {
+    await openWebview(page);
+    await post(page, { ...base, pending: true, running: true, pendingKind: 'write_blog', streamMarkdown: '작성 중',
+        title: '기존 글', markdown: '기존 내용', activity: { articles: [older], notes: [] } });
+    await expect(page.locator('.prose-editor')).toHaveText('작성 중');
+    await post(page, { ...base, writingVisible: false, title: '완성된 글', markdown: '완성된 본문', activity: { articles: [article], notes: [] } });
+    await expect(page.locator('.prose-editor')).toHaveText('완성된 본문');
+    expect(await viewed(page)).toEqual([]);
+    await post(page, { type: 'writingVisibility', visible: true });
+    await expect.poll(() => viewed(page)).toHaveLength(1);
+    expect((await viewed(page))[0].articles).toEqual([article]);
+});

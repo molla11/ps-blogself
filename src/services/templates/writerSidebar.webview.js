@@ -9,7 +9,7 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode) {
             options: Array.from(select.options, option => [option.value, option.textContent]) };
     };
     const sourceButtons = {
-        plan: 'plan-tab', article: 'article-tab', generate: 'generate-btn', restore: 'restore-version-btn',
+        plan: 'plan-tab', article: 'article-tab', generate: 'generate-btn', cancelWrite: 'cancel-write-btn', restore: 'restore-version-btn',
         older: 'version-older-btn', newer: 'version-newer-btn',
     };
     const noticeIds = ['ownership-box', 'recovery-box', 'progress-box', 'error-box', 'candidate-box'];
@@ -28,7 +28,7 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode) {
     function useLocalDrawer(local) {
         if (local === (positions.size > 0)) return;
         if (local) {
-            for (const id of ['writing-header', 'contest-backend-notice', ...noticeIds, 'generation-loading', 'stream-box', 'article-toolbar', 'article-outline']) {
+            for (const id of ['writing-header', 'contest-backend-notice', ...noticeIds, 'article-toolbar', 'article-outline']) {
                 const node = el(id), position = document.createComment(id);
                 node.before(position);
                 positions.set(node, position);
@@ -56,14 +56,12 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode) {
             const notices = noticeIds.filter(id => !el(id).hidden).map(id => ({
                 id, text: el(id).querySelector('span')?.textContent || '', actions: buttons(el(id)),
             }));
-            if (!el('generation-loading').hidden) {
-                notices.push({ id: 'generation-loading', text: el('loading-title').textContent, actions: [] });
-            }
             const controls = {
                 tab: el('plan-view').hidden ? 'article' : 'plan',
                 articleDisabled: el('article-tab').disabled,
                 generateLabel: el('generate-label').textContent,
                 generateDisabled: el('generate-btn').disabled,
+                showCancelWrite: !el('cancel-write-btn').hidden,
                 hasPlan: !el('plan-content').hidden,
                 prepareLabel: currentModel().pendingKind === 'prepare_blog' ? '메모 생성 중…' : prepare.textContent.trim(),
                 prepareDisabled: prepare.disabled || prepare.hidden || (el('preparing').hidden && el('plan-content').hidden),
@@ -82,7 +80,6 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode) {
                 headings: [...el('outline-list').children].map(button => [button.dataset.level, button.textContent]),
                 exports: buttons(el('export-menu')), ghostStatus: el('ghost-status').hidden ? '' : el('ghost-status').textContent,
                 saveStatus: el('save-status').textContent, notices,
-                stream: el('stream-box').hidden ? '' : [...el('stream-preview').children].map(block => block.textContent).join('\n\n'),
             };
             const key = JSON.stringify(controls);
             if (key === previous) return;

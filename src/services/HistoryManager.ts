@@ -16,6 +16,13 @@ const htmlText = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&
 
 export class HistoryManager {
     public static readonly viewType = 'psb.history';
+    private static readonly panels = new Map<vscode.WebviewPanel, string>();
+    private static readonly activeChanged = new vscode.EventEmitter<void>();
+    public static readonly onDidChangeActive = this.activeChanged.event;
+
+    public static get activeFile() {
+        for (const [panel, filePath] of this.panels) if (panel.active) return filePath;
+    }
 
     public static async openHistory(extensionUri: vscode.Uri, filePath: string, discoveredLanguage?: string) {
         const panel = vscode.window.createWebviewPanel(
@@ -29,6 +36,8 @@ export class HistoryManager {
             },
         );
 
+        this.panels.set(panel, filePath);
+        this.activeChanged.fire();
         let recordedHistoryReady = false;
         let disposed = false;
         let revision = 0;
@@ -123,6 +132,7 @@ export class HistoryManager {
             if (recordedHistoryReady && changed === filePath) void updatePreparation().catch(() => {});
         });
         const visibility = panel.onDidChangeViewState(() => {
+            this.activeChanged.fire();
             if (!panel.visible) return;
             // A retained but suspended webview can miss its in-flight response.
             // The webview accepts only its pending offset, so replay is idempotent.
@@ -133,6 +143,8 @@ export class HistoryManager {
             }
         });
         panel.onDidDispose(() => {
+            this.panels.delete(panel);
+            this.activeChanged.fire();
             disposed = true;
             session?.stream.dispose();
             messages.dispose();

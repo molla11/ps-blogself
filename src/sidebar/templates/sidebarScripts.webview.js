@@ -553,7 +553,7 @@ window.addEventListener('message', (event) => {
             break;
         }
         case 'sidebarWriter':
-            showWriter(message.writer);
+            showWriter(message.writer, message.historyFile);
             break;
         case 'writingActivity':
             rememberWritingActivity(message);

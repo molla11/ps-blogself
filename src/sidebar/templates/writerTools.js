@@ -2,7 +2,9 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
     const el = id => document.getElementById(id);
     const main = el('main-view'), tools = el('writer-tools'), library = el('file-library'), toggle = el('library-toggle');
     const button = key => tools.querySelector('button[data-writer-action="' + key + '"]');
-    let filePath, expanded = true;
+    const roomy = window.matchMedia('(min-height: 600px)');
+    const libraryChoices = new Map();
+    let filePath, expanded = true, contextual = false;
 
     function expand(open) {
         if (!open && library.contains(document.activeElement)) toggle.focus();
@@ -12,7 +14,12 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         toggle.setAttribute('aria-expanded', String(open));
         main.classList.toggle('library-open', open);
     }
-    toggle.addEventListener('click', () => expand(!expanded));
+    const expandForHeight = () => expand(!contextual || (libraryChoices.get(roomy.matches) ?? roomy.matches));
+    roomy.addEventListener('change', expandForHeight);
+    toggle.addEventListener('click', () => {
+        libraryChoices.set(roomy.matches, !expanded);
+        expand(!expanded);
+    });
     function send(action, value) {
         if (filePath) vscode.postMessage({ type: 'writerAction', filePath, action, value });
     }
@@ -98,15 +105,19 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         select.value = state.value;
         select.disabled = state.disabled || state.options.length < 2;
     }
-    return writer => {
-        const changedFile = filePath !== writer?.filePath;
-        filePath = writer?.filePath;
+    return (writer, historyFile) => {
+        const previousFile = filePath;
+        filePath = writer?.filePath || historyFile;
+        contextual = !!filePath;
         main.classList.toggle('writing', !!writer);
-        tools.hidden = toggle.hidden = !writer;
-        if (changedFile) {
-            for (const id of ['side-outline', 'side-export', 'side-stream']) el(id).open = false;
+        main.classList.toggle('history', !writer && !!historyFile);
+        main.classList.toggle('context-library', contextual);
+        tools.hidden = !writer;
+        toggle.hidden = !contextual;
+        if (previousFile !== filePath) {
+            for (const id of ['side-outline', 'side-export']) el(id).open = false;
             if (filePath) onFileChange(filePath);
-            expand(!writer);
+            expandForHeight();
         }
         if (!writer) return;
         const c = writer.controls, plan = c.tab === 'plan';
@@ -121,7 +132,8 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         button('prepare').disabled = c.prepareDisabled;
         button('prepare').classList.toggle('secondary', c.hasPlan);
         button('prepare').textContent = c.prepareLabel;
-        button('generate').hidden = !c.hasPlan && plan;
+        button('cancelWrite').hidden = !c.showCancelWrite;
+        button('generate').hidden = c.showCancelWrite || (!c.hasPlan && plan);
         button('generate').textContent = c.generateLabel;
         button('generate').disabled = c.generateDisabled;
         button('restore').hidden = c.restoreHidden;
@@ -135,12 +147,11 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         renderOutline(c.headings);
         renderButtons(el('side-file-actions'), c.exports.filter(item => !item.action.startsWith('ghost-')));
         renderButtons(el('side-ghost-actions'), c.exports.filter(item => item.action.startsWith('ghost-')));
-        for (const [id, text] of [['side-save-status', c.saveStatus], ['side-ghost-status', c.ghostStatus], ['side-stream-text', c.stream]]) {
+        for (const [id, text] of [['side-save-status', c.saveStatus], ['side-ghost-status', c.ghostStatus]]) {
             const node = el(id);
             if (node.textContent !== text) node.textContent = text;
             node.hidden = !text;
         }
-        el('side-stream').hidden = !c.stream;
         renderNotices(c.notices);
     };
 }

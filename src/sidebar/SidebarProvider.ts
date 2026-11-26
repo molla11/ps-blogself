@@ -181,12 +181,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 });
             }
         });
-        const controls = BlogPostManager.onDidChangeControls(() => {
+        const sendDocumentContext = () => {
             if (this._view === webviewView && webviewView.visible) {
-                void webviewView.webview.postMessage({ type: 'sidebarWriter', writer: BlogPostManager.sidebarWriter });
+                void webviewView.webview.postMessage({ type: 'sidebarWriter', writer: BlogPostManager.sidebarWriter, historyFile: HistoryManager.activeFile });
             }
-        });
+        };
+        const controls = BlogPostManager.onDidChangeControls(sendDocumentContext);
+        const history = HistoryManager.onDidChangeActive(sendDocumentContext);
         webviewView.onDidDispose(() => {
+            history.dispose();
             controls.dispose();
             discovery.dispose();
             if (this._view === webviewView) {

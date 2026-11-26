@@ -12,7 +12,6 @@ import { documentFromMarkdown, documentHtml, documentMarkdown, validateDocument 
 import { separateArticleTitle } from '../writing/ArticleContent';
 import * as vscode from 'vscode';
 import * as path from 'path';
-import MarkdownIt = require('markdown-it');
 import { articleHtml, taggedMarkdown } from '../writing/ArticleExport';
 import { normalizeExportTags } from '../settings/ExportTags';
 import { checkInputSize } from '../writing/InputLimits';
@@ -30,7 +29,7 @@ import { registerGeneratedArticles, writingActivityContent, WritingActivityConte
 import { WindowSession } from '../storage/WindowSession';
 import { ConnectionEnvironment } from '../writing/ConnectionSettings';
 import {
-    WritingDraft,
+    WritingDraft, WritingJob,
     mergeResult,
     newDraft,
     sourceFor,
@@ -539,6 +538,7 @@ export class BlogPostManager {
             type: 'model',
             filePath: draft.filePath,
             fileName: path.basename(draft.filePath),
+            language: draft.history.language,
             activity: view.activity.visible,
             writingVisible: this.writingIsVisible(view),
             writingAllowed: this.writingAllowed,
@@ -575,7 +575,7 @@ export class BlogPostManager {
             articleNotices: draft.articleNotices,
             candidateNotices: draft.candidate?.notices,
             versions: previousArticleVersions(draft).map((v) => ({ id: articleVersionKey(v), at: v.at, title: v.title })),
-            streamHtml: view.partial ? new MarkdownIt({ html: false }).render(view.partial) : '',
+            streamMarkdown: view.partial,
         });
     }
     private static imageSources(view: View, article: PublishArticle): Record<string, string> {
@@ -1093,12 +1093,15 @@ export class BlogPostManager {
                     await this.enqueue(view, async () => { signal.throwIfAborted(); await this.store.save(view.draft); });
                 }
                 const target = pending.target;
+                const update = (job: WritingJob) => {
+                    if (signal.aborted) return;
+                    view.progress = job.progress;
+                    // Terminal events omit the partial body while the final draft is being saved.
+                    if (job.partial !== undefined) view.partial = job.partial;
+                    this.render(view);
+                };
                 if (!view.editable) {
-                    if (pending.jobId) {
-                        await this.jobs.watch(pending.jobId, target, job => {
-                            if (!signal.aborted) { view.progress = job.progress; view.partial = job.partial; this.render(view); }
-                        }, signal);
-                    }
+                    if (pending.jobId) await this.jobs.watch(pending.jobId, target, update, signal);
                     return;
                 }
                 if (!pending.jobId && (pending.cancelRequested || (!retry && pending.request.priority === 'prefetch' && !this.autoMemos))) {
@@ -1113,7 +1116,6 @@ export class BlogPostManager {
                 signal.throwIfAborted();
                 if (retry && ['failed', 'cancelled'].includes(job.status) && !pending.cancelRequested) job = await this.jobs.retry(job.id, target);
                 if (pending.cancelRequested && ['queued', 'running', 'failed'].includes(job.status)) job = (await this.jobs.cancel(job.id, target))!;
-                const update = (value: typeof job) => { if (!signal.aborted) { view.progress = value.progress; view.partial = value.partial; this.render(view); } };
                 update(job);
                 if (['queued', 'running'].includes(job.status)) job = await this.jobs.watch(job.id, target, update, signal);
                 if (job.status === 'completed') {

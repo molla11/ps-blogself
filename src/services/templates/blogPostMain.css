@@ -44,12 +44,31 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; }
 .tab { padding: 12px 0 10px; border-radius: 0; color: var(--muted); }
 .tab.active { color: var(--ink); border-bottom: 2px solid var(--accent); }
 .notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 24px; font-size: 12px; }
-.author-notices { margin: 16px 0; padding: 10px 14px; border-inline-start: 3px solid var(--vscode-editorWarning-foreground, #ae7a29); background: var(--vscode-textBlockQuote-background, var(--paper)); overflow-wrap: anywhere; }
-.author-notices h2 { font-size: 13px; margin: 0 0 6px; }
-.author-notices details + details { margin-top: 8px; }
-.author-notices summary { cursor: pointer; font-weight: 600; }
-.author-notices p { white-space: pre-wrap; margin: 3px 0 4px 16px; }
-#candidate-notices { margin-inline: 24px; }
+#author-notices { position: fixed; right: 16px; bottom: 12px; z-index: 15; }
+body:has(#generation-loading:not([hidden])) #author-notices { bottom: 48px; }
+#notice-toggle, #notice-panel {
+    color: var(--vscode-editorHoverWidget-foreground, var(--ink));
+    background: var(--vscode-editorHoverWidget-background, var(--paper));
+    border: 1px solid var(--vscode-editorHoverWidget-border, var(--line));
+    box-shadow: 0 3px 12px var(--vscode-widget-shadow, #0002);
+}
+#notice-toggle { font-size: 12px; border-radius: 14px; padding: 3px 10px; }
+#notice-count { font-weight: 700; }
+#notice-panel {
+    position: absolute; bottom: 100%; right: 0; width: min(340px, calc(100vw - 32px));
+    max-height: min(50vh, 420px); overflow: auto; overscroll-behavior: contain;
+    border-radius: 6px; padding: 12px 14px; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6;
+}
+#notice-panel section > h2 { font-size: 13px; margin: 0 0 6px; }
+#notice-panel section:not([hidden]) + section { margin-top: 12px; }
+#notice-panel details + details { margin-top: 8px; }
+#notice-panel summary { cursor: pointer; font-weight: 600; }
+#notice-panel details > div { margin: 6px 0 0 14px; }
+#notice-panel details > div > :first-child { margin-top: 0; }
+#notice-panel details > div > :last-child { margin-bottom: 0; }
+#notice-panel p { margin: 0 0 .5em; }
+#notice-panel pre { padding: 8px; font-size: 12px; }
+#notice-panel :not(pre) > code { padding: 1px 3px; border-radius: 3px; background: var(--vscode-textCodeBlock-background, var(--desk)); }
 .notice > span { flex: 1; min-width: 180px; }
 #progress-box { color: var(--muted); }
 .error { padding: 10px 12px; border: 1px solid var(--vscode-inputValidation-errorBorder, #b14444); background: var(--vscode-inputValidation-errorBackground, #fff1ef); white-space: pre-wrap; border-radius: 4px; }
@@ -223,8 +242,6 @@ input[type=range] { width: 100%; min-width: 0; accent-color: var(--accent); }
 #body-field { margin: 0; font-size: 12px; color: var(--muted); }
 #article-body { min-height: 420px; font: 13px/1.8 var(--vscode-editor-font-family, monospace); resize: vertical; }
 #version-status { margin-bottom: 16px; }
-#stream-box { margin: 20px auto; padding: 24px; max-width: 840px; border-left: 2px solid var(--accent); background: var(--paper); }
-#stream-box h2 { margin-bottom: 20px; }
 .action-menu { position: fixed; inset: auto; margin: 0; width: 184px; max-height: calc(100vh - 24px); overflow: auto; padding: 4px; border: 1px solid var(--line); border-radius: 5px; background: var(--vscode-menu-background, var(--paper)); color: var(--ink); box-shadow: 0 4px 14px #00000016; }
 .action-menu button { display: block; width: 100%; text-align: left; padding: 7px 9px; background: transparent; color: inherit; font-size: 12px; }
 .action-menu button:hover, .action-menu button:focus-visible { background: var(--hover); }
@@ -265,7 +282,6 @@ dialog::backdrop { background: #00000045; }
     .section-heading { gap: 8px; flex-wrap: wrap; }
     #article-outline { position: fixed; z-index: 3; background: var(--paper); border-right: 1px solid var(--line); box-shadow: 4px 0 12px #00000012; width: 210px; height: 70vh; }
     .prose-editor, .article-preview { font-size: 14px; }
-    #stream-box { margin: 14px; }
 }
 @media (max-width: 480px) {
     .model-picker { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 10px; }
@@ -306,8 +322,6 @@ dialog::backdrop { background: #00000045; }
 .with-writer-sidebar #article-toolbar,
 .with-writer-sidebar #article-outline,
 .with-writer-sidebar main > .notice,
-.with-writer-sidebar #stream-box,
-.with-writer-sidebar #generation-loading,
 .with-writer-sidebar #prepare-empty-btn,
 .with-writer-sidebar #prepare-btn { display: none; }
 :is(.with-writer-sidebar, .with-local-writer-tools) .document-layout { margin-top: 0; }
@@ -321,7 +335,7 @@ dialog::backdrop { background: #00000045; }
     background: var(--paper); color: var(--ink); box-shadow: 4px 0 16px #0002;
 }
 #local-writer-tools > button { display: block; margin-inline-start: auto; }
-#local-writer-tools :is(.writing-header, .article-toolbar, #article-outline, #generation-loading) { position: static; width: auto; height: auto; max-height: none; }
+#local-writer-tools :is(.writing-header, .article-toolbar, #article-outline) { position: static; width: auto; height: auto; max-height: none; }
 #local-writer-tools :is(.topbar, .writing-navigation, .document-controls, .version-bar) { padding: 8px 0; flex-wrap: wrap; }
 #local-writer-tools .notice { margin: 8px 0; }
 body:has(#article-view[hidden]) #local-writer-tools :is(#article-toolbar, #article-outline) { display: none; }

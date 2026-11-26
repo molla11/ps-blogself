@@ -14,7 +14,7 @@ import { CodeExtension, $createCodeNode, $isCodeNode } from '@lexical/code-core'
 import { TableExtension, $createTableNodeWithDimensions } from '@lexical/table';
 import { ClickAfterLastBlockExtension, SelectBlockExtension, TabIndentationExtension } from '@lexical/extension';
 import { $setBlocksType } from '@lexical/selection';
-import { defineExtension, configExtension, $getSelection, $setSelection, $isRangeSelection, $getRoot, $getNodeByKey, $getNearestNodeFromDOMNode, $createParagraphNode, $createNodeSelection, $createTextNode, $insertNodes, FORMAT_TEXT_COMMAND, UNDO_COMMAND, REDO_COMMAND, CLEAR_HISTORY_COMMAND, SKIP_SCROLL_INTO_VIEW_TAG, PASTE_COMMAND, DROP_COMMAND, COMMAND_PRIORITY_HIGH } from 'lexical';
+import { defineExtension, configExtension, $getSelection, $setSelection, $isRangeSelection, $getRoot, $getNodeByKey, $getNearestNodeFromDOMNode, $createParagraphNode, $createNodeSelection, $createTextNode, $insertNodes, FORMAT_TEXT_COMMAND, UNDO_COMMAND, REDO_COMMAND, CLEAR_HISTORY_COMMAND, HISTORIC_TAG, SKIP_SCROLL_INTO_VIEW_TAG, PASTE_COMMAND, DROP_COMMAND, COMMAND_PRIORITY_HIGH } from 'lexical';
 import { documentFromMarkdown, documentMarkdown, validateDocument, safeArticleUrl } from '../../writing/ArticleDocument';
 import { ArticleImageNode, ArticleDividerNode, $createArticleImageNode, setImageSources } from './articleNodes';
 import { registerBlockDragging } from './blockDragging.js';
@@ -35,6 +35,7 @@ const blocks = [['paragraph','본문'], ['heading','제목'], ['code','코드 �
 
 export function createArticleEditor({ element, toolbar, outline, onChange, onOpenLink, onImageFile, onError }) {
     let editor, enabled = true, active = true, latestMarkdown = '', latestJSON = '', originalMarkdown = '', originalJSON = '', savedSelection;
+    let beforeStream, lastPartial;
     const tools = [];
     const el = id => document.getElementById(id);
     function doc() { return validateDocument({ version: 1, ...editor.getEditorState().toJSON() }); }
@@ -62,7 +63,7 @@ export function createArticleEditor({ element, toolbar, outline, onChange, onOpe
         if (!editor) return;
         editor.read(() => {
             const selection = $getSelection(), block = blockAtSelection();
-            if (selection) savedSelection = selection.clone();
+            if (selection && !beforeStream) savedSelection = selection.clone();
             for (const tool of tools) {
                 tool.button.disabled = !enabled || !active;
                 if (tool.mark) tool.button.setAttribute('aria-pressed', String($isRangeSelection(selection) && selection.hasFormat(tool.mark)));
@@ -121,7 +122,7 @@ export function createArticleEditor({ element, toolbar, outline, onChange, onOpe
             editor = instance;
             const stop = editor.registerUpdateListener(({ tags, dirtyElements, dirtyLeaves }) => {
                 refreshTools(); refreshOutline();
-                if (tags.has('psb-load') || !dirtyElements.size && !dirtyLeaves.size) return;
+                if (beforeStream || tags.has('psb-load') || !dirtyElements.size && !dirtyLeaves.size) return;
                 const document = doc(), json = JSON.stringify(document);
                 if (json === latestJSON) return;
                 latestJSON = json;
@@ -240,15 +241,29 @@ export function createArticleEditor({ element, toolbar, outline, onChange, onOpe
     });
     let currentImages = {};
     return {
-        setMarkdown(markdown = '', editable = true, document, images = {}) {
-            enabled = editable; currentImages = { ...currentImages, ...images }; setImageSources(currentImages);
-            const incoming = document && validateDocument(document);
-            if (latestMarkdown !== markdown || incoming && JSON.stringify(incoming) !== latestJSON) {
-                const state = incoming || documentFromMarkdown(markdown);
-                editor.setEditorState(editor.parseEditorState({ root: state.root }), { tag: 'psb-load' });
-                latestMarkdown = originalMarkdown = markdown;
-                latestJSON = originalJSON = JSON.stringify(doc()); savedSelection = null;
-                editor.dispatchCommand(CLEAR_HISTORY_COMMAND);
+        setMarkdown(markdown = '', editable = true, document, images = {}, partial) {
+            enabled = editable;
+            currentImages = { ...currentImages, ...images }; setImageSources(currentImages);
+            if (partial !== undefined) {
+                // Keep the draft, including its undo stack, outside the streamed updates.
+                if (partial !== lastPartial) {
+                    beforeStream ??= editor.getEditorState();
+                    lastPartial = partial;
+                    editor.setEditorState(editor.parseEditorState(documentFromMarkdown(partial)), { tag: HISTORIC_TAG });
+                }
+            } else {
+                if (beforeStream) {
+                    editor.setEditorState(beforeStream.clone(null), { tag: HISTORIC_TAG });
+                    beforeStream = lastPartial = undefined;
+                }
+                const incoming = document && validateDocument(document);
+                if (latestMarkdown !== markdown || incoming && JSON.stringify(incoming) !== latestJSON) {
+                    const state = incoming || documentFromMarkdown(markdown);
+                    editor.setEditorState(editor.parseEditorState({ root: state.root }), { tag: 'psb-load' });
+                    latestMarkdown = originalMarkdown = markdown;
+                    latestJSON = originalJSON = JSON.stringify(doc()); savedSelection = null;
+                    editor.dispatchCommand(CLEAR_HISTORY_COMMAND);
+                }
             }
             editor.setEditable(enabled); refreshTools(); refreshOutline();
             element.classList.toggle('read-only', !enabled); positionSelectionTools();

@@ -275,7 +275,7 @@ test('service polling refreshes notices and usage while the window and sidebar a
         '../config': { configManager: { onDidChange: disposed } },
         '../storage/StorageManager': { storageManager: { onDidUpdateIndex: disposed } },
         './getSidebarHtml': { getSidebarHtml: () => '' },
-        '../services/HistoryManager': { HistoryManager: {} },
+        '../services/HistoryManager': { HistoryManager: { onDidChangeActive: disposed } },
         '../services/BlogPostManager': { BlogPostManager: manager },
     };
     const loader = require('node:module'), original = loader._load;

@@ -32,12 +32,9 @@
                 <div class="writer-actions">
                     <button class="secondary" data-writer-action="prepare" type="button">메모 생성</button>
                     <button data-writer-action="generate" type="button">글쓰기</button>
+                    <button data-writer-action="cancelWrite" type="button" class="secondary" hidden>글 작성 취소</button>
                 </div>
                 <div id="side-writer-notices"></div>
-                <details class="writer-disclosure" id="side-stream" hidden>
-                    <summary>작성 중인 글</summary>
-                    <div id="side-stream-text"></div>
-                </details>
                 <div id="writer-article-options" hidden>
                     <div class="writer-view-modes" id="side-view-modes" role="group" aria-label="본문 보기 방식" hidden>
                         <button data-writer-action="edit" type="button" aria-pressed="true">편집</button>
@@ -65,10 +62,6 @@
                     <p class="writer-hint" id="side-ghost-status" role="status" hidden></p>
                 </div>
             </section>
-            <button type="button" id="library-toggle" aria-controls="file-library" aria-expanded="true" hidden>
-                <i class="codicon codicon-chevron-up" aria-hidden="true"></i>코드 파일
-            </button>
-            <div id="file-library">
             <div class="config-section">
                 <div class="config-box">
                     <div class="config-info">
@@ -134,7 +127,10 @@
             </div>
 
             <!-- Recent Logs Section -->
-            <div class="logs-section">
+            <button type="button" id="library-toggle" aria-controls="file-library" aria-expanded="true" hidden>
+                <i class="codicon codicon-chevron-up" aria-hidden="true"></i>코드 파일
+            </button>
+            <div class="logs-section" id="file-library">
                 <div class="logs-title">
                     <span id="recent-logs-title">코드 파일</span>
                     <button id="toggle-logs-search-btn" class="logs-search-toggle" type="button" title="코드 파일 검색" aria-label="코드 파일 검색" aria-expanded="false" aria-controls="logs-search">
@@ -170,7 +166,6 @@
                     </button>
                 </div>
             </footer>
-            </div>
         </div>
 
         <section id="contest-view" class="view-container" aria-label="대회 모드">

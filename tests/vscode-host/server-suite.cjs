@@ -88,11 +88,15 @@ exports.run = async () => {
             await unrecordedTools.getByRole('button', { name: '메모 생성', exact: true }).waitFor();
             assert.equal(await unrecordedTools.locator('#writer-file-name').innerText(), 'search.CPP');
             assert.ok(await unrecordedWriter.locator('#prepare-empty-btn').isHidden());
-            assert.equal(await unrecordedTools.locator('#library-toggle').getAttribute('aria-expanded'), 'false');
-            await unrecordedTools.locator('#library-toggle').click();
+            const toggle = unrecordedTools.locator('#library-toggle');
+            const roomy = await unrecordedTools.evaluate(() => innerHeight >= 600);
+            assert.equal(await toggle.getAttribute('aria-expanded'), String(roomy));
+            if (!roomy) await toggle.click();
             await unrecordedTools.locator('.log-item').filter({ hasText: 'search.CPP' }).click();
             await unrecordedTools.locator('#ctx-view-history').click();
             const emptyHistory = (await surface(browser, '.history-entry')).frame;
+            await unrecordedTools.locator('#main-view.history #library-toggle').waitFor();
+            assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
             assert.equal(await emptyHistory.locator('.history-entry').count(), 1);
             assert.equal(await emptyHistory.locator('.stat-added').innerText(), '+0(0)');
             assert.equal(await emptyHistory.locator('.diff-line').count(), 0);
@@ -202,11 +206,15 @@ exports.run = async () => {
             await controls.locator('#side-model').selectOption('standard');
             await until(async () => (await writer.frame.locator('#writing-model-value').innerText()) === 'standard', 'sidebar model selection reaches the editor');
             await controls.getByRole('button', { name: '글쓰기', exact: true }).click();
-            await until(async () => (await controls.locator('#side-stream-text').textContent()).includes('생성 중인 본문'), 'stream available in sidebar before completion');
-            assert.ok(await writer.frame.locator('#generate-btn').isDisabled());
+            const streaming = writer.frame.locator('.prose-editor[contenteditable=false]');
+            await streaming.locator('h2', { hasText: '접근' }).waitFor();
+            assert.ok((await streaming.innerText()).includes('생성 중인 본문'));
+            await controls.getByRole('button', { name: '글 작성 취소', exact: true }).waitFor();
+            assert.equal(await controls.locator('#side-progress-box').count(), 0);
             await writer.page.screenshot({ path: path.join(sandbox, 'streaming.png') });
             if (!autoMode) await vscode.commands.executeCommand('workbench.action.files.newUntitledFile');
             if (autoMode === 'publish') {
+                await controls.getByRole('button', { name: '변경사항 요약' }).click();
                 await writer.frame.locator('#summary').fill('생성 중 수정한 풀이 의도');
                 await until(async () => (await controls.locator('#side-save-status').innerText()) === '저장됨', 'concurrent edits saved before generation finishes');
                 await controls.locator('#side-candidate-box').waitFor();
@@ -290,7 +298,8 @@ exports.run = async () => {
         assert.equal((await requests()).length, stage === 'first' ? 2 : 3, 'reopening must not repeat model work');
         if (stage === 'first') {
             await vscode.commands.executeCommand('psb.sidebar.focus');
-            await sidebar.frame.locator('#library-toggle').click();
+            const toggle = sidebar.frame.locator('#library-toggle');
+            if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
             // The earlier history panel is retained while the new webview opens.
             const previousFrames = new Set(browser.contexts().flatMap(ctx => ctx.pages().flatMap(page => page.frames())));
             await recorded.click({ button: 'right' });

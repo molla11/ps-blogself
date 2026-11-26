@@ -1,0 +1,93 @@
+name: VS Code extension
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: VSIX CI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm install --global "$(node -p "require('./package.json').packageManager")"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:unit
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:ui
+      - name: Type-check, lint and package the production extension
+        id: package
+        run: |
+          pnpm package:vsix
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          mv dist/ps-blogself.vsix "dist/ps-blogself-$version.vsix"
+      - name: Install VSIX and open Welcome in VS Code
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: xvfb-run -a node tests/vsix/install.cjs "dist/ps-blogself-$VERSION.vsix"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ps-blogself-${{ steps.package.outputs.version }}
+          path: dist/ps-blogself-${{ steps.package.outputs.version }}.vsix
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  release:
+    name: Publish VSIX
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: vsix-release-${{ needs.verify.outputs.version }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ps-blogself-${{ needs.verify.outputs.version }}
+      - name: Publish the verified package once per version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          tag="v$VERSION"
+          asset="ps-blogself-$VERSION.vsix"
+          release=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" |
+            jq -sc --arg tag "$tag" 'add | map(select(.tag_name == $tag)) | first')
+          if [[ $(jq -r '.draft' <<< "$release") == false ]]; then
+            jq -e --arg file "$asset" 'any(.assets[]; .name == $file and .state == "uploaded")' <<< "$release"
+            echo "$tag has already been published."
+            exit 0
+          fi
+          if [[ "$release" == null ]]; then
+            # An existing standalone tag may designate a different commit.
+            gh api "repos/$GH_REPO/git/matching-refs/tags/$tag" |
+              jq -e --arg ref "refs/tags/$tag" 'all(.[]; .ref != $ref)'
+            options=()
+            if [[ $VERSION == *-* ]]; then options+=(--prerelease); fi
+            gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag" --generate-notes "${options[@]}"
+          else
+            # A retry may resume a draft created for this exact main commit.
+            jq -e --arg sha "$GITHUB_SHA" '.target_commitish == $sha' <<< "$release"
+          fi
+          gh release upload "$tag" "$asset" --clobber
+          gh release edit "$tag" --draft=false

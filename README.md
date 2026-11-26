@@ -74,7 +74,7 @@ Ghost 연결에는 해당 사이트의 Admin API 키가 필요하며 키는 VS C
 
 ## 개발하기
 
-Node.js 24, pnpm 11, VS Code 1.108.1 이상을 기준으로 개발합니다.
+Node.js 24, pnpm 12.16.1, VS Code 1.108.1 이상을 기준으로 개발합니다.
 
 ```sh
 git clone https://github.com/molla11/ps-blogself.git
@@ -105,6 +105,14 @@ pnpm test:host
 ```
 
 통합 테스트는 기록·자동 준비·스트리밍·초안 복원·사용량과 Ghost 내보내기를 확인합니다. Linux에서는 GUI 디스플레이가 필요하며 `VSCODE_EXECUTABLE`로 VS Code 실행 파일을 지정할 수 있습니다.
+
+## VSIX 다운로드와 배포
+
+[최신 GitHub Release](https://github.com/molla11/ps-blogself/releases/latest)의 **Assets**에서 `ps-blogself-<버전>.vsix`를 받아 VS Code의 **Extensions: Install from VSIX…**로 설치합니다.
+
+`main` 대상 PR과 병합된 커밋에서 GitHub Actions가 단위 테스트와 Chromium UI 테스트를 실행합니다. 타입 검사와 린트를 통과한 VSIX를 새 VS Code 프로필에 설치하고 Welcome 탭이 열리는지 확인합니다. 통과한 패키지는 해당 실행의 **Artifacts**에서 14일간 받을 수 있습니다. 별도의 로컬 테스트 백엔드가 필요한 전체 통합 테스트는 위의 `pnpm test:host`로 실행합니다.
+
+새 버전을 배포하려면 PR에서 `package.json`의 `version`을 올립니다. 병합 후 `main`의 CI가 통과하면 같은 VSIX가 `v<버전>` GitHub Release에 자동으로 올라갑니다. 이미 배포한 버전의 VSIX는 보존합니다.
 
 ## 설치 패키지 만들기
 

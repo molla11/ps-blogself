@@ -168,6 +168,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         BlogPostManager.sidebarAction(data.filePath, data.action, data.value);
                         break;
                     }
+                    case 'sidebarHome': {
+                        if (typeof data.filePath !== 'string') break;
+                        if (data.context === 'writer') BlogPostManager.showSidebarHome(data.filePath);
+                        if (data.context === 'history') HistoryManager.showSidebarHome(data.filePath);
+                        break;
+                    }
                 }
             } catch (error) {
                 if (data?.type === 'setContestMode' || data?.type === 'setContestOption') await sendContestMode();

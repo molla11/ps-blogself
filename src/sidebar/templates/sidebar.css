@@ -584,7 +584,11 @@ label.config-box .switch { flex-shrink: 0; }
 
 .back-btn {
     width: auto;
-    padding: 4px;
+    flex: none;
+    align-self: flex-start;
+    min-height: 26px;
+    gap: 5px;
+    padding: 4px 6px;
     background: none;
     border: none;
     color: var(--vscode-foreground);
@@ -598,6 +602,7 @@ label.config-box .switch { flex-shrink: 0; }
 .back-btn:hover {
     background: var(--vscode-toolbar-hoverBackground);
 }
+.back-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 
 /* Keep recording, file selection and the primary action in one sidebar. */
 .sidebar-actions {
@@ -698,11 +703,23 @@ label.config-box .switch { flex-shrink: 0; }
 .writer-disclosure { border-bottom: 1px solid var(--vscode-widget-border); }
 .writer-disclosure summary { padding: 8px 2px; cursor: pointer; font-size: 12px; font-weight: 600; }
 .writer-disclosure[open] { padding-bottom: 6px; }
-#side-outline-list button, .writer-export-actions button { text-align: start; overflow-wrap: anywhere; background: transparent; color: var(--vscode-foreground); font-weight: 400; }
-#writer-article-options :is(.writer-export-actions, #side-outline-list) button { justify-content: flex-start; }
+#side-outline-list button { text-align: start; overflow-wrap: anywhere; background: transparent; color: var(--vscode-foreground); font-weight: 400; }
+#writer-article-options #side-outline-list button { justify-content: flex-start; }
 #side-outline-list button[data-level="3"], #side-outline-list button[data-level="4"] { padding-inline-start: 18px; }
-.writer-export-actions button:hover { background: var(--vscode-list-hoverBackground); }
-#side-ghost-actions { border-top: 1px solid var(--vscode-widget-border); margin-top: 4px; padding-top: 4px; }
+.writer-export-bar, .writer-export-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+.writer-export-bar { gap: 4px 8px; margin-bottom: 6px; }
+#side-ghost-actions { border-inline-start: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); padding-inline-start: 6px; }
+.writer-export-actions button { width: 30px; padding: 0; color: var(--vscode-icon-foreground, var(--vscode-foreground)); background: transparent; interest-delay: 200ms 100ms; }
+.writer-export-actions button:hover { background: var(--vscode-toolbar-hoverBackground); }
+.writer-export-actions button[aria-disabled="true"] { opacity: .55; cursor: default; }
+.writer-export-actions [role="tooltip"] {
+    position: fixed; inset: auto; position-area: top span-right; justify-self: start;
+    position-try-fallbacks: flip-inline, flip-block, flip-block flip-inline;
+    position-visibility: anchors-visible; max-width: calc(100vw - 16px); box-sizing: border-box;
+    margin: 4px 0; padding: 4px 7px; border: 1px solid var(--vscode-editorHoverWidget-border); border-radius: 3px;
+    color: var(--vscode-editorHoverWidget-foreground); background: var(--vscode-editorHoverWidget-background);
+    font: inherit; font-size: 12px; overflow-wrap: anywhere;
+}
 .writer-notice { margin-block: 8px; padding-inline-start: 8px; border-inline-start: 2px solid var(--vscode-focusBorder); }
 .writer-notice p { font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
 .writer-notice button { margin-top: 4px; height: auto; min-height: 26px; }

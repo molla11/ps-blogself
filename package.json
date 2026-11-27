@@ -3,7 +3,7 @@
     "publisher": "Shinem-dev",
     "displayName": "ps-blogself",
     "description": "AI가 코드 수정 기록을 알고리즘 풀이 글로 정리해 줍니다.",
-    "version": "0.1.4",
+    "version": "0.1.5",
     "vsce": {
         "readmePath": "MARKETPLACE.md"
     },

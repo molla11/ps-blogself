@@ -96,7 +96,9 @@ export class ServiceConnection {
     async showUsage() {
         await this.refreshUsage();
         const usage = await this.usage();
-        if (usage?.status === 'ready') void vscode.window.showInformationMessage(usage.detail);
+        if (usage?.status === 'ready') {
+            await vscode.window.showInformationMessage('크레딧 사용량', { modal: true, detail: usage.detail }, { title: '닫기', isCloseAffordance: true });
+        }
         else if (usage?.status === 'error') void vscode.window.showErrorMessage(usage.detail);
     }
     async showCreditRecharge() {

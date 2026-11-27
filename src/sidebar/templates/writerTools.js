@@ -1,4 +1,4 @@
-export function bindWriterTools(vscode, onFileChange, onFold) {
+export function bindWriterTools(vscode, onFileChange, onFold, onHome) {
     const el = id => document.getElementById(id);
     const main = el('main-view'), tools = el('writer-tools'), library = el('file-library'), toggle = el('library-toggle');
     const button = key => tools.querySelector('button[data-writer-action="' + key + '"]');
@@ -22,6 +22,29 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
     });
     function send(action, value) {
         if (filePath) vscode.postMessage({ type: 'writerAction', filePath, action, value });
+    }
+    const exportButtons = Array.from(el('side-export').querySelectorAll('button'), control => {
+        const action = control.dataset.writerAction;
+        const tip = document.createElement('span');
+        tip.id = 'side-tip-' + action;
+        tip.popover = 'hint';
+        tip.setAttribute('role', 'tooltip');
+        control.setAttribute('interestfor', tip.id);
+        control.setAttribute('aria-labelledby', tip.id);
+        control.after(tip);
+        return { action, control, tip };
+    });
+    function renderExports(actions) {
+        for (const { action, control, tip } of exportButtons) {
+            const state = actions.find(item => item.action === action);
+            control.hidden = !state;
+            if (state) {
+                if (tip.textContent !== state.label) tip.textContent = state.label;
+                control.setAttribute('aria-disabled', String(state.disabled));
+            } else if (tip.matches(':popover-open')) {
+                tip.hidePopover();
+            }
+        }
     }
     function renderButtons(container, actions) {
         for (const node of [...container.children]) {
@@ -79,7 +102,7 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
     }
     tools.addEventListener('click', event => {
         const target = event.target.closest('button[data-writer-action]');
-        if (!target || target.disabled) return;
+        if (!target || target.disabled || target.getAttribute('aria-disabled') === 'true') return;
         send(target.dataset.writerAction, target.dataset.value);
     });
     tools.addEventListener('change', event => {
@@ -96,7 +119,7 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         select.value = state.value;
         select.disabled = state.disabled || state.options.length < 2;
     }
-    return (writer, historyFile) => {
+    function render(writer, historyFile) {
         const previousFile = filePath;
         filePath = writer?.filePath || historyFile;
         contextual = !!filePath;
@@ -104,6 +127,7 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         main.classList.toggle('history', !writer && !!historyFile);
         main.classList.toggle('context-library', contextual);
         tools.hidden = !writer;
+        el('sidebar-home-btn').hidden = !contextual;
         toggle.hidden = !contextual;
         if (previousFile !== filePath) {
             for (const id of ['side-outline', 'side-export']) el(id).open = false;
@@ -137,8 +161,7 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         for (const mode of ['edit', 'source', 'preview']) button(mode).setAttribute('aria-pressed', String(c.editorMode === mode));
         el('side-outline').hidden = c.browsingVersion || c.editorMode !== 'edit';
         renderOutline(c.headings);
-        renderButtons(el('side-file-actions'), c.exports.filter(item => !item.action.startsWith('ghost-')));
-        renderButtons(el('side-ghost-actions'), c.exports.filter(item => item.action.startsWith('ghost-')));
+        renderExports(c.exports);
         button('viewSyncFailures').hidden = !c.hasSyncFailures;
         for (const [id, text] of [['side-sync-status', c.syncStatus || ''], ['side-save-status', c.saveStatus], ['side-ghost-status', c.ghostStatus]]) {
             const node = el(id);
@@ -146,5 +169,13 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
             node.hidden = !text;
         }
         renderNotices(c.notices);
-    };
+    }
+    function showHome() {
+        if (filePath) vscode.postMessage({ type: 'sidebarHome', context: tools.hidden ? 'history' : 'writer', filePath });
+        render();
+        onHome();
+    }
+    el('sidebar-home-btn').addEventListener('click', showHome);
+    el('full-logs-back-btn').addEventListener('click', showHome);
+    return render;
 }

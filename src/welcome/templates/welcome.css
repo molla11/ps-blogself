@@ -57,6 +57,10 @@ nav button:hover { color: var(--ink); text-decoration: underline; }
 #welcome-status, #welcome-error { margin: 0 0 14px; }
 #welcome-error { color: var(--vscode-errorForeground, #eb8174); }
 .guide { border-top: 1px solid var(--edge); padding-top: 23px; }
+.privacy { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--edge); font-size: 13px; }
+.privacy h2 { margin-bottom: 8px; font-size: 15px; font-weight: 650; }
+.privacy p { margin-bottom: 4px; }
+.privacy a { color: var(--vscode-textLink-foreground, var(--accent)); }
 .steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 26px; margin: 24px 0 0; padding: 0; list-style: none; counter-reset: step; }
 .steps li { position: relative; padding-left: 24px; counter-increment: step; }
 .steps li::before { content: counter(step); position: absolute; left: 0; top: 2px; color: var(--accent); font: 14px/1.4 var(--mono); }

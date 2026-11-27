@@ -47,6 +47,7 @@ interface View {
     panel?: vscode.WebviewPanel;
     controls?: Record<string, unknown>;
     sidebarLinked?: boolean;
+    sidebarDismissed?: boolean;
     sidebarAvailable?: boolean;
     draft: WritingDraft;
     queue: Promise<unknown>;
@@ -117,10 +118,17 @@ export class BlogPostManager {
         this.syncSidebar();
     }
 
+    static showSidebarHome(filePath: string) {
+        const view = this.views.get(filePath);
+        if (!view?.panel?.active || !view.sidebarLinked) return;
+        view.sidebarDismissed = true;
+        this.syncSidebar();
+    }
+
     private static syncSidebar() {
         const available = !configManager.contest;
         for (const view of this.views.values()) {
-            const linked = this.sidebarVisible && available && !!view.panel?.active;
+            const linked = this.sidebarVisible && available && !!view.panel?.active && !view.sidebarDismissed;
             if (view.sidebarLinked === linked && view.sidebarAvailable === available) continue;
             view.sidebarLinked = linked;
             view.sidebarAvailable = available;
@@ -415,7 +423,9 @@ export class BlogPostManager {
         const view = await this.loadView(filePath, discoveredLanguage);
         if (!this.checkWritingAccess(restoredPanel)) return;
         if (view?.panel && !restoredPanel) {
+            view.sidebarDismissed = false;
             view.panel.reveal();
+            this.syncSidebar();
             this.prepareOnReview(filePath);
             return;
         }
@@ -434,10 +444,12 @@ export class BlogPostManager {
                 { enableScripts: true, retainContextWhenHidden: true },
             );
         current.panel = panel;
+        current.sidebarDismissed = false;
         current.ready = false;
         current.controls = undefined;
         this.syncSidebar();
         panel.onDidChangeViewState(() => {
+            if (!panel.active) current.sidebarDismissed = false;
             this.syncSidebar();
             if (current.ready) void panel.webview.postMessage({ type: 'writingVisibility', visible: this.writingIsVisible(current) });
         });
@@ -461,6 +473,8 @@ export class BlogPostManager {
         panel.webview.onDidReceiveMessage((message) => {
             if (message?.type === 'openWriterSidebar') {
                 if (current.panel === panel && panel.active && !configManager.contest) {
+                    current.sidebarDismissed = false;
+                    this.syncSidebar();
                     void vscode.commands.executeCommand('psb.sidebar.focus').then(undefined, () =>
                         panel.webview.postMessage({ type: 'writerSidebar', linked: false, available: false }));
                 }

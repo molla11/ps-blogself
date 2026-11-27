@@ -17,11 +17,22 @@ const htmlText = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&
 export class HistoryManager {
     public static readonly viewType = 'psb.history';
     private static readonly panels = new Map<vscode.WebviewPanel, string>();
+    private static homePanel?: vscode.WebviewPanel;
     private static readonly activeChanged = new vscode.EventEmitter<void>();
     public static readonly onDidChangeActive = this.activeChanged.event;
 
     public static get activeFile() {
-        for (const [panel, filePath] of this.panels) if (panel.active) return filePath;
+        for (const [panel, filePath] of this.panels) if (panel.active && panel !== this.homePanel) return filePath;
+    }
+
+    public static showSidebarHome(filePath: string) {
+        for (const [panel, path] of this.panels) {
+            if (panel.active && path === filePath) {
+                this.homePanel = panel;
+                this.activeChanged.fire();
+                return;
+            }
+        }
     }
 
     public static async openHistory(extensionUri: vscode.Uri, filePath: string, discoveredLanguage?: string) {
@@ -139,6 +150,7 @@ export class HistoryManager {
             if (recordedHistoryReady && changed === filePath) void updatePreparation().catch(() => {});
         });
         const visibility = panel.onDidChangeViewState(() => {
+            if (!panel.active && this.homePanel === panel) this.homePanel = undefined;
             this.activeChanged.fire();
             if (!panel.visible) return;
             // A retained but suspended webview can miss its in-flight response.
@@ -151,6 +163,7 @@ export class HistoryManager {
         });
         panel.onDidDispose(() => {
             this.panels.delete(panel);
+            if (this.homePanel === panel) this.homePanel = undefined;
             this.activeChanged.fire();
             disposed = true;
             session?.stream.dispose();

@@ -1,5 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import { openWebview } from './webview';
+import { usageView } from '../../src/writing/Usage';
 async function state(page: Page, usage?: unknown) {
     await page.evaluate(usage => window.dispatchEvent(new MessageEvent('message', {data: {
         type: 'updateState', root: '', isRecording: true, languages: ['cpp', 'py'], recentLogs: [], usage,
@@ -8,11 +9,15 @@ async function state(page: Page, usage?: unknown) {
 test('backend usage fits the compact sidebar, exposes details, and opens the server usage action', async ({page}) => {
     await page.setViewportSize({width: 300, height: 650});
     await openWebview(page, true);
-    await state(page, {status: 'ready', label: '최근 1시간 2,469 / 5,000 크레딧 · 유료 24,000 크레딧', detail: '남은 무료 2,530크레딧\n누적 사용 25,000크레딧'});
+    await state(page, usageView({
+        unit: 'credits', windowSeconds: 3600, hourlyUsedCredits: 0, freeHourlyUsedCredits: 0, freeHourlyLimitCredits: 5000,
+        freeRemainingCredits: 5000, creditBalance: 119807, canStart: true, nextFunding: 'free', retryAt: null,
+        totalUsedCredits: 46761, todayRequests: 0,
+    }));
     const button = page.getByRole('button', {name: '서버 사용량 확인', exact: true});
     await expect(button).toBeInViewport();
-    await expect(button).toHaveText('최근 1시간 2,469 / 5,000 크레딧 · 유료 24,000 크레딧');
-    await expect(button).toHaveAttribute('title', /누적 사용 25,000크레딧/);
+    await expect(button).toHaveText('남은 크레딧 · 무료 5,000 · 유료 119,807');
+    await expect(button).toHaveAttribute('title', /오늘 요청 0회 · 누적 사용 46,761크레딧/);
     await button.click();
     expect(await page.evaluate(() => (window as any).__messages.at(-1))).toEqual({type: 'showUsage'});
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

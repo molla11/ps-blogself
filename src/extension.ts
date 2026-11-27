@@ -1,4 +1,3 @@
-import { backendRequests } from './writing/BackendRequests';
 import { WelcomePanel } from './welcome/WelcomePanel';
 import { WelcomeState } from './welcome/WelcomeState';
 import { SettingsPanel } from './settings/SettingsPanel';
@@ -11,7 +10,7 @@ import { extname } from 'node:path';
 import { CodeDiscovery, codeFileExtensions } from './sidebar/CodeDiscovery';
 import { BlogPostManager } from './services/BlogPostManager';
 import { Logger } from './services/logger';
-import { loadConnectionEnvironment, resolveConnectionSettings, requireBackend } from './writing/ConnectionSettings';
+import { loadConnectionEnvironment } from './writing/ConnectionSettings';
 
 export async function activate(context: vscode.ExtensionContext) {
     Logger.info(`activate() is executed.`);
@@ -19,9 +18,6 @@ export async function activate(context: vscode.ExtensionContext) {
     const developmentMode = context.extensionMode !== vscode.ExtensionMode.Production;
     const development = await loadConnectionEnvironment(context.extensionPath, developmentMode);
     await configManager.init(context);
-    if (developmentMode && backendRequests.enabled) {
-        await requireBackend(resolveConnectionSettings(process.env, development).apiUrl, backendRequests.fetch);
-    }
     storageManager.init(context);
     await BlogPostManager.init(context, development);
     fileWatcher.init(context);

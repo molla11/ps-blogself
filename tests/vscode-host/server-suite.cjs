@@ -114,7 +114,11 @@ exports.run = async () => {
             const roomy = await unrecordedTools.evaluate(() => innerHeight >= 600);
             assert.equal(await toggle.getAttribute('aria-expanded'), String(roomy));
             if (!roomy) await toggle.click();
-            await unrecordedTools.locator('.log-item').filter({ hasText: 'search.CPP' }).click();
+            const unrecordedRow = unrecordedTools.locator('.log-item').filter({ hasText: 'search.CPP' });
+            await unrecordedRow.scrollIntoViewIfNeeded();
+            await unrecordedRow.focus();
+            await unrecordedRow.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+            await unrecordedRow.press('Shift+F10');
             await unrecordedTools.locator('#ctx-view-history').click();
             const emptyHistory = (await surface(browser, '.history-entry')).frame;
             await unrecordedTools.locator('#main-view.history #library-toggle').waitFor();
@@ -208,6 +212,9 @@ exports.run = async () => {
             await until(async () => (await writingCounts.innerText()).includes('메모 1'), 'prepared note bundle appears on its file row');
             assert.equal(await writingCounts.locator('.log-unread').count(), 0, 'prepared notes never show unread notifications');
             assert.equal((await requests()).length, 1);
+            await sidebar.frame.getByRole('button', { name: '처음 화면' }).click();
+            await sidebar.frame.locator('#library-toggle').waitFor({ state: 'hidden' });
+            assert.ok(await history.frame.locator('#write-btn').isVisible());
             await history.frame.locator('#write-btn').click();
         } else {
             await recorded.click();
@@ -268,6 +275,15 @@ exports.run = async () => {
             await writer.frame.locator('#plan-view').waitFor();
             await sidebar.frame.locator('#side-style').waitFor();
             await writer.page.screenshot({ path: path.join(sandbox, 'writer-plan.png') });
+            const memoText = await writer.frame.locator('#summary').inputValue();
+            await sidebar.frame.getByRole('button', { name: '처음 화면' }).click();
+            await sidebar.frame.locator('.config-section').waitFor();
+            const reopenTools = writer.frame.getByRole('button', { name: '글쓰기 도구 열기' });
+            await reopenTools.waitFor();
+            assert.equal(await writer.frame.locator('#summary').inputValue(), memoText);
+            await reopenTools.click();
+            await sidebar.frame.locator('#side-style').waitFor();
+            await reopenTools.waitFor({ state: 'hidden' });
             await articleTab.click();
             await writer.frame.locator('#article-view').waitFor();
             assert.ok(await writer.frame.getByRole('tablist', { name: '글 작성 화면' }).isVisible());
@@ -370,9 +386,9 @@ exports.run = async () => {
         }
         const label = await usageSidebar.frame.locator('#usage-btn').innerText();
         const credits = value => new Intl.NumberFormat('ko-KR', {maximumFractionDigits: 0}).format(Math.floor(value));
-        assert.ok(label.includes(credits(usage.freeHourlyUsedCredits)));
-        assert.ok(label.includes(credits(usage.freeHourlyLimitCredits)));
-        assert.ok(label.includes('유료 ' + credits(usage.creditBalance) + ' 크레딧'));
+        assert.equal(label, `남은 크레딧 · 무료 ${credits(usage.freeRemainingCredits)} · 유료 ${credits(usage.creditBalance)}`);
+        const detail = await usageSidebar.frame.locator('#usage-btn').getAttribute('title');
+        assert.ok(detail.includes(`무료 ${credits(usage.freeHourlyUsedCredits)} / ${credits(usage.freeHourlyLimitCredits)}`));
         assert.doesNotMatch(label, /USD|\$|달러/);
         await writer.page.screenshot({ path: path.join(sandbox, stage + '.png') });
         if (stage === 'restart') {

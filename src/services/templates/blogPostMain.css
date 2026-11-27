@@ -134,11 +134,6 @@ select { min-width: 0; color: var(--vscode-dropdown-foreground, #24342c); backgr
 #writing-mode, #writing-style { min-height: 32px; max-width: 100%; }
 #writing-mode-help { grid-column: 1 / -1; flex-basis: 100%; order: 1; margin: 0; font-size: 12px; line-height: 1.6; text-align: right; }
 .plan-title-section, .step, #preparing { padding: 24px 28px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); }
-.step {
-    background: color-mix(in srgb, var(--paper) 88%, #e5bf57);
-    border-color: color-mix(in srgb, var(--line) 75%, #b59646);
-    border-radius: 3px;
-}
 .plan-title-section { margin-top: 24px; }
 #plan-view :is(input:not([type=range]), textarea) { border: 0; border-radius: 0; padding: 4px 0; background: transparent; color: var(--ink); box-shadow: none; }
 #plan-view :is(input:not([type=range]), textarea)::placeholder { color: var(--vscode-input-placeholderForeground, var(--muted)); opacity: 1; }
@@ -148,7 +143,7 @@ select { min-width: 0; color: var(--vscode-dropdown-foreground, #24342c); backgr
 #plan-view #plan-title { margin-top: 6px; font-size: clamp(22px, 2.6vw, 26px); font-weight: 650; line-height: 1.45; letter-spacing: -.025em; }
 .summary-label { display: block; margin-top: 18px; color: var(--muted); font-size: 12px; font-weight: 500; }
 #plan-view #summary { min-height: 0; margin-top: 4px; color: var(--ink); font-size: 15px; font-weight: 550; }
-.step { min-width: 0; }
+.step { min-width: 0; border-radius: 3px; }
 .step-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .step-heading h3 { margin: 0; color: var(--muted); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .step-remove { flex-shrink: 0; padding: 2px 5px; font-size: 11px; color: var(--muted); }

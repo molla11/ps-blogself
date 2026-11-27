@@ -36,14 +36,16 @@ export function usageView(usage: AccountUsage): UsageView {
     }).format(Math.floor(value));
     const seconds = usage.windowSeconds;
     const window = seconds % 3600 === 0 ? `${seconds / 3600}시간` : seconds % 60 === 0 ? `${seconds / 60}분` : `${seconds}초`;
-    const label = `최근 ${window} ${credits(usage.freeHourlyUsedCredits)} / ${credits(usage.freeHourlyLimitCredits)} 크레딧 · 유료 ${credits(usage.creditBalance)} 크레딧`;
+    const label = `남은 크레딧 · 무료 ${credits(usage.freeRemainingCredits)} · 유료 ${credits(usage.creditBalance)}`;
     const details = [
-        `최근 ${window} 전체 사용 ${credits(usage.hourlyUsedCredits)}크레딧`,
-        `무료 사용 ${credits(usage.freeHourlyUsedCredits)} / ${credits(usage.freeHourlyLimitCredits)}크레딧 · 남은 무료 ${credits(usage.freeRemainingCredits)}크레딧`,
-        `유료 잔액 ${credits(usage.creditBalance)}크레딧`,
-        usage.canStart ? `다음 요청: ${usage.nextFunding === 'credit' ? '유료 크레딧' : '무료 크레딧'}` : '현재 새 요청을 시작할 수 없습니다.',
-        `누적 사용 ${credits(usage.totalUsedCredits)}크레딧 · 오늘 요청 ${usage.todayRequests.toLocaleString('ko-KR')}회`,
-        ...(usage.retryAt ? [`다시 요청 가능: ${new Date(usage.retryAt).toLocaleString('ko-KR')}`] : []),
+        label,
+        usage.canStart
+            ? `기본 모델은 다음 요청에 ${usage.nextFunding === 'credit' ? '유료' : '무료'} 크레딧을 사용해요.`
+            : '지금은 새 요청을 시작할 수 없어요.',
+        ...(usage.retryAt ? [`다시 요청 가능 · ${new Date(usage.retryAt).toLocaleString('ko-KR')}`] : []),
+        '',
+        `최근 ${window} 사용 ${credits(usage.hourlyUsedCredits)}크레딧 (무료 ${credits(usage.freeHourlyUsedCredits)} / ${credits(usage.freeHourlyLimitCredits)})`,
+        `오늘 요청 ${usage.todayRequests.toLocaleString('ko-KR')}회 · 누적 사용 ${credits(usage.totalUsedCredits)}크레딧`,
     ];
     return { status: 'ready', label, detail: details.join('\n'), ...(usage.models ? { models: usage.models } : {}) };
 }

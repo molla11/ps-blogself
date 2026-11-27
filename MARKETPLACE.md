@@ -4,4 +4,4 @@ C, C++, Python으로 문제를 풀면 PS-Blogself가 코드의 수정 과정을 
 
 초안에 내 설명을 덧붙이고, 완성한 글은 Markdown이나 HTML로 저장하거나 Ghost 블로그에 올릴 수 있습니다.
 
-[사용 가이드](https://github.com/molla11/ps-blogself#사용하기)
+[사용 가이드](https://github.com/molla11/ps-blogself#사용하기) · [개인정보처리방침](https://psb-backend.shinem.dev/ps-blogself/privacy)

@@ -543,7 +543,10 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) close
 const showWriter = bindWriterTools(vscode, filePath => {
     showView(mainView);
     selectPath(filePath);
-}, closeMenus);
+}, closeMenus, () => {
+    showView(mainView);
+    (logsContainer.querySelector('.log-item.selected') || logsSearchToggle).focus({ preventScroll: true });
+});
 
 function showView(view) {
     closeMenus();
@@ -692,8 +695,6 @@ document.getElementById('generate-blog-btn').addEventListener('click', () => {
 document.getElementById('manage-logs-btn').addEventListener('click', () => {
     vscode.postMessage({ type: 'manageLogs' });
 });
-
-document.getElementById('full-logs-back-btn').addEventListener('click', () => showView(mainView));
 
 // 초기 데이터 요청
 vscode.postMessage({ type: 'getInitialData' });

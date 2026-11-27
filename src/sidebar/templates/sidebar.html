@@ -11,6 +11,9 @@
     <body class="{{contestClass}}">
         <section id="service-notices" aria-label="서비스 공지" aria-live="polite" hidden></section>
         <div id="main-view" class="view-container">
+            <button id="sidebar-home-btn" class="back-btn" type="button" hidden>
+                <i class="codicon codicon-arrow-left" aria-hidden="true"></i>처음 화면
+            </button>
             <section id="writer-tools" aria-label="글쓰기 도구" hidden>
                 <div class="writer-heading">
                     <h2 class="writer-file"><i class="codicon codicon-file-code" aria-hidden="true"></i><span id="writer-file-name"></span></h2>
@@ -190,8 +193,8 @@
         <!-- Full Logs View -->
         <div id="full-logs-view" class="view-container hidden">
             <div class="header-bar">
-                <button id="full-logs-back-btn" class="back-btn" title="Back">
-                    <i class="codicon codicon-arrow-left"></i>
+                <button id="full-logs-back-btn" class="back-btn" type="button">
+                    <i class="codicon codicon-arrow-left" aria-hidden="true"></i>처음 화면
                 </button>
                 <span class="header-title">전체 코드 기록 관리</span>
             </div>

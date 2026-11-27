@@ -30,6 +30,12 @@ test('the summary stays visible below the title and separate memos form a thread
     await expect(page.getByRole('textbox', { name: '전체 설명', exact: true })).toBeVisible();
     await expect(page.getByRole('textbox', { name: '전체 설명', exact: true })).toHaveValue(plan.summary);
     await expect(page.locator('#steps h3')).toHaveText(['메모 #1', '메모 #2']);
+    const theme = await page.locator('.plan-title-section').evaluate(node => {
+        const { backgroundColor, borderTopColor } = getComputedStyle(node);
+        return { backgroundColor, borderTopColor };
+    });
+    await expect(page.locator('.step').first()).toHaveCSS('background-color', theme.backgroundColor);
+    await expect(page.locator('.step').first()).toHaveCSS('border-top-color', theme.borderTopColor);
     for (const width of [1050, 500, 360, 320]) {
         await page.setViewportSize({ width, height: 900 });
         const panel = (await page.locator('#plan-view').boundingBox())!;

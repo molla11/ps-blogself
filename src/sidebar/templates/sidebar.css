@@ -584,7 +584,11 @@ label.config-box .switch { flex-shrink: 0; }
 
 .back-btn {
     width: auto;
-    padding: 4px;
+    flex: none;
+    align-self: flex-start;
+    min-height: 26px;
+    gap: 5px;
+    padding: 4px 6px;
     background: none;
     border: none;
     color: var(--vscode-foreground);
@@ -598,6 +602,7 @@ label.config-box .switch { flex-shrink: 0; }
 .back-btn:hover {
     background: var(--vscode-toolbar-hoverBackground);
 }
+.back-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 
 /* Keep recording, file selection and the primary action in one sidebar. */
 .sidebar-actions {

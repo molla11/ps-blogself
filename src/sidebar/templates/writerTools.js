@@ -1,4 +1,4 @@
-export function bindWriterTools(vscode, onFileChange, onFold) {
+export function bindWriterTools(vscode, onFileChange, onFold, onHome) {
     const el = id => document.getElementById(id);
     const main = el('main-view'), tools = el('writer-tools'), library = el('file-library'), toggle = el('library-toggle');
     const button = key => tools.querySelector('button[data-writer-action="' + key + '"]');
@@ -96,7 +96,7 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         select.value = state.value;
         select.disabled = state.disabled || state.options.length < 2;
     }
-    return (writer, historyFile) => {
+    function render(writer, historyFile) {
         const previousFile = filePath;
         filePath = writer?.filePath || historyFile;
         contextual = !!filePath;
@@ -104,6 +104,7 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         main.classList.toggle('history', !writer && !!historyFile);
         main.classList.toggle('context-library', contextual);
         tools.hidden = !writer;
+        el('sidebar-home-btn').hidden = !contextual;
         toggle.hidden = !contextual;
         if (previousFile !== filePath) {
             for (const id of ['side-outline', 'side-export']) el(id).open = false;
@@ -146,5 +147,13 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
             node.hidden = !text;
         }
         renderNotices(c.notices);
-    };
+    }
+    function showHome() {
+        if (filePath) vscode.postMessage({ type: 'sidebarHome', context: tools.hidden ? 'history' : 'writer', filePath });
+        render();
+        onHome();
+    }
+    el('sidebar-home-btn').addEventListener('click', showHome);
+    el('full-logs-back-btn').addEventListener('click', showHome);
+    return render;
 }

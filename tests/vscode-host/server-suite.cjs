@@ -114,7 +114,11 @@ exports.run = async () => {
             const roomy = await unrecordedTools.evaluate(() => innerHeight >= 600);
             assert.equal(await toggle.getAttribute('aria-expanded'), String(roomy));
             if (!roomy) await toggle.click();
-            await unrecordedTools.locator('.log-item').filter({ hasText: 'search.CPP' }).click();
+            const unrecordedRow = unrecordedTools.locator('.log-item').filter({ hasText: 'search.CPP' });
+            await unrecordedRow.scrollIntoViewIfNeeded();
+            await unrecordedRow.focus();
+            await unrecordedRow.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+            await unrecordedRow.press('Shift+F10');
             await unrecordedTools.locator('#ctx-view-history').click();
             const emptyHistory = (await surface(browser, '.history-entry')).frame;
             await unrecordedTools.locator('#main-view.history #library-toggle').waitFor();

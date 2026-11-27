@@ -1,4 +1,4 @@
-import { stat } from 'node:fs/promises';
+import { stat } from 'node:fs';
 import type { SessionIndexItem } from '../types';
 
 export const filePathKey = (file: string) => process.platform === 'win32' ? file.toLowerCase() : file;
@@ -23,19 +23,21 @@ export class FileModifiedTimes {
         const key = filePathKey(filePath);
         let time = this.diskTimes.get(key);
         if (!time) {
-            time = stat(filePath).then(info => info.mtime.getTime(), () => undefined);
+            time = new Promise<number | undefined>(resolve => {
+                stat(filePath, (error, info) => resolve(error ? undefined : info.mtime.getTime()));
+            });
             this.diskTimes.set(key, time);
         }
         return time;
     }
 
     /** Rank the complete list before the caller takes a preview or a page. */
-    async newestFirst<T extends FileRow>(files: readonly T[], history: readonly SessionIndexItem[] = []) {
+    async newestFirst<T extends FileRow>(files: readonly T[], history: readonly SessionIndexItem[] = [], isCurrent = () => true) {
         const saved = new Map(history.map(file => [filePathKey(file.filePath), file]));
         const result: (T & { lastModified?: number })[] = [...files];
         let next = 0;
-        await Promise.all(Array.from({ length: Math.min(files.length, 8) }, async () => {
-            while (next < files.length) {
+        await Promise.all(Array.from({ length: Math.min(files.length, 32) }, async () => {
+            while (next < files.length && isCurrent()) {
                 const index = next++;
                 const file = files[index];
                 if (file.lastModified !== undefined) continue;
@@ -48,6 +50,7 @@ export class FileModifiedTimes {
                 }
             }
         }));
+        if (!isCurrent()) return [];
         return result.sort((a, b) => (b.lastModified ?? -Infinity) - (a.lastModified ?? -Infinity)
             || a.filePath.localeCompare(b.filePath));
     }

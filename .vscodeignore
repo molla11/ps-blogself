@@ -4,6 +4,8 @@
 !CHANGELOG.md
 !LICENSE*
 !dist/extension.js
+!dist/ShikiService.js
+!dist/webviews/writer.js
 !media/image/logo_ps_blogself1.png
 !media/codicons/LICENSE
 !media/codicons/codicon.css

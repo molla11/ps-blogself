@@ -23,6 +23,20 @@ function renderNotices(notices = []) {
     }
 }
 
+function renderServiceState(message) {
+    document.querySelector('#connect-server-btn .account-action-label').textContent = message.accountLabel || '로그인';
+    renderNotices(message.notices);
+    const usage = document.getElementById('usage-btn');
+    usage.hidden = !message.usage;
+    usage.textContent = message.usage?.label || '';
+    usage.title = message.usage?.detail || '서버 사용량 확인';
+    usage.disabled = message.usage?.status === 'loading';
+}
+
+function renderStorageSize(size) {
+    document.querySelector('#manage-logs-btn span:last-child').textContent = `전체 기록 (${size})`;
+}
+
 const rootDisplay = document.getElementById('root-folder-display');
 const rootButton = document.getElementById('root-folder-btn');
 const rootHint = document.getElementById('root-folder-hint');
@@ -315,10 +329,6 @@ function checkRecentLogsEnd() {
 
 function applyRecentLogs(message) {
     if ((message.recentLogsSearchId ?? 0) !== recentLogsSearchId) return;
-    if (typeof message.discovering === 'boolean') {
-        discovering = message.discovering;
-        discoveryFailed = message.discoveryFailed;
-    }
     if (typeof message.recentLogsRevision === 'number') {
         if (message.recentLogsRevision <= recentLogsRevision) {
             // Activity can arrive after the matching rows or a newer discovery page.
@@ -330,6 +340,10 @@ function applyRecentLogs(message) {
             return;
         }
         recentLogsRevision = message.recentLogsRevision;
+    }
+    if (typeof message.discovering === 'boolean') {
+        discovering = message.discovering;
+        discoveryFailed = message.discoveryFailed;
     }
     currentLogs = message.recentLogs;
     recentLogsNeedsSearch = false;
@@ -570,15 +584,7 @@ window.addEventListener('message', (event) => {
             break;
         case 'updateState':
             createCodeFile.hidden = !message.hasFolder;
-            document.querySelector('#connect-server-btn .account-action-label').textContent = message.accountLabel || '로그인';
-            renderNotices(message.notices);
-            {
-                const usage = document.getElementById('usage-btn');
-                usage.hidden = !message.usage;
-                usage.textContent = message.usage?.label || '';
-                usage.title = message.usage?.detail || '서버 사용량 확인';
-                usage.disabled = message.usage?.status === 'loading';
-            }
+            if ('accountLabel' in message || 'usage' in message || 'notices' in message) renderServiceState(message);
             rootDisplay.textContent = message.root || '현재 열려있는 모든 파일';
             document.getElementById('window-root-label').hidden = !message.windowRoot;
             rootButton.title = rootDisplay.textContent;
@@ -612,12 +618,13 @@ window.addEventListener('message', (event) => {
                 applyRecentLogs(message);
             }
 
-            if (message.totalLogSize) {
-                const manageBtnSpan = document.querySelector('#manage-logs-btn span:last-child');
-                if (manageBtnSpan) {
-                    manageBtnSpan.textContent = `전체 기록 (${message.totalLogSize})`;
-                }
-            }
+            if (message.totalLogSize) renderStorageSize(message.totalLogSize);
+            break;
+        case 'serviceState':
+            renderServiceState(message);
+            break;
+        case 'storageSize':
+            renderStorageSize(message.totalLogSize);
             break;
         case 'currentDirectory':
             createCodeFile.hidden = !message.hasFolder;

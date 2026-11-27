@@ -42,7 +42,6 @@ import {
 } from '../writing/model';
 import template from './templates/blogPostMain.html';
 import css from './templates/blogPostMain.css';
-import script from './templates/blogPostMainScripts.webview.js';
 
 interface View {
     panel?: vscode.WebviewPanel;
@@ -147,7 +146,7 @@ export class BlogPostManager {
         context.subscriptions.push(this.activity);
         this.connection = new ServiceConnection(context, development);
         this.articleSync = new ArticleSync(this.store, this.connection);
-        await this.articleSync.start();
+        void this.articleSync.start();
         this.jobs = new JobRouter(this.connection);
         this.pendingMemos = new PendingMemos(path.join((context.storageUri ?? context.globalStorageUri).fsPath, 'pending-memos.json'),
             error => Logger.warn('메모 대기 목록을 저장하지 못했습니다.', error));
@@ -441,7 +440,8 @@ export class BlogPostManager {
             this.syncSidebar();
             if (current.ready) void panel.webview.postMessage({ type: 'writingVisibility', visible: this.writingIsVisible(current) });
         });
-        panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.file(this.assets.directory)] };
+        const webviews = vscode.Uri.joinPath(extensionUri, 'dist', 'webviews');
+        panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.file(this.assets.directory), webviews] };
         panel.onDidDispose(() => {
             if (current.panel === panel) {
                 current.panel = undefined;
@@ -495,7 +495,7 @@ export class BlogPostManager {
                 `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src ${panel.webview.cspSource} https: data:;`,
             )
             .replace('{{styles}}', () => `<style nonce="${nonce}">${css}</style>`)
-            .replace('{{script}}', () => `<script nonce="${nonce}">${script}</script>`);
+            .replace('{{script}}', () => `<script nonce="${nonce}" src="${panel.webview.asWebviewUri(vscode.Uri.joinPath(webviews, 'writer.js'))}"></script>`);
     }
     private static enqueue(view: View, action: () => Promise<void>) {
         const next = view.queue.then(action);

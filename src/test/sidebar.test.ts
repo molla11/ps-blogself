@@ -181,6 +181,60 @@ function deferred<T>() {
     return { promise, resolve };
 }
 
+test('folder discovery publishes a usable preview, shares ranked pages and discards a superseded scan', async () => {
+    const loader = require('node:module'), original = loader._load;
+    const modulePath = require.resolve('../sidebar/CodeDiscovery');
+    const cached = require.cache[modulePath];
+    let folder = '/first', changeFolder!: () => void;
+    const disposable = () => ({ dispose() {} });
+    const uri = (fsPath: string) => ({ scheme: 'file', fsPath });
+    const full = deferred<ReturnType<typeof uri>[]>();
+    const fullStarted = deferred<void>();
+    const searches: (number | undefined)[] = [];
+    const vscode = {
+        EventEmitter: class { event = disposable; fire() {} dispose() {} },
+        CancellationTokenSource: class { token = {}; cancel() {} dispose() {} },
+        RelativePattern: class { constructor(public baseUri: unknown) {} },
+        Uri: { file: uri },
+        window: { tabGroups: { all: [], onDidChangeTabs: disposable }, onDidChangeActiveTextEditor: disposable },
+        workspace: { onDidSaveTextDocument: disposable,
+            onDidChangeWorkspaceFolders: (listener: () => void) => { changeFolder = listener; return disposable(); },
+            createFileSystemWatcher: () => ({ onDidChange: disposable, onDidCreate: disposable, onDidDelete: disposable, dispose() {} }),
+            findFiles: async (_scope: unknown, _exclude: unknown, limit?: number) => {
+                searches.push(limit);
+                if (folder === '/next') return [uri('/next/new.py')];
+                if (limit) return Array.from({ length: limit }, (_, i) => uri('/first/' + i + '.cpp'));
+                fullStarted.resolve(); return full.promise;
+            },
+        },
+    };
+    delete require.cache[modulePath];
+    loader._load = function(name: string, ...args: unknown[]) {
+        return name === 'vscode' ? vscode : original.call(this, name, ...args);
+    };
+    let discovery: import('../sidebar/CodeDiscovery').CodeDiscovery;
+    try { discovery = new (require('../sidebar/CodeDiscovery').CodeDiscovery)(() => folder); }
+    finally {
+        loader._load = original;
+        if (cached) require.cache[modulePath] = cached; else delete require.cache[modulePath];
+    }
+    try {
+        discovery.start();
+        await fullStarted.promise;
+        assert.ok(discovery.searching && discovery.files.length >= 20);
+        const history: typeof logs = [];
+        const preview = await discovery.withHistory(history);
+        assert.equal(preview.length, searches[0]);
+        assert.equal(await discovery.currentFiles(history), preview, 'both views reuse the completed ranking');
+        folder = '/next'; changeFolder();
+        await discovery.whenScanFinishes();
+        full.resolve([uri('/first/stale.cpp')]);
+        await new Promise<void>(resolve => setImmediate(resolve));
+        assert.deepEqual((await discovery.withHistory(history)).map(file => file.filePath), ['/next/new.py']);
+        assert.deepEqual(searches, [searches[0], undefined, searches[0]], 'a small workspace is scanned only once');
+    } finally { full.resolve([]); discovery.dispose(); }
+});
+
 function sidebarHarness(read: () => Promise<typeof logs>, size: () => Promise<string>, account = async () => 'reader@example.test') {
     const Module = require('node:module');
     const original = Module._load;
@@ -209,7 +263,7 @@ function sidebarHarness(read: () => Promise<typeof logs>, size: () => Promise<st
         const provider: import('../sidebar/SidebarProvider').SidebarProvider = new SidebarProvider({}, noop, noop, noop, noop, noop, { withHistory: (files: unknown[]) => files });
         (provider as any).writingLogs = async (logs: unknown[]) => logs;
         const messages: any[] = [];
-        (provider as any)._view = { webview: { postMessage: async (message: unknown) => { messages.push(message); return true; } } };
+        (provider as any)._view = { visible: true, webview: { postMessage: async (message: unknown) => { messages.push(message); return true; } } };
         return { provider, messages };
     } finally {
         Module._load = original;
@@ -223,22 +277,18 @@ test('saved records reach the sidebar before storage-size and account lookups fi
     const refresh = provider.updateState();
     try {
         await new Promise<void>(resolve => setImmediate(resolve));
-        assert.equal(messages.length, 1);
-        assert.equal(messages[0].type, 'recentLogsPage');
-        assert.deepEqual(messages[0].recentLogs, logs.slice(0, 20));
-        assert.equal(messages[0].activeFile, '/work/solve0.cpp');
-        assert.equal(messages[0].requestId, undefined);
+        assert.deepEqual(messages.map(message => message.type), ['updateState', 'recentLogsPage']);
+        assert.equal(messages[0].hasFolder, true);
+        assert.deepEqual(messages[1].recentLogs, logs.slice(0, 20));
+        assert.equal(messages[1].activeFile, '/work/solve0.cpp');
         size.resolve('10 KB');
         await new Promise<void>(resolve => setImmediate(resolve));
-        assert.equal(messages.length, 1, 'the file list does not wait for the still-pending account lookup');
+        assert.equal(messages.at(-1).totalLogSize, '10 KB', 'storage size arrives independently of account state');
     } finally {
         size.resolve('10 KB'); account.resolve('reader@example.test');
         await refresh;
     }
-    assert.equal(messages[1].type, 'updateState');
-    assert.equal(messages[1].totalLogSize, '10 KB');
-    assert.equal(messages[1].hasFolder, true);
-    assert.equal(messages[1].accountLabel, 'reader@example.test');
+    assert.equal(messages.at(-1).accountLabel, 'reader@example.test');
 });
 
 test('rapid saves publish each new page while stale background state is discarded', async () => {
@@ -251,19 +301,24 @@ test('rapid saves publish each new page while stale background state is discarde
     const second = provider.updateState();
     try {
         await new Promise<void>(resolve => setImmediate(resolve));
-        assert.deepEqual(messages.map(message => message.type), ['recentLogsPage', 'recentLogsPage']);
-        assert.deepEqual(messages[1].recentLogs, index);
-        assert.ok(messages[1].recentLogsRevision > messages[0].recentLogsRevision);
+        const pages = messages.filter(message => message.type === 'recentLogsPage');
+        assert.equal(pages.length, 2);
+        assert.deepEqual(pages[1].recentLogs, index);
+        assert.ok(pages[1].recentLogsRevision > pages[0].recentLogsRevision);
         secondSize.resolve('20 KB');
         await second;
     } finally {
         firstSize.resolve('10 KB'); secondSize.resolve('20 KB');
         await Promise.all([first, second]);
     }
-    assert.equal(messages.length, 3);
-    assert.equal(messages[2].type, 'updateState');
-    assert.equal(messages[2].totalLogSize, '20 KB');
-    assert.deepEqual(messages[2].recentLogs, index);
+    assert.deepEqual(messages.filter(message => message.type === 'storageSize').map(message => message.totalLogSize), ['20 KB']);
+});
+
+test('a hidden sidebar defers reading the file and history indexes', async () => {
+    const { provider, messages } = sidebarHarness(async () => assert.fail('hidden list read'), async () => assert.fail('hidden storage scan'));
+    (provider as any)._view.visible = false;
+    await provider.updateState();
+    assert.deepEqual(messages, []);
 });
 
 test('service polling refreshes notices and usage while the window and sidebar are inactive, then stops on disposal', t => {

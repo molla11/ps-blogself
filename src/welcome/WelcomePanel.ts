@@ -62,14 +62,18 @@ export class WelcomePanel {
         });
     }
     private async chooseFile() {
-        const files = await this.codeFiles.currentFiles(await storageManager.getRecentFiles());
-        if (!files.length) {
-            await this.updateFiles();
-            throw new Error('파일 목록이 바뀌었습니다. 현재 폴더를 다시 확인해 주세요.');
-        }
-        const choice = await vscode.window.showQuickPick(files.map(file => ({
-            label: file.fileName, description: vscode.workspace.asRelativePath(file.filePath, true), path: file.filePath,
-        })), { title: '코드 목록', placeHolder: '열 코드 파일을 선택하세요.', matchOnDescription: true });
+        const items = async () => {
+            await this.codeFiles.whenScanFinishes();
+            const files = await this.codeFiles.currentFiles(await storageManager.getRecentFiles());
+            if (!files.length) {
+                await this.updateFiles();
+                throw new Error('파일 목록이 바뀌었습니다. 현재 폴더를 다시 확인해 주세요.');
+            }
+            return files.map(file => ({
+                label: file.fileName, description: vscode.workspace.asRelativePath(file.filePath, true), path: file.filePath,
+            }));
+        };
+        const choice = await vscode.window.showQuickPick(items(), { title: '코드 목록', placeHolder: '열 코드 파일을 선택하세요.', matchOnDescription: true });
         if (choice) await vscode.window.showTextDocument(vscode.Uri.file(choice.path), { preview: false });
     }
     private async handle(message: unknown): Promise<void> {

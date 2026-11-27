@@ -19,6 +19,9 @@ export class StorageManager {
     private _historyDir?: vscode.Uri;
 
     private _indexFileUri?: vscode.Uri;
+    private historySize?: { version: string; size: Promise<string> };
+    private readonly emptyIndex: SessionIndexItem[] = [];
+    private indexRead?: { version: string; rows: Promise<SessionIndexItem[]> };
     private _onDidUpdateIndex = new vscode.EventEmitter<void>();
     public readonly onDidUpdateIndex = this._onDidUpdateIndex.event;
     private readonly snapshotSaved = new vscode.EventEmitter<string>();
@@ -34,6 +37,8 @@ export class StorageManager {
     }
 
     public init(context: vscode.ExtensionContext) {
+        this.indexRead = undefined;
+        this.historySize = undefined;
         this._globalStorageUri = context.globalStorageUri;
         // globalStorage/ps-blogself/history/
         this._historyDir = vscode.Uri.joinPath(this._globalStorageUri, 'history');
@@ -281,14 +286,20 @@ export class StorageManager {
 
     public async getRecentFiles(): Promise<SessionIndexItem[]> {
         await this._saveQueue;
-        if (!this._indexFileUri) {
-            return [];
-        }
+        if (!this._indexFileUri) return this.emptyIndex;
+        const file = this._indexFileUri.fsPath;
         try {
-            const indexData = await fs.readFile(this._indexFileUri.fsPath, 'utf-8');
-            return JSON.parse(indexData);
-        } catch (error) {
-            return [];
+            // Atomic replacements in other windows must be visible even before the watcher fires.
+            const info = await fs.stat(file, { bigint: true });
+            const version = `${info.ino}:${info.ctimeNs}:${info.size}`;
+            if (this.indexRead?.version !== version) {
+                const rows = fs.readFile(file, 'utf8').then(data => JSON.parse(data) as SessionIndexItem[]);
+                this.indexRead = { version, rows };
+            }
+            return await this.indexRead.rows;
+        } catch {
+            this.indexRead = undefined;
+            return this.emptyIndex;
         }
     }
 
@@ -393,27 +404,35 @@ export class StorageManager {
             return '0 KB';
         }
 
+        const directory = this._historyDir.fsPath;
         try {
-            await this._ensureStorageInit();
-            const files = await fs.readdir(this._historyDir.fsPath);
-            let totalBytes = 0;
-
-            for (const file of files) {
-                if (!file.endsWith('.json')) continue;
-                const filePath = path.join(this._historyDir.fsPath, file);
-                const stats = await fs.stat(filePath);
-                totalBytes += stats.size;
+            // History writes replace their files atomically, updating the directory timestamp.
+            const info = await fs.stat(directory, { bigint: true });
+            const version = `${info.ino}:${info.ctimeNs}:${info.mtimeNs}`;
+            if (this.historySize?.version !== version) {
+                this.historySize = { version, size: this.readHistorySize(directory) };
             }
-
-            if (totalBytes < 1024 * 1024) {
-                return `${(totalBytes / 1024).toFixed(1)} KB`;
-            } else {
-                return `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
-            }
+            return await this.historySize.size;
         } catch (error) {
+            this.historySize = undefined;
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '0.0 KB';
             Logger.error('[StorageManager] Failed to calculate size:', error);
             return 'Error';
         }
+    }
+
+    private async readHistorySize(directory: string) {
+        const files = (await fs.readdir(directory)).filter(file => file.endsWith('.json'));
+        let next = 0, totalBytes = 0;
+        await Promise.all(Array.from({ length: Math.min(files.length, 8) }, async () => {
+            while (next < files.length) {
+                const file = files[next++];
+                try { const stats = await fs.stat(path.join(directory, file)); totalBytes += stats.size; }
+                catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+            }
+        }));
+        return totalBytes < 1024 * 1024 ? `${(totalBytes / 1024).toFixed(1)} KB`
+            : `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
     }
 
     public async getFileHistory(absolutePath: string): Promise<FileHistory | null> {

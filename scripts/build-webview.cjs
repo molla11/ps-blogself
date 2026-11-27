@@ -1,10 +1,12 @@
 const esbuild = require('esbuild');
 const { resolve } = require('node:path');
 
-exports.buildWebview = async (entry) => esbuild.build({
-    entryPoints: [entry], bundle: true, write: false, platform: 'browser',
-    format: 'iife', target: 'chrome120', minify: true, metafile: true,
+exports.webviewOptions = {
+    bundle: true, platform: 'browser', format: 'iife', target: 'chrome120', minify: true,
     legalComments: 'inline',
+};
+exports.buildWebview = entry => esbuild.build({
+    ...exports.webviewOptions, entryPoints: [entry], write: false, metafile: true,
 });
 
 exports.webviewPlugin = {

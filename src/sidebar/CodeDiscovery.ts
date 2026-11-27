@@ -7,6 +7,7 @@ import { FileModifiedTimes, filePathKey as pathKey } from '../storage/FileModifi
 const pattern = '**/*.{[cC],[cC][pP][pP],[pP][yY]}';
 const ignoredFolders = new Set(['.git', 'node_modules', '.venv', '__pycache__']);
 const exclude = `**/{${[...ignoredFolders].join(',')}}/**`;
+const previewSize = 32;
 const languages = new Map([['.c', 'c'], ['.cpp', 'cpp'], ['.py', 'python']]);
 export const codeFileExtensions = [...languages.keys()].map(extension => extension.slice(1));
 
@@ -33,9 +34,15 @@ export class CodeDiscovery implements vscode.Disposable {
     private watcher?: vscode.FileSystemWatcher;
     private readonly externalWatchers = new Map<string, vscode.FileSystemWatcher>();
     private pending?: vscode.CancellationTokenSource;
+    private scan?: Promise<void>;
+    private ranked = new WeakMap<SessionIndexItem[], {
+        current?: Promise<(DiscoveredFile & { lastModified?: number })[]>;
+        all?: Promise<ListedFile[]>;
+    }>();
     private timer?: NodeJS.Timeout;
     private dateTimer?: NodeJS.Timeout;
     private directory?: string;
+    private directoryRevision = 0;
     private openFiles = new Map<string, DiscoveredFile>();
     private folderFiles: DiscoveredFile[] = [];
     files: readonly DiscoveredFile[] = [];
@@ -78,6 +85,7 @@ export class CodeDiscovery implements vscode.Disposable {
         this.watcher?.dispose();
         this.watcher = undefined;
         this.directory = directory;
+        this.directoryRevision++;
         this.folderFiles = [];
         this.failed = false;
         if (!directory) { this.publish(); return; }
@@ -89,7 +97,7 @@ export class CodeDiscovery implements vscode.Disposable {
         const rescan = () => {
             if (this.watcher !== watcher) return;
             clearTimeout(this.timer);
-            this.timer = setTimeout(() => { void this.search(scope); }, 200);
+            this.timer = setTimeout(() => { this.scan = this.search(scope, false); }, 200);
         };
         watcher.onDidChange(uri => {
             if (languages.has(path.extname(uri.fsPath).toLowerCase()) && !ignored(uri)) this.refreshDates(uri.fsPath);
@@ -114,7 +122,7 @@ export class CodeDiscovery implements vscode.Disposable {
                 rescan();
             }
         });
-        void this.search(scope);
+        this.scan = this.search(scope, true);
     }
 
     private watchExternalTabs(directory: string) {
@@ -139,13 +147,19 @@ export class CodeDiscovery implements vscode.Disposable {
         }
     }
 
-    private async search(scope: vscode.RelativePattern) {
+    private async search(scope: vscode.RelativePattern, preview: boolean) {
         this.stopSearch();
         const request = this.pending = new vscode.CancellationTokenSource();
         this.failed = false;
         this.publish();
         try {
-            const uris = await vscode.workspace.findFiles(scope, exclude, undefined, request.token);
+            let uris = await vscode.workspace.findFiles(scope, exclude, preview ? previewSize : undefined, request.token);
+            if (request !== this.pending) return;
+            if (preview && uris.length === previewSize) {
+                this.folderFiles = [...collectFiles(uris, 'folder').values()];
+                this.publish();
+                uris = await vscode.workspace.findFiles(scope, exclude, undefined, request.token);
+            }
             if (request !== this.pending) return;
             this.folderFiles = [...collectFiles(uris, 'folder').values()];
         } catch (error) {
@@ -162,6 +176,7 @@ export class CodeDiscovery implements vscode.Disposable {
     }
 
     private publish() {
+        this.ranked = new WeakMap();
         this.files = [...this.openFiles.values(), ...this.folderFiles.filter(file => !this.openFiles.has(pathKey(file.filePath)))];
         this.modifiedTimes.retain(this.files);
         this.changed.fire();
@@ -169,6 +184,7 @@ export class CodeDiscovery implements vscode.Disposable {
 
     private refreshDates(filePath: string) {
         this.modifiedTimes.invalidate(filePath);
+        this.ranked = new WeakMap();
         if (this.dateTimer) return;
         this.dateTimer = setTimeout(() => {
             this.dateTimer = undefined;
@@ -176,13 +192,32 @@ export class CodeDiscovery implements vscode.Disposable {
         }, 150);
     }
 
+    async whenScanFinishes() {
+        while (this.pending) await this.scan;
+    }
+
+    private ranking(history: SessionIndexItem[]) {
+        let entry = this.ranked.get(history);
+        if (!entry) { entry = {}; this.ranked.set(history, entry); }
+        return entry;
+    }
+
     currentFiles(history: SessionIndexItem[]) {
-        return this.modifiedTimes.newestFirst(this.files, history);
+        const entry = this.ranking(history);
+        const revision = this.directoryRevision;
+        return entry.current ??= this.modifiedTimes.newestFirst(this.files, history, () => revision === this.directoryRevision);
     }
 
     withHistory(history: SessionIndexItem[]) {
-        const recorded = new Set(history.map(file => pathKey(file.filePath)));
-        return this.modifiedTimes.newestFirst<ListedFile>([...history, ...this.files.filter(file => !recorded.has(pathKey(file.filePath)))]);
+        if (!history.length) return this.currentFiles(history);
+        const entry = this.ranking(history);
+        if (!entry.all) {
+            const recorded = new Set(history.map(file => pathKey(file.filePath)));
+            const revision = this.directoryRevision;
+            const files = [...history, ...this.files.filter(file => !recorded.has(pathKey(file.filePath)))];
+            entry.all = this.modifiedTimes.newestFirst<ListedFile>(files, [], () => revision === this.directoryRevision);
+        }
+        return entry.all;
     }
 
     private stopSearch() {
@@ -193,6 +228,7 @@ export class CodeDiscovery implements vscode.Disposable {
     }
 
     dispose() {
+        this.directoryRevision++;
         clearTimeout(this.dateTimer);
         this.externalWatchers.forEach(watcher => watcher.dispose());
         this.stopSearch();

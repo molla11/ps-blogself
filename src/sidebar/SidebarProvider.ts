@@ -60,6 +60,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         }
                         break;
                     }
+                    case 'openFolder': {
+                        await vscode.commands.executeCommand('psb.openFolderFromWelcome');
+                        break;
+                    }
+                    case 'createFile': {
+                        await vscode.commands.executeCommand('psb.createCodeFile');
+                        break;
+                    }
                     case 'selectRootFolder': {
                         await this._onSelectRootFolder();
                         break;
@@ -225,7 +233,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             void this.updateState();
         });
         webviewView.onDidDispose(() => settingsUpdate.dispose());
-        const updateDirectory = () => webviewView.webview.postMessage({ type: 'currentDirectory', path: configManager.getCurrentDirectory() });
+        const updateDirectory = () => webviewView.webview.postMessage({
+            type: 'currentDirectory', path: configManager.getCurrentDirectory(), hasFolder: !!vscode.workspace.workspaceFolders?.length,
+        });
         const editorUpdate = vscode.window.onDidChangeActiveTextEditor(updateDirectory);
         const workspaceUpdate = vscode.workspace.onDidChangeWorkspaceFolders(updateDirectory);
         webviewView.onDidDispose(() => { editorUpdate.dispose(); workspaceUpdate.dispose(); });
@@ -278,6 +288,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 root: configManager.getRootFolder(),
                 windowRoot: configManager.isWindowRoot(),
                 currentDirectory: configManager.getCurrentDirectory(),
+                hasFolder: !!vscode.workspace.workspaceFolders?.length,
                 isRecording: configManager.isRecording(),
                 languages: configManager.getSupportedLanguages(),
                 ...page,

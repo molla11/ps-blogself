@@ -10,8 +10,8 @@ import { BlogPostManager } from '../services/BlogPostManager';
 const commands = new Map([
     ['connect', 'psb.connect'],
     ['sample', 'psb.sample'],
-    ['history', 'psb.sidebar.focus'],
     ['settings', 'psb.openSettings'],
+    ['createFile', 'psb.createCodeFile'],
     ['openFolder', 'psb.openFolderFromWelcome'],
 ]);
 
@@ -25,6 +25,7 @@ export class WelcomePanel {
         const nonce = randomBytes(24).toString('base64');
         const discovery = codeFiles.onDidChange(() => this.updateFiles());
         const history = storageManager.onDidUpdateIndex(() => this.updateFiles());
+        const workspace = vscode.workspace.onDidChangeWorkspaceFolders(() => this.updateFiles());
         panel.onDidChangeViewState(() => { if (panel.visible) this.updateFiles(); });
         const messages = panel.webview.onDidReceiveMessage(message => { void this.handle(message); });
         panel.webview.html = template
@@ -37,6 +38,7 @@ export class WelcomePanel {
             messages.dispose();
             discovery.dispose();
             history.dispose();
+            workspace.dispose();
             if (WelcomePanel.current === this) WelcomePanel.current = undefined;
         });
     }
@@ -55,9 +57,20 @@ export class WelcomePanel {
         const dated = files.length ? await this.codeFiles.currentFiles(await storageManager.getRecentFiles()) : [];
         if (this.disposed || !this.panel.visible || revision !== this.filesRevision) return;
         void this.panel.webview.postMessage({
-            type: 'codeFiles', total: dated.length, searching, failed,
+            type: 'codeFiles', total: dated.length, searching, failed, hasFolder: !!vscode.workspace.workspaceFolders?.length,
             files: dated.slice(0, 4).map(({ fileName, filePath, language, lastModified }) => ({ fileName, filePath, language, lastModified })),
         });
+    }
+    private async chooseFile() {
+        const files = await this.codeFiles.currentFiles(await storageManager.getRecentFiles());
+        if (!files.length) {
+            await this.updateFiles();
+            throw new Error('파일 목록이 바뀌었습니다. 현재 폴더를 다시 확인해 주세요.');
+        }
+        const choice = await vscode.window.showQuickPick(files.map(file => ({
+            label: file.fileName, description: vscode.workspace.asRelativePath(file.filePath, true), path: file.filePath,
+        })), { title: '코드 목록', placeHolder: '열 코드 파일을 선택하세요.', matchOnDescription: true });
+        if (choice) await vscode.window.showTextDocument(vscode.Uri.file(choice.path), { preview: false });
     }
     private async handle(message: unknown): Promise<void> {
         if (!message || typeof message !== 'object' || this.disposed) return;
@@ -70,11 +83,12 @@ export class WelcomePanel {
         }
         if (this.busy || type !== 'action' || typeof action !== 'string') return;
         const command = commands.get(action);
-        if (!command && action !== 'openFile' && action !== 'write') return;
+        if (!command && !['chooseFile', 'openFile', 'write'].includes(action)) return;
         this.busy = true;
         let error: string | undefined;
         try {
             if (command) await vscode.commands.executeCommand(command);
+            else if (action === 'chooseFile') await this.chooseFile();
             else {
                 const file = this.codeFiles.files.find(file => file.filePath === path);
                 if (!file) throw new Error('파일 목록이 바뀌었습니다. 목록에서 다시 선택해 주세요.');

@@ -8,6 +8,7 @@ const pattern = '**/*.{[cC],[cC][pP][pP],[pP][yY]}';
 const ignoredFolders = new Set(['.git', 'node_modules', '.venv', '__pycache__']);
 const exclude = `**/{${[...ignoredFolders].join(',')}}/**`;
 const languages = new Map([['.c', 'c'], ['.cpp', 'cpp'], ['.py', 'python']]);
+export const codeFileExtensions = [...languages.keys()].map(extension => extension.slice(1));
 
 type DiscoveredFile = Pick<SessionIndexItem, 'filePath' | 'fileName' | 'language'> & { source: 'open' | 'folder' };
 export type ListedFile = SessionIndexItem | DiscoveredFile;

@@ -187,7 +187,8 @@ function sidebarHarness(read: () => Promise<typeof logs>, size: () => Promise<st
     const file = require.resolve('../sidebar/SidebarProvider');
     const cached = require.cache[file];
     const mocks: Record<string, unknown> = {
-        vscode: { window: { activeTextEditor: { document: { uri: { fsPath: '/work/solve0.cpp' } } } } },
+        vscode: { window: { activeTextEditor: { document: { uri: { fsPath: '/work/solve0.cpp' } } } },
+            workspace: { workspaceFolders: [{ uri: { fsPath: '/work' } }] } },
         '../config': { configManager: {
             getRootFolder: () => '/work', getCurrentDirectory: () => '/work', isWindowRoot: () => false,
             isRecording: () => true, getSupportedLanguages: () => ['cpp'],
@@ -236,6 +237,7 @@ test('saved records reach the sidebar before storage-size and account lookups fi
     }
     assert.equal(messages[1].type, 'updateState');
     assert.equal(messages[1].totalLogSize, '10 KB');
+    assert.equal(messages[1].hasFolder, true);
     assert.equal(messages[1].accountLabel, 'reader@example.test');
 });
 

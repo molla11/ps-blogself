@@ -116,10 +116,19 @@ test('failed loading keeps existing rows and retries only on request', async ({ 
 
 test('a tall viewport fills automatically and empty history makes no extra requests', async ({ page }) => {
     await state(page, [], 1, false);
-    await expect(page.locator('.empty-logs')).toBeVisible();
+    const openFolder = page.getByRole('button', { name: '폴더를 열면 코드 수정을 자동으로 기록합니다.' });
+    await openFolder.focus();
+    await openFolder.press('Enter');
+    expect(await page.evaluate(() => (window as any).__messages.at(-1))).toEqual({ type: 'openFolder' });
+    const create = page.getByRole('button', { name: '코드 파일 만들기' });
+    await expect(create).toBeHidden();
+    await send(page, { type: 'currentDirectory', path: '/work', hasFolder: true });
+    await create.click();
+    expect(await page.evaluate(() => (window as any).__messages.at(-1))).toEqual({ type: 'createFile' });
     await settle(page);
     expect(await requests(page)).toHaveLength(0);
     await state(page, logs.slice(0, 20), 2);
+    await expect(openFolder).toBeHidden();
     await page.setViewportSize({ width: 300, height: 2500 });
     await expect.poll(async () => (await requests(page)).length).toBe(1);
     await send(page, { type: 'recentLogsPage', requestId: 1, recentLogs: logs.slice(0, 40), hasMoreRecentLogs: true, recentLogsRevision: 3 });

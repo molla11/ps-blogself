@@ -35,6 +35,10 @@ const recordingStatusText = document.getElementById('recording-status-text');
 const langStatusText = document.getElementById('lang-status-text');
 const langChips = document.querySelectorAll('.lang-chip');
 const logsContainer = document.getElementById('logs-container');
+const emptyCodeActions = document.getElementById('empty-code-actions');
+const createCodeFile = document.getElementById('create-code-file');
+document.getElementById('open-code-folder').addEventListener('click', () => vscode.postMessage({ type: 'openFolder' }));
+createCodeFile.addEventListener('click', () => vscode.postMessage({ type: 'createFile' }));
 const fullLogsContainer = document.getElementById('full-logs-container');
 const mainView = document.getElementById('main-view');
 const fullLogsView = document.getElementById('full-logs-view');
@@ -254,7 +258,7 @@ function renderLogs(logs, container = logsContainer) {
 
     const retained = new Set(nextRows);
     for (const child of [...container.children]) {
-        if (child !== tail && !retained.has(child)) {
+        if (child !== tail && child !== emptyCodeActions && !retained.has(child)) {
             if (fileActions.owner === child) fileActions.close();
             child.remove();
         }
@@ -265,13 +269,15 @@ function renderLogs(logs, container = logsContainer) {
         if (row !== cursor) container.insertBefore(row, cursor);
         cursor = row.nextElementSibling;
     }
-    if (!nextRows.length && !(container === logsContainer && recentLogsNeedsSearch)) {
+    const showEmpty = !nextRows.length && !(container === logsContainer && recentLogsNeedsSearch);
+    if (container === logsContainer) emptyCodeActions.hidden = !showEmpty || discovering || discoveryFailed || !!recentLogsQuery;
+    if (showEmpty && (container !== logsContainer || emptyCodeActions.hidden)) {
         const empty = document.createElement('div');
         empty.className = 'empty-logs';
         empty.setAttribute('role', 'status');
         empty.textContent = container !== logsContainer ? '기록된 변경 사항이 없습니다.'
             : discovering ? '코드 파일을 찾는 중…' : discoveryFailed ? '폴더의 코드 파일을 불러오지 못했습니다.'
-            : recentLogsQuery ? '검색 결과가 없습니다.' : '표시할 코드 파일이 없습니다.';
+            : '검색 결과가 없습니다.';
         container.insertBefore(empty, tail);
     }
     if (anchor?.isConnected) container.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
@@ -563,6 +569,7 @@ window.addEventListener('message', (event) => {
             fileActions.position();
             break;
         case 'updateState':
+            createCodeFile.hidden = !message.hasFolder;
             document.querySelector('#connect-server-btn .account-action-label').textContent = message.accountLabel || '로그인';
             renderNotices(message.notices);
             {
@@ -613,6 +620,7 @@ window.addEventListener('message', (event) => {
             }
             break;
         case 'currentDirectory':
+            createCodeFile.hidden = !message.hasFolder;
             updateCurrentDirectory(message.path);
             break;
         case 'recentLogsPage': {

@@ -40,7 +40,8 @@ test('welcome accepts actions during discovery and opens the exact path from the
     await expect(page.locator('#files-status')).toContainText('찾는 중');
     const folder = page.getByRole('button', { name: '폴더 열기' });
     await expect(folder).toBeHidden();
-    await expect(page.locator('[data-action="history"]')).toBeEnabled();
+    await expect(page.locator('[data-action="sample"]')).toBeEnabled();
+    await expect(page.locator('#start-file')).toBeHidden();
     await page.evaluate(files => window.dispatchEvent(new MessageEvent('message', { data: {
         type: 'codeFiles', searching: false, total: files.length, files,
     } })), files);
@@ -53,7 +54,7 @@ test('welcome accepts actions during discovery and opens the exact path from the
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: {
         type: 'codeFiles', searching: false, total: 0, files: [],
     } })));
-    await expect(page.locator('#files-status')).toContainText('.c, .cpp, .py');
+    await expect(page.locator('#files-status')).toContainText('폴더를 열어');
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'actionResult' } })));
     await expect(folder).toBeEnabled();
     await page.screenshot({ path: 'test-results/welcome-empty.png', fullPage: true });
@@ -78,13 +79,31 @@ test('welcome opens only the chosen action and stays idle until a click', async 
     await expect(page.locator('.start p')).toHaveText('알고리즘 문제를 풀면 바로 블로그를 만들어 드립니다.');
     await expect.poll(() => page.locator('.brand-icon').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(512);
     expect(await page.evaluate(() => (window as any).__messages)).toEqual([{ type: 'ready' }]);
-    for (const action of ['connect', 'sample', 'history', 'settings']) {
+    await page.evaluate(files => window.dispatchEvent(new MessageEvent('message', { data: {
+        type: 'codeFiles', hasFolder: true, searching: false, total: files.length, files,
+    } })), files);
+    for (const action of ['connect', 'sample', 'chooseFile', 'settings']) {
         await page.locator(`[data-action="${action}"]`).click();
         expect(await page.evaluate(() => (window as any).__messages.at(-1))).toEqual({ type: 'action', action });
-        await expect(page.locator('[data-action]:visible:disabled')).toHaveCount(4);
+        await expect(page.locator('[data-action]:visible:enabled')).toHaveCount(0);
         await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'actionResult' } })));
         await expect(page.locator('[data-action]:disabled')).toHaveCount(0);
     }
+});
+
+test('an empty workspace offers a new file and a failed scan offers a different folder', async ({ page }) => {
+    await openWebview(page, 'welcome');
+    const state = { type: 'codeFiles', total: 0, files: [], hasFolder: true };
+    await page.evaluate(data => window.dispatchEvent(new MessageEvent('message', { data })), state);
+    await expect(page.locator('#files-status')).toContainText('.c, .cpp, .py');
+    await expect(page.getByRole('button', { name: '다른 폴더 열기' })).toBeVisible();
+    await page.screenshot({ path: 'test-results/welcome-empty-folder.png', fullPage: true });
+    await page.getByRole('button', { name: '코드 파일 만들기' }).click();
+    expect(await page.evaluate(() => (window as any).__messages.at(-1))).toEqual({ type: 'action', action: 'createFile' });
+    await page.evaluate(data => window.dispatchEvent(new MessageEvent('message', { data })), { ...state, failed: true });
+    await expect(page.getByRole('button', { name: '코드 파일 만들기' })).toBeHidden();
+    await expect(page.locator('#files-status')).toContainText('불러오지 못했습니다');
+    await expect(page.getByRole('button', { name: '폴더 열기', exact: true })).toBeVisible();
 });
 
 test('keyboard actions prevent duplicate requests and recover after an error', async ({ page }) => {

@@ -31,11 +31,12 @@ nav button:hover { color: var(--ink); text-decoration: underline; }
 .start h1 { font-size: clamp(38px, 5.4vw, 64px); font-weight: 700; line-height: 1.12; letter-spacing: -.045em; }
 .start p { margin: 18px 0 23px; color: var(--muted); }
 .start-actions { gap: 8px; flex-wrap: wrap; }
-.start-actions button, #open-folder { padding: 7px 14px; border: 1px solid var(--edge); border-radius: 4px; font-size: 13px; font-weight: 600; }
+.start-actions button { padding: 7px 14px; border: 1px solid var(--edge); border-radius: 4px; font-size: 13px; font-weight: 600; }
 .primary { background: var(--vscode-button-background, #186c86); color: var(--vscode-button-foreground, #fff); }
 .primary:hover { background: var(--vscode-button-hoverBackground, #165c72); }
 .secondary { background: transparent; }
 .secondary:hover, .file-link:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+#start-file[data-action="chooseFile"] + [data-action="sample"] { border-color: transparent; color: var(--accent); font-weight: 400; }
 .file-panel { min-width: 0; background: var(--surface); border: 1px solid var(--edge); border-radius: 7px; padding: 0 16px; }
 .file-heading { gap: 8px; padding: 13px 0; border-bottom: 1px solid var(--edge); }
 .file-heading h2, .guide h2 { font-size: 15px; font-weight: 650; }
@@ -45,13 +46,14 @@ nav button:hover { color: var(--ink); text-decoration: underline; }
 #code-files li + li { border-top: 1px solid var(--edge); }
 .file-write { border: 0; padding: 4px 2px; color: var(--accent); background: transparent; font-size: 12px; }
 .file-write:hover { text-decoration: underline; }
+#code-files .file-write { min-height: 28px; padding: 3px 9px; border: 1px solid var(--edge); border-radius: 4px; }
 .file-link { display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
     width: 100%; padding: 11px 0; border: 0; background: transparent; text-align: left; }
 .file-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 14px/1.6 var(--mono); }
 .file-link time, #files-status { font-size: 12px; color: var(--muted); }
 .file-link time { font-variant-numeric: tabular-nums; white-space: nowrap; }
 #files-status { padding: 14px 0; }
-#open-folder { margin-bottom: 16px; }
+#other-folder { margin: -4px 0 12px; text-decoration: underline; text-underline-offset: 2px; }
 #files-status:empty, #welcome-status:empty { display: none; }
 #welcome-status, #welcome-error { margin: 0 0 14px; }
 #welcome-error { color: var(--vscode-errorForeground, #eb8174); }
@@ -65,6 +67,7 @@ nav button:hover { color: var(--ink); text-decoration: underline; }
     .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 680px) {
+    .start h1 { font-size: clamp(30px, 7vw, 38px); }
     .workspace, .steps { grid-template-columns: minmax(0, 1fr); }
     .workspace { gap: 25px; padding: 30px 0; }
     .masthead { min-height: 60px; flex-wrap: wrap; gap: 4px; padding-block: 8px; }

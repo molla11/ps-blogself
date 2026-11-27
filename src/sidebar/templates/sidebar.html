@@ -142,6 +142,10 @@
                 </div>
                 <div id="logs-container" class="logs-container" role="group" aria-labelledby="recent-logs-title">
                     <div class="empty-logs">코드 파일을 찾는 중…</div>
+                    <div id="empty-code-actions" hidden>
+                        <button type="button" id="open-code-folder" title="폴더 열기"><i class="codicon codicon-folder-opened" aria-hidden="true"></i><span>폴더를 열면 코드 수정을 자동으로 기록합니다.</span></button>
+                        <button type="button" id="create-code-file" hidden>이 폴더에 코드 파일 만들기</button>
+                    </div>
                     <div id="recent-logs-loader" class="logs-loader" hidden>
                         <span id="recent-logs-status" role="status" aria-live="polite"></span>
                         <button id="retry-logs-btn" class="secondary" hidden>다시 불러오기</button>

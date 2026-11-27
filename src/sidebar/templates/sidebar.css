@@ -475,6 +475,27 @@ button.action-btn {
     gap: 6px;
 }
 
+#empty-code-actions { padding: 4px; }
+#empty-code-actions button {
+    width: fit-content;
+    max-width: 100%;
+    height: auto;
+    min-height: 28px;
+    padding: 4px;
+    border: 0;
+    background: transparent;
+    color: var(--vscode-textLink-foreground, #3794ff);
+    font: inherit;
+    line-height: 1.5;
+    text-align: left;
+    text-underline-offset: 2px;
+    word-break: keep-all;
+}
+#open-code-folder { align-items: baseline; }
+#open-code-folder span, #create-code-file { text-decoration: underline; }
+#empty-code-actions button:hover { color: var(--vscode-textLink-activeForeground, #3794ff); }
+#empty-code-actions button:focus-visible { outline: 1px solid var(--vscode-focusBorder, #3794ff); outline-offset: -1px; }
+
 .empty-logs {
     font-size: 0.7rem;
     opacity: 0.5;

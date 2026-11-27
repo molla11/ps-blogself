@@ -539,14 +539,6 @@ test('read-only windows can browse and copy versions without applying or saving 
     await page.locator('#export-menu-btn').click();
     await page.locator('#export-btn').click();
     expect((await messages(page)).at(-1)).toMatchObject({ type: 'export', versionId: 'newer' });
-    await page.locator('#export-menu-btn').click();
-    await page.getByRole('button', { name: '브라우저 확장에서 이어쓰기' }).click();
-    const handoff = (await messages(page)).at(-1);
-    expect(handoff).toMatchObject({ type: 'browserExport', versionId: 'newer' });
-    expect(handoff.fields).toBeUndefined();
-    await expect(page.locator('#browser-export-btn')).toBeDisabled();
-    await page.evaluate(id => window.dispatchEvent(new MessageEvent('message', { data: { type: 'ack', id } })), handoff.id);
-    await expect(page.locator('#browser-export-btn')).toBeEnabled();
     await page.locator('#version-newer-btn').click();
     await expect(page.locator('#version-select')).toHaveValue('');
     await expect(page.locator('#current-article')).toBeVisible();

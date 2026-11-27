@@ -46,7 +46,7 @@ Lexical 기반 블록 편집기에서 제목·목록·인용·코드·표·이�
 - HTML 파일 저장. 로컬 이미지를 포함하므로 브라우저에서 바로 열 수 있습니다.
 - Ghost 연결 및 초안 저장. 공개 게시는 별도 확인을 거치며 이후에는 같은 글을 갱신합니다. Ghost에서 수정한 글은 자동으로 덮어쓰지 않습니다.
 
-**내보내기 → 브라우저 확장에서 이어쓰기**를 누르면 현재 보고 있는 글 버전을 한 시간 동안 같은 계정의 브라우저 확장(0.5.0 이상)에서 바로 열 수 있습니다. 아직 서버에 없는 편집본은 해당 글의 버전으로 저장합니다. 블로그 글쓰기 탭에서 **PS-Blogself 내보내기**를 열어 미리보기를 확인하고 **편집기에 넣기**를 누르세요. 로컬 이미지는 표시된 위치에 직접 첨부하면 됩니다. [브라우저별 확장 설치 안내](https://github.com/molla11/ps-blogself-extension#설치와-사용)
+VS Code에서 글을 수정하고 서버 동기화가 끝나면, 블로그 글쓰기 탭에서 같은 계정의 브라우저 확장을 여세요. **내 글**에서 선택하면 최신 편집본이 표시되고, **편집기에 넣기**로 옮길 수 있습니다. [브라우저 확장 설치 안내](https://github.com/molla11/ps-blogself-extension#설치와-사용)
 
 Ghost 연결에는 해당 사이트의 Admin API 키가 필요하며 키는 VS Code SecretStorage에 저장합니다. 표·체크 목록은 Ghost HTML 카드로 변환합니다. 자세한 지원 범위는 [편집기와 Ghost 내보내기](https://github.com/molla11/ps-blogself-backend/blob/main/docs/ps-blogself/lexical-ghost.md)를 참고하세요.
 

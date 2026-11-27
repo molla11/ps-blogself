@@ -244,6 +244,7 @@ input[type=range] { width: 100%; min-width: 0; accent-color: var(--accent); }
 #version-status { margin-bottom: 16px; }
 .action-menu { position: fixed; inset: auto; margin: 0; width: 184px; max-height: calc(100vh - 24px); overflow: auto; padding: 4px; border: 1px solid var(--line); border-radius: 5px; background: var(--vscode-menu-background, var(--paper)); color: var(--ink); box-shadow: 0 4px 14px #00000016; }
 .action-menu button { display: block; width: 100%; text-align: left; padding: 7px 9px; background: transparent; color: inherit; font-size: 12px; }
+.action-menu .export-hint { margin: 5px 9px; padding-top: 7px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.5; }
 .action-menu button:hover, .action-menu button:focus-visible { background: var(--hover); }
 dialog { width: min(380px, calc(100vw - 32px)); padding: 24px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); }
 dialog::backdrop { background: #00000045; }

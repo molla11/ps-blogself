@@ -8,7 +8,7 @@ const files = [
 ];
 
 for (const view of ['Welcome', 'recent files', 'full history']) {
-    test(`${view} shows the original language and relative time as the clock advances`, async ({ page }) => {
+    test(`${view} keeps its file label as the relative time updates`, async ({ page }) => {
         const now = Date.UTC(2026, 10, 21, 12);
         await page.clock.install({ time: new Date(now - 10000) });
         await page.clock.pauseAt(new Date(now));
@@ -19,19 +19,21 @@ for (const view of ['Welcome', 'recent files', 'full history']) {
             : { type: 'showFullLogs', logs: rows };
         await page.evaluate(data => window.dispatchEvent(new MessageEvent('message', { data })), message);
         const label = page.locator('time:visible');
-        await expect(label).toHaveText('python • 방금');
+        const prefix = view === 'Welcome' ? 'python • ' : '';
+        await expect(page.getByText('search.py', { exact: true })).toBeVisible();
+        await expect(label).toHaveText(prefix + '방금');
         await page.clock.fastForward(1000);
-        await expect(label).toHaveText('python • 방금');
+        await expect(label).toHaveText(prefix + '방금');
         await page.clock.fastForward(59000);
-        await expect(label).toHaveText('python • 59초 전');
+        await expect(label).toHaveText(prefix + '59초 전');
         await page.clock.fastForward(1000);
-        await expect(label).toHaveText('python • 1분 전');
+        await expect(label).toHaveText(prefix + '1분 전');
         await page.clock.fastForward(59 * 60_000);
-        await expect(label).toHaveText('python • 1시간 전');
+        await expect(label).toHaveText(prefix + '1시간 전');
         await page.clock.fastForward(23 * 3_600_000);
-        await expect(label).toHaveText('python • 1일 전');
+        await expect(label).toHaveText(prefix + '1일 전');
         await page.clock.fastForward(24 * 3_600_000);
-        await expect(label).toHaveText('python • 2일 전');
+        await expect(label).toHaveText(prefix + '2일 전');
     });
 }
 

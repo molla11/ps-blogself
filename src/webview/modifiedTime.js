@@ -12,11 +12,13 @@ function timeAgo(timestamp) {
 }
 
 function updateLabel(element) {
-    const text = `${element.dataset.language} • ${timeAgo(Number(element.dataset.timestamp))}`;
+    const age = timeAgo(Number(element.dataset.timestamp));
+    const language = element.dataset.language;
+    const text = language ? `${language} • ${age}` : age;
     if (element.textContent !== text) element.textContent = text;
 }
 
-export function renderModifiedTime(element, { language, lastModified }) {
+export function renderModifiedTime(element, lastModified, language = '') {
     if (Number.isFinite(lastModified)) {
         element.dateTime = new Date(lastModified).toISOString();
         element.dataset.language = language;

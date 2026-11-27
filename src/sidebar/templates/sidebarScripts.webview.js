@@ -252,7 +252,7 @@ function renderLogs(logs, container = logsContainer) {
         row.classList.toggle('selected', log.filePath === selectedPath);
         row.setAttribute('aria-pressed', String(log.filePath === selectedPath));
         row.querySelector('.log-name').textContent = log.fileName;
-        renderModifiedTime(row.querySelector('.log-meta'), log);
+        renderModifiedTime(row.querySelector('.log-meta'), log.lastModified);
         return row;
     });
 

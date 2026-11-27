@@ -28,7 +28,7 @@ function showFiles({ files, total, searching, failed, hasFolder }) {
         name.className = 'file-name';
         name.textContent = file.fileName;
         const modified = document.createElement('time');
-        renderModifiedTime(modified, file);
+        renderModifiedTime(modified, file.lastModified, file.language);
         button.append(name, modified);
         const write = document.createElement('button');
         write.type = 'button';

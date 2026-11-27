@@ -11,7 +11,7 @@ function setBusy(value) {
     for (const button of document.querySelectorAll('[data-action]')) button.disabled = value;
 }
 
-function showFiles({ files, total, searching, failed }) {
+function showFiles({ files, total, searching, failed, hasFolder }) {
     const activePath = document.activeElement?.dataset.path;
     const activeAction = document.activeElement?.dataset.action;
     const rows = [];
@@ -28,7 +28,7 @@ function showFiles({ files, total, searching, failed }) {
         name.className = 'file-name';
         name.textContent = file.fileName;
         const modified = document.createElement('time');
-        renderModifiedTime(modified, file);
+        renderModifiedTime(modified, file.lastModified, file.language);
         button.append(name, modified);
         const write = document.createElement('button');
         write.type = 'button';
@@ -49,10 +49,17 @@ function showFiles({ files, total, searching, failed }) {
     const count = document.getElementById('file-count');
     count.hidden = !total;
     count.textContent = total > files.length ? `${total}개 중 ${files.length}개` : `${total}개`;
-    document.getElementById('open-folder').hidden = searching || total > 0;
-    document.getElementById('files-status').textContent = searching ? '코드 파일을 찾는 중…'
-        : failed ? '폴더를 읽지 못했습니다.'
-        : total ? '' : '.c, .cpp, .py 파일이 있는 폴더나 파일을 열어 보세요.';
+    const start = document.getElementById('start-file');
+    const create = !total && !searching && !failed && hasFolder;
+    start.hidden = !total && searching;
+    start.dataset.action = total ? 'chooseFile' : create ? 'createFile' : 'openFolder';
+    start.textContent = total ? '코드 목록 열기' : create ? '코드 파일 만들기' : '폴더 열기';
+    start.disabled = busy;
+    document.getElementById('other-folder').hidden = !create;
+    document.getElementById('files-status').textContent = failed ? '폴더의 코드 파일을 모두 불러오지 못했습니다.'
+        : searching ? '코드 파일을 찾는 중…' : total ? ''
+        : hasFolder ? '이 폴더에는 .c, .cpp, .py 파일이 없습니다. 첫 코드 파일을 만들어 보세요.'
+        : 'C, C++ 또는 Python 코드가 있는 폴더를 열어 주세요.';
 }
 
 document.addEventListener('click', event => {

@@ -7,7 +7,8 @@ import { configManager } from './config';
 import { storageManager } from './storage/StorageManager';
 import { fileWatcher } from './storage/FileWatcher';
 import { SidebarProvider } from './sidebar/SidebarProvider';
-import { CodeDiscovery } from './sidebar/CodeDiscovery';
+import { extname } from 'node:path';
+import { CodeDiscovery, codeFileExtensions } from './sidebar/CodeDiscovery';
 import { BlogPostManager } from './services/BlogPostManager';
 import { Logger } from './services/logger';
 import { loadConnectionEnvironment, resolveConnectionSettings, requireBackend } from './writing/ConnectionSettings';
@@ -41,6 +42,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('psb.openSettings', () => SettingsPanel.show()),
         vscode.commands.registerCommand('psb.welcome', showWelcome),
+        vscode.commands.registerCommand('psb.createCodeFile', createCodeFile),
         vscode.commands.registerCommand('psb.openFolderFromWelcome', () => openFolderFromWelcome(context)),
         vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider, {
             // Preserve search, loaded rows and scroll position across sidebar switches.
@@ -89,6 +91,27 @@ async function openFolderFromWelcome(context: vscode.ExtensionContext) {
     }
 }
 
+async function createCodeFile() {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) return vscode.commands.executeCommand('psb.openFolderFromWelcome');
+    const directory = configManager.getCurrentDirectory();
+    const base = directory ? vscode.Uri.file(directory) : folder.uri;
+    const enabled = configManager.getSupportedLanguages();
+    const extension = ['cpp', 'py', 'c'].find(ext => enabled.includes(ext)) || 'cpp';
+    const uri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.joinPath(base, 'solve.' + extension),
+        filters: { '코드 파일': codeFileExtensions }, saveLabel: '코드 파일 만들기',
+    });
+    if (!uri) return;
+    if (!codeFileExtensions.includes(extname(uri.path).slice(1).toLowerCase())) {
+        throw new Error('.c, .cpp, .py 중 하나로 파일 이름을 끝내 주세요.');
+    }
+    const edit = new vscode.WorkspaceEdit();
+    edit.createFile(uri, { ignoreIfExists: true });
+    if (!await vscode.workspace.applyEdit(edit)) throw new Error('코드 파일을 만들지 못했습니다. 폴더의 쓰기 권한을 확인해 주세요.');
+    await vscode.window.showTextDocument(uri, { preview: false });
+}
+
 async function selectRootFolder(sidebarProvider: SidebarProvider) {
     const directory = configManager.getCurrentDirectory();
     const result = await vscode.window.showOpenDialog({
@@ -134,6 +157,5 @@ async function toggleLanguage(sidebarProvider: SidebarProvider, lang: string) {
 }
 
 export async function deactivate() {
-    await fileWatcher.flush();
-    await BlogPostManager.flush();
+    try { await fileWatcher.flush(); } finally { await BlogPostManager.flush(); }
 }

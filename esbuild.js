@@ -1,6 +1,6 @@
 const esbuild = require('esbuild');
 const fs = require('node:fs/promises');
-const { webviewPlugin } = require('./scripts/build-webview.cjs');
+const { webviewOptions, webviewPlugin } = require('./scripts/build-webview.cjs');
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
@@ -31,19 +31,25 @@ async function main() {
         await fs.copyFile(`node_modules/@vscode/codicons/dist/${file}`, `media/codicons/${file}`);
     }
     await fs.copyFile('node_modules/@vscode/codicons/LICENSE', 'media/codicons/LICENSE');
-    const ctx = await esbuild.context({
-        entryPoints: ['src/extension.ts'],
+    const host = await esbuild.context({
+        entryPoints: { extension: 'src/extension.ts', ShikiService: 'src/services/ShikiService.ts' },
         bundle: true,
         format: 'cjs',
         minify: production,
         sourcemap: !production,
         sourcesContent: false,
         platform: 'node',
-        outfile: 'dist/extension.js',
+        outdir: 'dist',
         external: ['vscode'],
         logLevel: 'silent',
         plugins: [
             webviewPlugin,
+            {
+                name: 'lazy-history-highlighter',
+                setup(build) {
+                    build.onResolve({ filter: /^\.\/ShikiService\.js$/ }, ({ path }) => ({ path, external: true }));
+                },
+            },
             /* add to the end of plugins array */
             esbuildProblemMatcherPlugin,
         ],
@@ -52,11 +58,15 @@ async function main() {
             '.css': 'text',
         },
     });
-    if (watch) {
-        await ctx.watch();
-    } else {
-        await ctx.rebuild();
-        await ctx.dispose();
+    const writer = await esbuild.context({
+        ...webviewOptions, entryPoints: ['src/services/templates/blogPostMainScripts.webview.js'],
+        outfile: 'dist/webviews/writer.js',
+    });
+    const builds = [host, writer];
+    if (watch) await Promise.all(builds.map(build => build.watch()));
+    else {
+        try { await Promise.all(builds.map(build => build.rebuild())); }
+        finally { await Promise.all(builds.map(build => build.dispose())); }
     }
 }
 

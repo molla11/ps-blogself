@@ -79,3 +79,33 @@ test('empty initial files remain visible, latest versions cannot be deleted, and
     assert.doesNotMatch(result!.chunks.join(''), /<script>/);
     assert.match(result!.chunks.join(''), /&lt;script&gt;/);
 });
+
+test('the first visible change needs neither highlighting nor the history before its nearest full snapshot', async () => {
+    const source = history(['unused', '---', 'old', '<img src=x>$&', '<img src=x>$&+']);
+    source.snapshots[3] = { content: '<img src=x>$&', hash: '', timestamp: 4 };
+    source.snapshots[4] = { diff: { start: 13, end: 13, newText: '+' }, hash: '', timestamp: 5 };
+    Object.defineProperty(source.snapshots, 2, { get() { throw new Error('older history read'); } });
+    let highlights = 0;
+    const stream = new HistoryStream(source, new HistoryRenderer(async () => { highlights++; throw new Error('no colors'); }));
+    const preview = await stream.preview();
+    assert.equal(highlights, 0);
+    assert.match(preview!.rows, /&lt;img src=x&gt;\$&amp;\+/);
+    assert.doesNotMatch(preview!.rows, /<img/);
+    const styled = await stream.next();
+    assert.equal(styled!.index, 4);
+    assert.equal(styled!.rows, preview!.rows);
+    assert.equal(highlights, 2);
+    stream.dispose();
+});
+
+test('only three context lines on each side of distant changes survive in the preview and styled entry', async () => {
+    const lines = Array.from({ length: 30 }, (_, i) => String(i));
+    const edited = [...lines]; edited[8] = 'eight'; edited[21] = 'twenty-one';
+    const stream = new HistoryStream(history([lines.join('\n'), edited.join('\n')]), new HistoryRenderer(plain));
+    const preview = await stream.preview();
+    const styled = await stream.next();
+    assert.equal(styled!.rows, preview!.rows);
+    assert.equal((preview!.rows.match(/diff-unchanged/g) ?? []).length, 12);
+    assert.equal((preview!.rows.match(/diff-separator/g) ?? []).length, 1);
+    stream.dispose();
+});

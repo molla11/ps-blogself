@@ -74,14 +74,18 @@ test('preview, streamed output and previous versions preserve literal code while
     const markdown = fence('python', 'if value < 3:\n\tprint("<script>alert(1)</script>")');
     const html = new MarkdownIt({ html: false }).render(markdown);
     await openWebview(page);
-    await message(page, { ...base, markdown, streamHtml: html, versions: [{ id: 'old', at: 1, title: '이전 글' }] });
-    await expect.poll(async () => (await tokens(page, '#stream-preview')).length).toBeGreaterThan(0);
+    const article = { ...base, markdown, versions: [{ id: 'old', at: 1, title: '이전 글' }] };
+    await message(page, { ...article, markdown: '', pending: true, running: true, pendingKind: 'write_blog', streamMarkdown: markdown });
+    await expect.poll(async () => (await tokens(page, '.prose-editor')).length).toBeGreaterThan(0);
+    await expect(page.locator('.prose-editor .code-block')).toContainText('print("<script>alert(1)</script>")');
+    await message(page, article);
+    await expect(page.locator('.prose-editor')).toBeEditable();
     await message(page, { type: 'preview', html });
     await expect.poll(async () => (await tokens(page, '#article-preview')).length).toBeGreaterThan(0);
     await page.locator('#version-select').selectOption('old');
     await message(page, { type: 'versionPreview', versionId: 'old', title: '이전 글', html });
     await expect.poll(async () => (await tokens(page, '#version-body')).length).toBeGreaterThan(0);
-    for (const id of ['stream-preview', 'article-preview', 'version-body']) {
+    for (const id of ['article-preview', 'version-body']) {
         expect(await page.locator(`#${id} code`).textContent()).toBe('if value < 3:\n\tprint("<script>alert(1)</script>")\n');
         await expect(page.locator(`#${id} script`)).toHaveCount(0);
     }
@@ -90,6 +94,29 @@ test('preview, streamed output and previous versions preserve literal code while
     // Detached DOM ranges are removed, without clearing other visible surfaces.
     await expect.poll(async () => page.evaluate(() => [...(CSS as any).highlights.values()].every((highlight: any) => [...highlight].every((range: any) => range.startContainer.isConnected)))).toBe(true);
     expect((await tokens(page, '#version-body')).length).toBeGreaterThan(0);
+});
+
+test('author notices render Markdown and highlight snippets in the file or fenced language', async ({ page }) => {
+    const cpp = 'if (count < 2) return 0;';
+    const python = 'print("<b>코드</b>")';
+    await openWebview(page);
+    await message(page, { ...base, language: 'cpp', planNotices: [{
+        source: 'code', title: '**확인** · `return 0;`',
+        detail: '- 첫째\n- 둘째\n\n' + fence('py', python) + '\n\n[설명](https://example.org/note)',
+        appliedFix: fence('', cpp),
+    }] });
+    await page.locator('#notice-toggle').click();
+    const notices = page.locator('#document-notices');
+    await expect(notices.locator('summary strong')).toHaveText('확인');
+    await expect(notices.locator('li')).toHaveText(['첫째', '둘째']);
+    expect(await notices.locator('code.language-py').textContent()).toBe(python + '\n');
+    expect(await notices.locator('pre code:not([class])').textContent()).toBe(cpp + '\n');
+    await expect(notices.locator('b')).toHaveCount(0);
+    for (const selector of ['summary code', 'code.language-py', 'pre code:not([class])']) {
+        await expect.poll(async () => new Set((await tokens(page, '#document-notices ' + selector)).map(token => token.color)).size).toBeGreaterThan(1);
+    }
+    await notices.getByRole('link', { name: '설명' }).click();
+    expect(await page.evaluate(() => (window as any).__messages.at(-1))).toMatchObject({ type: 'openLink', url: 'https://example.org/note' });
 });
 
 test('highlight colors follow VS Code light, dark and high contrast themes', async ({ page }) => {

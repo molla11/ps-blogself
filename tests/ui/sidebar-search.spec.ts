@@ -132,3 +132,12 @@ test('clearing in a tall viewport keeps exactly 20 until the next scroll gesture
     await page.mouse.wheel(0, 300);
     await expect.poll(async () => (await requests(page, 'loadMoreLogs')).length).toBe(1);
 });
+
+test('recording failures expose retry until the snapshots have been saved', async ({ page }) => {
+    await send(page, { type: 'recordingState', pending: 2 });
+    await expect(page.locator('#recording-failure')).toContainText('수정 기록 2개');
+    await page.getByRole('button', { name: '다시 저장' }).click();
+    expect(await requests(page, 'retryRecording')).toHaveLength(1);
+    await send(page, { type: 'recordingState', pending: 0 });
+    await expect(page.locator('#recording-failure')).toBeHidden();
+});

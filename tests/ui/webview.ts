@@ -20,7 +20,7 @@ export async function openWebview(page: Page, view: boolean | 'settings' | 'welc
     const js = `<script nonce="${nonce}">${bridge}\n${await bundles.get(entry)}</script>`;
     if (view === 'history') {
         html = html.replaceAll('{{total}}', String(saved.total ?? 354))
-            .replace('{{recorded}}', String(saved.recorded ?? true)).replace('{{loadId}}', 'test-load').replace('{{version}}', 'test-version');
+            .replace('{{recorded}}', String(saved.recorded ?? true)).replace('{{loadId}}', 'test-load').replace('{{firstEntry}}', () => saved.firstEntry ?? '');
     }
     html = html
         .replace('{{logoUri}}', () => 'data:image/png;base64,' + readFileSync('media/image/logo_ps_blogself1.png').toString('base64'))

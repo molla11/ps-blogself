@@ -9,13 +9,7 @@ export function generateUUID(): string {
     return crypto.randomUUID();
 }
 
-/**
- * Computes a diff between oldText and newText.
- * Returns a SnapshotDiff if the change is a single contiguous block
- * and the inserted content fits within 5 lines and 500 UTF-8 bytes.
- * Returns null if full snapshot is preferred.
- */
-export function computeDiff(oldText: string, newText: string): SnapshotDiff | null {
+export function changedSpan(oldText: string, newText: string): SnapshotDiff {
     const n = oldText.length;
     const m = newText.length;
     let start = 0;
@@ -35,23 +29,15 @@ export function computeDiff(oldText: string, newText: string): SnapshotDiff | nu
         endNew--;
     }
 
-    const changedContent = newText.substring(start, endNew);
+    return { start, end: endOld, newText: newText.slice(start, endNew) };
+}
 
-    // Constraint 1: <= 5 lines
-    const lineCount = changedContent.split('\n').length;
-    if (lineCount > 5) {
-        return null;
-    }
+/** Full versions and patches use the same change boundaries as edit grouping. */
+export function compactDiff(edit: SnapshotDiff): SnapshotDiff | null {
+    if (edit.newText.length > 500 || Buffer.byteLength(edit.newText, 'utf-8') > 500) return null;
+    return edit.newText.split('\n').length <= 5 ? edit : null;
+}
 
-    // Constraint 2: <= 500 bytes
-    const byteLength = Buffer.byteLength(changedContent, 'utf-8');
-    if (byteLength > 500) {
-        return null;
-    }
-
-    return {
-        start,
-        end: endOld, // valid until index in old text
-        newText: changedContent,
-    };
+export function computeDiff(oldText: string, newText: string): SnapshotDiff | null {
+    return compactDiff(changedSpan(oldText, newText));
 }

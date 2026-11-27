@@ -6,6 +6,7 @@ const PAGE_SIZE = 20;
 export class RecentLogsPager {
     private _search = { id: 0, query: '', limit: PAGE_SIZE, visiblePaths: new Set<string>() };
     private _revision = 0;
+    private filtered?: { index: ListedFile[]; query: string; results: ListedFile[] };
     private _queue: Promise<void> = Promise.resolve();
 
     constructor(private readonly _read: () => Promise<ListedFile[]>) {}
@@ -26,17 +27,22 @@ export class RecentLogsPager {
             // A separator opts into path matching. Compare Windows and POSIX
             // separators alike without depending on the extension host's OS.
             const pathQuery = /[\\/]/.test(query) ? query.replace(/\\/g, '/') : null;
-            const logs = query ? index.filter(log =>
-                log.fileName.normalize('NFC').toLowerCase().includes(query)
-                || (pathQuery !== null && log.filePath.normalize('NFC').toLowerCase().replace(/\\/g, '/').includes(pathQuery)),
-            ) : index;
+            let logs = index;
+            if (query) {
+                if (this.filtered?.index !== index || this.filtered.query !== query) {
+                    const results = index.filter(log => log.fileName.normalize('NFC').toLowerCase().includes(query)
+                        || (pathQuery !== null && log.filePath.normalize('NFC').toLowerCase().replace(/\\/g, '/').includes(pathQuery)));
+                    this.filtered = { index, query, results };
+                }
+                logs = this.filtered.results;
+            } else this.filtered = undefined;
             // Repeated requests for the same page are idempotent.
             let limit = search.limit;
             if (Number.isInteger(moreAfter) && moreAfter! >= 0 && moreAfter! <= limit) {
                 limit = Math.max(limit, moreAfter! + PAGE_SIZE);
             }
             // Preserve loaded history when newer edits move it down the list.
-            if (keepVisible) {
+            if (keepVisible && search.visiblePaths.size) {
                 logs.forEach((log, index) => {
                     if (search.visiblePaths.has(log.filePath)) limit = Math.max(limit, index + 1);
                 });

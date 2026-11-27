@@ -153,7 +153,9 @@ test('legacy duplicate versions are collapsed on reopen, keeping the latest time
         ];
         await store.save(draft);
         const loaded = await store.read(history.filePath);
-        assert.deepEqual(loaded?.articleVersions, [{ title: '제목', markdown: '이전 \t', at: 3 }]);
+        const versions = loaded!.articleVersions;
+        assert.match(versions[0].publicationId!, /^legacy-/);
+        assert.deepEqual(versions.map(({ title, markdown, at }) => ({ title, markdown, at })), [{ title: '제목', markdown: '이전 \t', at: 3 }]);
         assert.equal(loaded?.markdown, '현재');
     } finally {
         await store.close();

@@ -22,8 +22,8 @@
             <h1 id="start-heading">PS-Blogself</h1>
             <p>알고리즘 문제를 풀면 바로 블로그를 만들어 드립니다.</p>
             <div class="start-actions">
-                <button type="button" class="primary" data-action="history">코드 목록 열기</button>
-                <button type="button" class="secondary" data-action="sample">샘플로 시작</button>
+                <button type="button" class="primary" id="start-file" hidden></button>
+                <button type="button" class="sample-link" data-action="sample">예제 코드로 테스트</button>
             </div>
         </section>
 
@@ -34,7 +34,7 @@
             </header>
             <ul id="code-files"></ul>
             <p id="files-status" role="status">코드 파일을 찾는 중…</p>
-            <button id="open-folder" class="secondary" type="button" data-action="openFolder" hidden>폴더 열기</button>
+            <button id="other-folder" class="file-write" type="button" data-action="openFolder" hidden>다른 폴더 열기</button>
         </section>
     </div>
 

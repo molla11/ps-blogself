@@ -28,6 +28,8 @@ function codeTokens(source, language) {
         if (highlighter.getLoadedLanguages().includes(language)) {
             tokens = highlighter.codeToTokens(source, {
                 lang: language, themes: { light: 'github-light', dark: 'github-dark' }, defaultColor: false,
+                // Compiling the C++ grammar can consume Shiki's first-line budget even for a short snippet.
+                tokenizeTimeLimit: source.length <= 256 ? 2000 : undefined,
             }).tokens.flat().filter(token => token.content).map(token => ({
                 start: token.offset, end: token.offset + token.content.length,
                 light: token.htmlStyle['--shiki-light'], dark: token.htmlStyle['--shiki-dark'],
@@ -57,7 +59,7 @@ function codeText(element) {
 
 export function observeCodeHighlighting(root) {
     if (!globalThis.CSS?.highlights || !globalThis.Highlight) return () => {};
-    const selector = '.prose-editor .code-block, .article-preview pre > code';
+    const selector = '.prose-editor .code-block, .article-preview pre > code, #notice-panel code';
     const palette = new Map(), blocks = new Map();
     const style = document.createElement('style');
     style.nonce = document.querySelector('script[nonce]')?.nonce || '';
@@ -82,7 +84,8 @@ export function observeCodeHighlighting(root) {
             if (!present.has(block)) { blocks.delete(block); changed = true; }
         }
         for (const block of present) {
-            const language = block.getAttribute('data-language') || [...block.classList].find(name => name.startsWith('language-'))?.slice(9) || '';
+            const language = block.dataset.language || [...block.classList].find(name => name.startsWith('language-'))?.slice(9)
+                || block.closest('#notice-panel')?.dataset.language || '';
             const { source, segments } = codeText(block), previous = blocks.get(block);
             if (previous?.source === source && previous.language === language &&
                 // Moving an intact DOM block can collapse its live ranges into

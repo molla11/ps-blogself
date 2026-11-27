@@ -23,6 +23,20 @@ function renderNotices(notices = []) {
     }
 }
 
+function renderServiceState(message) {
+    document.querySelector('#connect-server-btn .account-action-label').textContent = message.accountLabel || '로그인';
+    renderNotices(message.notices);
+    const usage = document.getElementById('usage-btn');
+    usage.hidden = !message.usage;
+    usage.textContent = message.usage?.label || '';
+    usage.title = message.usage?.detail || '서버 사용량 확인';
+    usage.disabled = message.usage?.status === 'loading';
+}
+
+function renderStorageSize(size) {
+    document.querySelector('#manage-logs-btn span:last-child').textContent = `전체 기록 (${size})`;
+}
+
 const rootDisplay = document.getElementById('root-folder-display');
 const rootButton = document.getElementById('root-folder-btn');
 const rootHint = document.getElementById('root-folder-hint');
@@ -35,6 +49,10 @@ const recordingStatusText = document.getElementById('recording-status-text');
 const langStatusText = document.getElementById('lang-status-text');
 const langChips = document.querySelectorAll('.lang-chip');
 const logsContainer = document.getElementById('logs-container');
+const emptyCodeActions = document.getElementById('empty-code-actions');
+const createCodeFile = document.getElementById('create-code-file');
+document.getElementById('open-code-folder').addEventListener('click', () => vscode.postMessage({ type: 'openFolder' }));
+createCodeFile.addEventListener('click', () => vscode.postMessage({ type: 'createFile' }));
 const fullLogsContainer = document.getElementById('full-logs-container');
 const mainView = document.getElementById('main-view');
 const fullLogsView = document.getElementById('full-logs-view');
@@ -248,13 +266,13 @@ function renderLogs(logs, container = logsContainer) {
         row.classList.toggle('selected', log.filePath === selectedPath);
         row.setAttribute('aria-pressed', String(log.filePath === selectedPath));
         row.querySelector('.log-name').textContent = log.fileName;
-        renderModifiedTime(row.querySelector('.log-meta'), log);
+        renderModifiedTime(row.querySelector('.log-meta'), log.lastModified);
         return row;
     });
 
     const retained = new Set(nextRows);
     for (const child of [...container.children]) {
-        if (child !== tail && !retained.has(child)) {
+        if (child !== tail && child !== emptyCodeActions && !retained.has(child)) {
             if (fileActions.owner === child) fileActions.close();
             child.remove();
         }
@@ -265,13 +283,15 @@ function renderLogs(logs, container = logsContainer) {
         if (row !== cursor) container.insertBefore(row, cursor);
         cursor = row.nextElementSibling;
     }
-    if (!nextRows.length && !(container === logsContainer && recentLogsNeedsSearch)) {
+    const showEmpty = !nextRows.length && !(container === logsContainer && recentLogsNeedsSearch);
+    if (container === logsContainer) emptyCodeActions.hidden = !showEmpty || discovering || discoveryFailed || !!recentLogsQuery;
+    if (showEmpty && (container !== logsContainer || emptyCodeActions.hidden)) {
         const empty = document.createElement('div');
         empty.className = 'empty-logs';
         empty.setAttribute('role', 'status');
         empty.textContent = container !== logsContainer ? '기록된 변경 사항이 없습니다.'
             : discovering ? '코드 파일을 찾는 중…' : discoveryFailed ? '폴더의 코드 파일을 불러오지 못했습니다.'
-            : recentLogsQuery ? '검색 결과가 없습니다.' : '표시할 코드 파일이 없습니다.';
+            : '검색 결과가 없습니다.';
         container.insertBefore(empty, tail);
     }
     if (anchor?.isConnected) container.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
@@ -309,10 +329,6 @@ function checkRecentLogsEnd() {
 
 function applyRecentLogs(message) {
     if ((message.recentLogsSearchId ?? 0) !== recentLogsSearchId) return;
-    if (typeof message.discovering === 'boolean') {
-        discovering = message.discovering;
-        discoveryFailed = message.discoveryFailed;
-    }
     if (typeof message.recentLogsRevision === 'number') {
         if (message.recentLogsRevision <= recentLogsRevision) {
             // Activity can arrive after the matching rows or a newer discovery page.
@@ -324,6 +340,10 @@ function applyRecentLogs(message) {
             return;
         }
         recentLogsRevision = message.recentLogsRevision;
+    }
+    if (typeof message.discovering === 'boolean') {
+        discovering = message.discovering;
+        discoveryFailed = message.discoveryFailed;
     }
     currentLogs = message.recentLogs;
     recentLogsNeedsSearch = false;
@@ -534,6 +554,12 @@ function showView(view) {
 window.addEventListener('message', (event) => {
     const message = event.data;
     switch (message.type) {
+        case 'recordingState': {
+            const box = document.getElementById('recording-failure');
+            box.hidden = !message.pending;
+            box.querySelector('span').textContent = message.pending ? `수정 기록 ${message.pending}개를 저장하지 못했습니다. 디스크 공간과 쓰기 권한을 확인한 뒤 창을 닫기 전에 다시 저장해 주세요.` : '';
+            break;
+        }
         case 'contestMode': {
             const active = !!message.contest;
             const changed = active !== document.body.classList.contains('contest-mode');
@@ -553,7 +579,7 @@ window.addEventListener('message', (event) => {
             break;
         }
         case 'sidebarWriter':
-            showWriter(message.writer);
+            showWriter(message.writer, message.historyFile);
             break;
         case 'writingActivity':
             rememberWritingActivity(message);
@@ -563,15 +589,8 @@ window.addEventListener('message', (event) => {
             fileActions.position();
             break;
         case 'updateState':
-            document.querySelector('#connect-server-btn .account-action-label').textContent = message.accountLabel || '로그인';
-            renderNotices(message.notices);
-            {
-                const usage = document.getElementById('usage-btn');
-                usage.hidden = !message.usage;
-                usage.textContent = message.usage?.label || '';
-                usage.title = message.usage?.detail || '서버 사용량 확인';
-                usage.disabled = message.usage?.status === 'loading';
-            }
+            createCodeFile.hidden = !message.hasFolder;
+            if ('accountLabel' in message || 'usage' in message || 'notices' in message) renderServiceState(message);
             rootDisplay.textContent = message.root || '현재 열려있는 모든 파일';
             document.getElementById('window-root-label').hidden = !message.windowRoot;
             rootButton.title = rootDisplay.textContent;
@@ -605,14 +624,16 @@ window.addEventListener('message', (event) => {
                 applyRecentLogs(message);
             }
 
-            if (message.totalLogSize) {
-                const manageBtnSpan = document.querySelector('#manage-logs-btn span:last-child');
-                if (manageBtnSpan) {
-                    manageBtnSpan.textContent = `전체 기록 (${message.totalLogSize})`;
-                }
-            }
+            if (message.totalLogSize) renderStorageSize(message.totalLogSize);
+            break;
+        case 'serviceState':
+            renderServiceState(message);
+            break;
+        case 'storageSize':
+            renderStorageSize(message.totalLogSize);
             break;
         case 'currentDirectory':
+            createCodeFile.hidden = !message.hasFolder;
             updateCurrentDirectory(message.path);
             break;
         case 'recentLogsPage': {
@@ -633,6 +654,7 @@ window.addEventListener('message', (event) => {
     }
 });
 
+document.getElementById('retry-recording').onclick = () => vscode.postMessage({ type: 'retryRecording' });
 contestToggle.addEventListener('change', () => vscode.postMessage({ type: 'setContestMode', enabled: contestToggle.checked }));
 exitContest.addEventListener('click', () => vscode.postMessage({ type: 'setContestMode', enabled: false }));
 for (const input of contestOptions) {
@@ -679,5 +701,4 @@ vscode.postMessage({ type: 'getInitialData' });
 document
     .getElementById('connect-server-btn')
     .addEventListener('click', () => vscode.postMessage({ type: 'connectServer' }));
-document.getElementById('sample-btn').addEventListener('click', () => vscode.postMessage({ type: 'sample' }));
 document.getElementById('usage-btn').addEventListener('click', () => vscode.postMessage({ type: 'showUsage' }));

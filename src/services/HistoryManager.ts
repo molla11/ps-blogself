@@ -16,6 +16,13 @@ const htmlText = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&
 
 export class HistoryManager {
     public static readonly viewType = 'psb.history';
+    private static readonly panels = new Map<vscode.WebviewPanel, string>();
+    private static readonly activeChanged = new vscode.EventEmitter<void>();
+    public static readonly onDidChangeActive = this.activeChanged.event;
+
+    public static get activeFile() {
+        for (const [panel, filePath] of this.panels) if (panel.active) return filePath;
+    }
 
     public static async openHistory(extensionUri: vscode.Uri, filePath: string, discoveredLanguage?: string) {
         const panel = vscode.window.createWebviewPanel(
@@ -29,13 +36,17 @@ export class HistoryManager {
             },
         );
 
+        this.panels.set(panel, filePath);
+        this.activeChanged.fire();
         let recordedHistoryReady = false;
         let disposed = false;
         let revision = 0;
         let session: {
             id: string;
             stream: HistoryStream;
-            preview?: FileHistory;
+            history: FileHistory;
+            recorded: boolean;
+            version?: string;
             offset: number;
             busy: boolean;
             lastReply?: { type: string; loadId: string; offset: number };
@@ -52,7 +63,6 @@ export class HistoryManager {
             session?.stream.dispose();
             session = undefined;
             recordedHistoryReady = false;
-            panel.webview.html = this._getLoadingHtml(panel.webview);
             try {
                 await fileWatcher.flushFile(filePath);
                 const stored = await storageManager.getFileHistory(filePath);
@@ -62,8 +72,11 @@ export class HistoryManager {
                 const history = recorded ? stored! : await readSavedFileHistory(filePath, language!);
                 if (disposed || generation !== revision) return;
                 const id = randomBytes(16).toString('hex');
-                session = { id, stream: new HistoryStream(history), preview: recorded ? undefined : history, offset: 0, busy: false };
-                panel.webview.html = this._getHtmlForWebview(history, id, recorded);
+                const stream = new HistoryStream(history);
+                session = { id, stream, history, recorded, offset: 0, busy: false };
+                const first = await stream.preview();
+                if (disposed || generation !== revision) return;
+                panel.webview.html = this._getHtmlForWebview(history, id, recorded, first);
             } catch {
                 if (!disposed && generation === revision) panel.webview.html = '<p>기록을 불러오지 못했습니다. 파일을 확인한 뒤 다시 열어 주세요.</p>';
             }
@@ -75,7 +88,7 @@ export class HistoryManager {
             try {
                 switch (message.type) {
                     case 'ready':
-                        if (current.preview) break;
+                        if (!current.recorded) break;
                         recordedHistoryReady = true;
                         if (panel.visible) void BlogPostManager.prepareOnReview(filePath);
                         void updatePreparation().catch(() => {});
@@ -104,10 +117,13 @@ export class HistoryManager {
                         if (recordedHistoryReady) await BlogPostManager.openPage(extensionUri, filePath);
                         break;
                     case 'viewSnapshot':
-                        await this._openSnapshot(filePath, message.index, message.version, current.preview);
+                        current.version ??= historyFingerprint(current.history);
+                        await this._openSnapshot(filePath, message.index, current.version, current.recorded ? undefined : current.history);
                         break;
                     case 'deleteSnapshot':
-                        if (recordedHistoryReady && await this._handleDeleteRequest(filePath, message.index, message.version)) {
+                        if (!recordedHistoryReady) break;
+                        current.version ??= historyFingerprint(current.history);
+                        if (await this._handleDeleteRequest(filePath, message.index, current.version)) {
                             await render();
                         }
                         break;
@@ -123,6 +139,7 @@ export class HistoryManager {
             if (recordedHistoryReady && changed === filePath) void updatePreparation().catch(() => {});
         });
         const visibility = panel.onDidChangeViewState(() => {
+            this.activeChanged.fire();
             if (!panel.visible) return;
             // A retained but suspended webview can miss its in-flight response.
             // The webview accepts only its pending offset, so replay is idempotent.
@@ -133,6 +150,8 @@ export class HistoryManager {
             }
         });
         panel.onDidDispose(() => {
+            this.panels.delete(panel);
+            this.activeChanged.fire();
             disposed = true;
             session?.stream.dispose();
             messages.dispose();
@@ -172,51 +191,6 @@ export class HistoryManager {
         if (selection !== '삭제') return false;
         await storageManager.deleteSnapshot(filePath, index, version);
         return true;
-    }
-
-    private static _getLoadingHtml(webview: vscode.Webview): string {
-        return `<!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Loading History</title>
-            <style>
-                body {
-                    font-family: var(--vscode-font-family);
-                    background-color: var(--vscode-sideBar-background);
-                    color: var(--vscode-foreground);
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    justify-content: center;
-                    height: 100vh;
-                    margin: 0;
-                }
-                .spinner {
-                    border: 4px solid var(--vscode-widget-border);
-                    border-top: 4px solid var(--vscode-progressBar-background);
-                    border-radius: 50%;
-                    width: 40px;
-                    height: 40px;
-                    animation: spin 1s linear infinite;
-                    margin-bottom: 16px;
-                }
-                @keyframes spin {
-                    0% { transform: rotate(0deg); }
-                    100% { transform: rotate(360deg); }
-                }
-                .text {
-                    font-size: 14px;
-                    opacity: 0.8;
-                }
-            </style>
-        </head>
-        <body>
-            <div class="spinner"></div>
-            <div class="text">기록을 불러오는 중입니다...</div>
-        </body>
-        </html>`;
     }
 
     private static async _openSnapshot(filePath: string, index: number, version: string, preview?: FileHistory) {
@@ -270,11 +244,11 @@ export class HistoryManager {
         });
     }
 
-    private static _getHtmlForWebview(history: FileHistory, loadId: string, recorded: boolean): string {
+    private static _getHtmlForWebview(history: FileHistory, loadId: string, recorded: boolean, first?: { html: string; rows: string }): string {
         const nonce = randomBytes(24).toString('base64');
         const values: Record<string, string> = {
             title: htmlText(history.filePath), fileName: htmlText(path.basename(history.filePath)),
-            total: String(history.snapshots.length), loadId, version: historyFingerprint(history), recorded: String(recorded),
+            total: String(history.snapshots.length), loadId, firstEntry: first?.html.replace('<tbody></tbody>', () => `<tbody>${first.rows}</tbody>`) ?? '', recorded: String(recorded),
             csp: `default-src 'none'; style-src 'nonce-${nonce}'; style-src-attr 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none';`,
             styles: `<style nonce="${nonce}">${historyCss}</style>`,
             script: `<script nonce="${nonce}">${historyScript}</script>`,

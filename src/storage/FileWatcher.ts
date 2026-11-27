@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
 import type { Checkpoint, SnapshotTrigger } from '../types';
 import * as path from 'path';
+import { randomUUID } from 'node:crypto';
 import { configManager } from '../config';
 import { storageManager } from './StorageManager';
+import { endsEditBatch } from './EditBatch';
 import { BackgroundRecorder } from './BackgroundRecorder';
 import { limitedSnapshotText } from './SnapshotLimit';
 import { Logger } from '../services/logger';
@@ -10,10 +12,12 @@ import { Logger } from '../services/logger';
 export class FileWatcher {
     private static _instance: FileWatcher;
     private readonly saveReasons = new WeakMap<vscode.TextDocument, vscode.TextDocumentSaveReason>();
+    private readonly undone = new WeakSet<vscode.TextDocument>();
+    private readonly editSessions = new Map<string, string>();
     private readonly baselines = new WeakMap<vscode.TextDocument, string>();
     private readonly pending = new BackgroundRecorder<vscode.TextDocument>(async (document, reason) => {
         if (this.isTrackedDocument(document)) {
-            try { await storageManager.saveSnapshot(document, this.baselines.get(document), reason); }
+            try { await this.record(document, reason); }
             catch (error) { Logger.error('수정 기록을 저장하지 못했습니다.', error); }
         }
     });
@@ -25,6 +29,19 @@ export class FileWatcher {
             FileWatcher._instance = new FileWatcher();
         }
         return FileWatcher._instance;
+    }
+
+    private record(document: vscode.TextDocument, reason: SnapshotTrigger) {
+        const key = document.uri.toString();
+        const session = this.editSessions.get(key) ?? randomUUID();
+        this.editSessions.set(key, session);
+        return storageManager.saveSnapshot(document, this.baselines.get(document), reason, session, this.undone.delete(document));
+    }
+
+    private finishEdits(key: string, reason: SnapshotTrigger) {
+        const write = this.pending.flush(key, reason);
+        if (endsEditBatch(reason)) this.editSessions.delete(key);
+        return write;
     }
 
     public init(context: vscode.ExtensionContext) {
@@ -40,21 +57,24 @@ export class FileWatcher {
             const doc = vscode.window.activeTextEditor?.document;
             if (!doc || doc.isDirty || !this.isTrackedDocument(doc)) return;
             if (args.some(arg => (path.isAbsolute(arg) || cwd) && path.resolve(cwd || '', arg) === doc.uri.fsPath)) {
-                void storageManager.saveSnapshot(doc, this.baselines.get(doc), kind);
+                void this.record(doc, kind).catch(error => Logger.error('실행 기록을 저장하지 못했습니다.', error));
+                this.editSessions.delete(doc.uri.toString());
             }
         };
         const commandArgs = (command: string) => (command.match(/"[^"]*"|'[^']*'|[^\s;&|]+/g) || []).map(arg => arg.replace(/^["']|["']$/g, ''));
         vscode.workspace.textDocuments.forEach(rememberBaseline);
         context.subscriptions.push(
             vscode.workspace.onDidOpenTextDocument(rememberBaseline),
-            vscode.workspace.onDidChangeTextDocument(({ document, contentChanges }) => {
+            vscode.workspace.onDidChangeTextDocument(({ document, contentChanges, reason }) => {
                 if (contentChanges.length && !document.isClosed && this.isTrackedDocument(document)) {
+                    if (reason !== undefined && reason === vscode.TextDocumentChangeReason.Undo) this.undone.add(document);
+                    else this.undone.delete(document);
                     this.pending.change(document.uri.toString(), document);
                 }
             }),
             vscode.workspace.onWillSaveTextDocument(({ document, reason }) => { this.saveReasons.set(document, reason); }),
             vscode.workspace.onDidSaveTextDocument(this._onDidSaveDocument, this),
-            vscode.workspace.onDidCloseTextDocument(document => this.pending.flush(document.uri.toString(), 'close')),
+            vscode.workspace.onDidCloseTextDocument(document => this.finishEdits(document.uri.toString(), 'close')),
             vscode.window.onDidStartTerminalShellExecution(({ execution }) => {
                 const args = commandArgs(execution.commandLine.value);
                 if (args[0] && /^(?:python(?:3(?:\.\d+)?)?|node|tsx|deno|gcc|g\+\+|clang(?:\+\+)?|rustc|cargo|go|java[c]?)(?:\.exe)?$/i.test(path.basename(args[0]))) {
@@ -80,24 +100,27 @@ export class FileWatcher {
                 // Opening an extension view should preserve the ordinary file list's modification order.
                 const tab = vscode.window.tabGroups?.activeTabGroup.activeTab;
                 if (!active && !configManager.contest && tab && tab.input instanceof vscode.TabInputWebview) return;
-                if (previous && previous !== active) return this.pending.flush(previous.uri.toString(), 'switch');
+                if (previous && previous !== active) return this.finishEdits(previous.uri.toString(), 'switch');
             }),
-            vscode.window.onDidChangeWindowState(state => { if (!state.focused) return this.flush('blur'); }),
+            vscode.window.onDidChangeWindowState(state => { if (!state.focused) return this.flush('blur').catch(error => Logger.error('수정 기록 저장 대기 중', error)); }),
             configManager.onDidChange(() => {
+                this.editSessions.clear();
                 this.pending.discardWhere(document => !this.isTrackedDocument(document));
                 vscode.workspace.textDocuments.forEach(rememberBaseline);
             }),
-            { dispose: () => { void this.flush(); } },
+            { dispose: () => { void this.flush().catch(error => Logger.error('수정 기록 저장 대기 중', error)); } },
         );
     }
 
     public async flushFile(filePath: string) {
-        await this.pending.flush(vscode.Uri.file(filePath).toString());
-        await storageManager.flush();
+        await this.finishEdits(vscode.Uri.file(filePath).toString(), 'review');
+        await storageManager.flush(filePath);
     }
 
     public async flush(reason: SnapshotTrigger = 'close') {
-        await this.pending.flushAll(reason);
+        const writes = this.pending.flushAll(reason);
+        if (endsEditBatch(reason)) this.editSessions.clear();
+        await writes;
         await storageManager.flush();
     }
 

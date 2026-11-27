@@ -1,10 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { articleHtml, taggedMarkdown } from '../writing/ArticleExport';
 import { normalizeExportTags } from '../settings/ExportTags';
 import { ShikiService } from '../services/ShikiService';
 import { separateArticleTitle } from '../writing/ArticleContent';
-import { documentFromMarkdown, documentHtml, documentMarkdown, ghostDocument } from '../writing/ArticleDocument';
+import { validateDocument, documentFromMarkdown, documentHtml, documentMarkdown, ghostDocument } from '../writing/ArticleDocument';
 
 test('comma-separated export tags keep multiword names and ignore empty or repeated entries', () => {
     assert.deepEqual(normalizeExportTags(' 알고리즘, PS, segment tree, , ps, 알고리즘, '), ['알고리즘', 'PS', 'segment tree']);
@@ -72,4 +74,11 @@ test('unsupported history languages escape source markup in the highlighting fal
     assert.doesNotMatch(html, /<style>|<button/);
     assert.match(html, /&lt;style&gt;/);
     assert.match(html, /&lt;button class=&quot;delete-btn&quot;&gt;/);
+});
+
+test('the article compatibility fixture carries both portable Markdown and the stored rich document', () => {
+    const { known, future } = JSON.parse(readFileSync(join(__dirname, '../../tests/fixtures/article-v1.json'), 'utf8'));
+    assert.deepEqual(documentFromMarkdown(known.markdown), known.document);
+    assert.equal(documentMarkdown(validateDocument(known.document)).trim(), known.markdown);
+    assert.throws(() => validateDocument(future.document));
 });

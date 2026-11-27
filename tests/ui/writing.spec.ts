@@ -196,18 +196,62 @@ test('narrowing and widening a range preserves edited step explanations', async 
     await expect(page.locator('#step-body-0')).toHaveValue('보존할 수정 문장');
 });
 
-test('streaming shows a readable preview without replacing an edited article', async ({ page }) => {
+test('a rewrite streams into the read-only editor and keeps unsaved source edits when a candidate needs review', async ({ page }) => {
     await open(page);
     await model(page, { showAdvancedWritingViews: true, title: '이전 제목', markdown: '사용자가 쓴 본문' });
     await page.locator('#source-btn').click();
     await page.locator('#article-body').fill('작성 중에도 보존할 본문');
-    await model(page, { showAdvancedWritingViews: true, pending: true, running: true, title: '이전 제목', markdown: '사용자가 쓴 본문', streamHtml: '<h2>새로 생성 중</h2><p>본문이 먼저 보입니다.</p>' });
-    await expect(page.locator('#stream-preview')).toContainText('본문이 먼저 보입니다.');
+    const linkSidebar = (linked: boolean, available: boolean) => page.evaluate(data =>
+        window.dispatchEvent(new MessageEvent('message', { data })), { type: 'writerSidebar', linked, available });
+    await linkSidebar(true, true);
+    await model(page, { showAdvancedWritingViews: true, pending: true, running: true, pendingKind: 'write_blog', title: '이전 제목', markdown: '사용자가 쓴 본문', streamMarkdown: '## 새로 생성 중\n\n본문이 먼저 보입니다.' });
+    const heading = page.locator('.prose-editor').getByRole('heading', { name: '새로 생성 중' });
+    await expect(heading).toBeInViewport();
+    expect((await messages(page)).findLast((m: any) => m.type === 'writerControls').controls).not.toHaveProperty('stream');
+    await linkSidebar(false, true);
+    await expect(heading).toBeVisible();
+    await linkSidebar(false, false);
+    await expect(heading).toBeVisible();
+    await linkSidebar(true, true);
     await expect(page.locator('#article-body')).toHaveValue('작성 중에도 보존할 본문');
-    await model(page, { streamHtml: '', candidate: true });
-    await expect(page.locator('#stream-box')).toBeHidden();
-    await expect(page.locator('#candidate-box')).toBeVisible();
+    await model(page, { showAdvancedWritingViews: true, candidate: true, title: '이전 제목', markdown: '사용자가 쓴 본문' });
+    await expect(heading).toHaveCount(0);
+    await expect(page.locator('#candidate-box')).toHaveJSProperty('hidden', false);
+    await expect(page.locator('#article-body')).toBeEditable();
     await expect(page.locator('#article-body')).toHaveValue('작성 중에도 보존할 본문');
+});
+
+test('partial text stays out of saves and undo history across a failed rewrite and retry', async ({ page }) => {
+    await open(page);
+    const draft = { title: '기존 제목', markdown: '원본' };
+    await model(page, draft);
+    const editor = page.locator('.prose-editor');
+    await editor.click();
+    await editor.press('End');
+    await page.keyboard.insertText(' 수정');
+    const writing = { ...draft, pending: true, running: true, pendingKind: 'write_blog' };
+    await model(page, { ...writing, streamMarkdown: '## 첫 부분' });
+    await model(page, { ...writing, streamMarkdown: '## 첫 부분\n\n- 다음 부분' });
+    await expect(editor.getByRole('listitem')).toHaveText('다음 부분');
+    await expect(page.locator('#copy-btn')).toBeDisabled();
+    await expect(page.locator('#ghost-publish-btn')).toBeDisabled();
+    await expect.poll(async () => (await messages(page)).filter((m: any) => m.type === 'save').map((m: any) => m.fields.markdown)).toEqual(['원본 수정']);
+    await model(page, { ...writing, running: false, error: '연결 실패', streamMarkdown: '## 첫 부분' });
+    await expect(editor).toBeEditable();
+    await expect(editor).toHaveText('원본 수정');
+    await expect(page.locator('#article-title')).toHaveValue(draft.title);
+    await page.getByRole('button', { name: '실행 취소', exact: true }).click();
+    await expect(editor).toHaveText('원본');
+    await expect.poll(async () => (await messages(page)).filter((m: any) => m.type === 'save').at(-1).fields.markdown).toBe('원본');
+    const latest = (await messages(page)).filter((m: any) => m.type === 'save').at(-1);
+    await page.evaluate(id => window.dispatchEvent(new MessageEvent('message', { data: { type: 'ack', id } })), latest.id);
+    await model(page, { ...writing, streamMarkdown: '다시 쓰는 중' });
+    await expect(editor).toHaveText('다시 쓰는 중');
+    await model(page, { title: '완성한 제목', markdown: '완성한 본문' });
+    await expect(editor).toHaveText('완성한 본문');
+    await expect(editor).toBeEditable();
+    await expect(page.locator('#article-title')).toBeEditable();
+    await expect(page.locator('#article-title')).toHaveValue('완성한 제목');
 });
 
 test('cancelled initial preparation can restart without closing the writer', async ({ page }) => {
@@ -278,27 +322,53 @@ test('private notices follow the active memo, article, candidate and previous ve
     const notice = { source: 'code', title: '경계값 <b>확인</b>', detail: '빈 입력에서 멈춥니다.', appliedFix: '빈 입력을 처리했습니다.' };
     await open(page);
     await model(page, { planNotices: [notice] });
-    const memos = page.locator('#plan-notices');
-    await expect(memos).toBeVisible();
+    const toggle = page.getByRole('button', { name: '작성자 알림 1' });
+    const memos = page.locator('#document-notices');
+    await expect(memos).toBeHidden();
+    const summaryTop = (await page.locator('#summary').boundingBox())!.y;
+    await toggle.hover();
+    const bounds = (await page.locator('#notice-panel').boundingBox())!;
+    expect(page.viewportSize()!.width - bounds.x - bounds.width).toBeLessThan(24);
+    expect((await page.locator('#summary').boundingBox())!.y).toBe(summaryTop);
     await expect(memos.locator('summary')).toHaveText('코드 · 경계값 <b>확인</b>');
     await expect(memos.locator('b')).toHaveCount(0);
-    await expect(memos.getByText('메모에 반영 · 빈 입력을 처리했습니다.')).toBeVisible();
+    await expect(memos.getByText('메모에 반영', { exact: true })).toBeVisible();
+    await expect(memos.getByText(notice.appliedFix)).toBeVisible();
+    await page.mouse.move(0, 0);
+    await expect(memos).toBeHidden();
+    await toggle.focus();
+    await toggle.press('Enter');
+    await expect(memos).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(memos).toBeHidden();
+    await toggle.click();
+    await memos.getByText(notice.detail).click();
+    await page.mouse.move(0, 0);
+    await expect(memos).toBeVisible();
     const article = { title: '글', markdown: '게시할 본문', versions, articleNotices: [{ ...notice, source: 'plan', title: '메모 확인', appliedFix: '' }] };
     await model(page, { ...article, candidate: true, candidateNotices: [notice] });
-    await expect(page.locator('#article-notices summary')).toHaveText('메모 · 메모 확인');
-    await expect(page.locator('#article-notices')).not.toContainText('본문에 반영');
+    await expect(page.locator('#notice-toggle')).toHaveText('작성자 알림 2');
+    await expect(memos.locator('summary')).toHaveText('메모 · 메모 확인');
+    await expect(memos).not.toContainText('본문에 반영');
     await expect(page.locator('#candidate-notices')).toBeVisible();
     await expect(page.locator('#rich-editor [contenteditable=true]')).toHaveText('게시할 본문');
     await page.locator('#version-select').selectOption('older');
     await page.evaluate(note => window.dispatchEvent(new MessageEvent('message', { data: {
         type: 'versionPreview', versionId: 'older', title: '예전', html: '<p>이전 본문</p>', notices: [note],
     } })), notice);
-    await expect(page.locator('#version-notices summary')).toHaveText('코드 · 경계값 <b>확인</b>');
-    await expect(page.locator('#article-notices')).toBeHidden();
+    await page.locator('#notice-toggle').hover();
+    await expect(memos.getByRole('heading')).toHaveText('이전 버전 알림');
+    await expect(memos.locator('summary')).toHaveText('코드 · 경계값 <b>확인</b>');
+    await expect(memos).not.toContainText('메모 확인');
+    await page.setViewportSize({ width: 320, height: 480 });
+    await page.locator('#notice-toggle').hover();
+    const narrowPanel = (await page.locator('#notice-panel').boundingBox())!;
+    expect(narrowPanel.x).toBeGreaterThanOrEqual(0);
+    expect(narrowPanel.height).toBeLessThanOrEqual(240);
     await page.locator('#version-select').selectOption('');
     await model(page, { ...article, articleNotices: [] });
     await expect(page.locator('#candidate-notices')).toBeHidden();
-    await expect(page.locator('#article-notices')).toBeHidden();
+    await expect(page.locator('#notice-toggle')).toBeHidden();
 });
 test('article tools in the sidebar use the live draft and the selected version', async ({ page, context }) => {
     const sidebar = await context.newPage();
@@ -318,10 +388,39 @@ test('article tools in the sidebar use the live draft and the selected version',
     await model(page);
     await deliver(page, { type: 'writerSidebar', linked: true, available: true });
     await refreshSidebar();
+    const library = sidebar.locator('#file-library'), toggle = sidebar.locator('#library-toggle');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const libraryHeight = async () => (await toggle.boundingBox())!.height + (await library.boundingBox())!.height;
+    expect(await libraryHeight()).toBeCloseTo(700 / 3, 0);
+    await toggle.click();
+    await refreshSidebar();
+    await expect(library).toBeHidden();
+    await toggle.click();
+    await deliver(sidebar, { type: 'sidebarWriter', historyFile: base.filePath });
+    await expect(library).toBeVisible();
+    await expect(sidebar.locator('#writer-tools')).toBeHidden();
+    expect(await libraryHeight()).toBeCloseTo(700 / 3, 0);
+    await sidebar.setViewportSize({ width: 260, height: 480 });
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await toggle.click();
+    await expect(library).toBeVisible();
+    await refreshSidebar();
+    await expect(library).toBeVisible();
+    await deliver(sidebar, { type: 'sidebarWriter' });
+    await expect(toggle).toBeHidden();
+    await expect(library).toBeVisible();
+    await refreshSidebar();
+    await sidebar.setViewportSize({ width: 260, height: 700 });
     await expect(sidebar.locator('.writer-tabs button')).toHaveText(['변경사항 요약', '글 확인/수정']);
     await expect(sidebar.locator('.writer-tabs :is(i, svg)')).toHaveCount(0);
     await expect(sidebar.getByRole('button', { name: '글쓰기', exact: true })).toBeVisible();
     await expect(sidebar.locator('#writer-article-options')).toBeHidden();
+    await model(page, { pending: true, running: true, pendingKind: 'write_blog', status: '글을 작성하고 있어요…' });
+    await refreshSidebar();
+    await expect(sidebar.locator('#side-progress-box')).toHaveCount(0);
+    await expect(sidebar.getByRole('button', { name: '글쓰기', exact: true })).toBeHidden();
+    await clickTool('글 작성 취소');
+    expect((await messages(page)).at(-1).type).toBe('cancel');
     const article = { title: '현재 제목', markdown: '## 접근\n\n현재 본문', versions };
     await model(page, { ...article, candidate: true });
     await refreshSidebar();
@@ -488,12 +587,13 @@ test('contest request blocking also covers images in the editor and previews', a
         return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg"/>' });
     });
     await open(page);
-    const article = { showAdvancedWritingViews: true, markdown: `![풀이](${origin}/editor)`, streamHtml: `<img src="${origin}/stream">` };
+    const article = { showAdvancedWritingViews: true, markdown: `![풀이](${origin}/editor)`,
+        articleNotices: [{ source: 'code', title: '추가 설명', detail: `![그림](${origin}/notice)`, appliedFix: '' }] };
     await model(page, { ...article, backendEnabled: false });
     await page.evaluate(src => window.dispatchEvent(new MessageEvent('message', {
         data: { type: 'preview', html: `<img src="${src}/preview">` },
     })), origin);
-    for (const [container, path] of [['#rich-editor', 'editor'], ['#stream-preview', 'stream'], ['#article-preview', 'preview']]) {
+    for (const [container, path] of [['#rich-editor', 'editor'], ['#article-preview', 'preview'], ['#notice-panel', 'notice']]) {
         await expect(page.locator(`${container} img[data-blocked-src="${origin}/${path}"]`)).toHaveCount(1);
     }
     const onlineImages = page.locator(`img[src^="${origin}/"]`);
@@ -501,7 +601,10 @@ test('contest request blocking also covers images in the editor and previews', a
     expect(requests).toEqual([]);
     await model(page, { ...article, backendEnabled: true });
     await expect.poll(() => new Set(requests).size).toBe(3);
-    await model(page, { ...article, backendEnabled: false });
+    const writing = { ...article, pending: true, running: true, pendingKind: 'write_blog', streamMarkdown: `![그림](${origin}/stream)` };
+    await model(page, writing);
+    await expect(page.locator(`#rich-editor img[src="${origin}/stream"]`)).toBeVisible();
+    await model(page, { ...writing, backendEnabled: false });
     await expect(onlineImages).toHaveCount(0);
 });
 

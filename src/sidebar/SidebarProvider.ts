@@ -13,6 +13,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private _stateRevision = 0;
     private _activityRevision = 0;
+    private _serviceRevision = 0;
     private _recentLogs = this.createPager();
 
     constructor(
@@ -44,6 +45,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.html = getSidebarHtml(webviewView.webview, this._extensionUri, !!configManager.contest);
 
+        const sendRecordingState = () => webviewView.webview.postMessage({ type: 'recordingState', pending: storageManager.unsavedSnapshots });
+        const recording = storageManager.onDidChangeRecording(sendRecordingState);
+        webviewView.onDidDispose(() => recording.dispose());
         const sendContestMode = () => webviewView.webview.postMessage({ type: 'contestMode', contest: configManager.contest });
 
         webviewView.webview.onDidReceiveMessage(async (data) => {
@@ -58,6 +62,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         if (typeof data.enabled === 'boolean' && ['recording', 'backend', 'writing'].includes(data.option)) {
                             await configManager.setContestOption(data.option, data.enabled);
                         }
+                        break;
+                    }
+                    case 'openFolder': {
+                        await vscode.commands.executeCommand('psb.openFolderFromWelcome');
+                        break;
+                    }
+                    case 'createFile': {
+                        await vscode.commands.executeCommand('psb.createCodeFile');
                         break;
                     }
                     case 'selectRootFolder': {
@@ -80,7 +92,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         await this._onToggleLanguage(data.value);
                         break;
                     }
+                    case 'retryRecording': {
+                        await storageManager.flush();
+                        break;
+                    }
                     case 'getInitialData': {
+                        await sendRecordingState();
                         BlogPostManager.setSidebarVisible(webviewView.visible);
                         await sendContestMode();
                         this.codeFiles.start();
@@ -98,13 +115,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                             recentLogs.setSearch(data.query, data.searchId);
                         } else if (data.searchId !== recentLogs.searchId || !Number.isSafeInteger(data.count) || data.count < 0) break;
                         try {
-                            const page = await recentLogs.load(searching ? undefined : data.count);
-                            const enrichedLogs = await this.writingLogs(page.recentLogs);
-                            await webviewView.webview.postMessage({
-                                type: 'recentLogsPage', requestId: data.requestId,
-                                discovering: this.codeFiles.searching, discoveryFailed: this.codeFiles.failed,
-                                ...page, recentLogs: enrichedLogs,
-                            });
+                            await this.sendPage(webviewView, recentLogs.load(searching ? undefined : data.count), data.requestId);
                         } catch {
                             await webviewView.webview.postMessage({ type: 'recentLogsPage', requestId: data.requestId, recentLogsSearchId: data.searchId, error: '기록을 불러오지 못했습니다.' });
                         }
@@ -147,9 +158,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         if (typeof data.id === 'string' && /^[a-f0-9-]{36}$/i.test(data.id)) await BlogPostManager.dismissNotice(data.id);
                         break;
                     }
-                    case 'sample':
-                        await vscode.commands.executeCommand('psb.sample');
-                        break;
                     case 'generateBlog':
                     case 'selectLogForBlog': {
                         const discovered = this.codeFiles.files.find(file => file.filePath === data.path);
@@ -169,24 +177,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             }
         });
 
-        const discovery = this.codeFiles.onDidChange(async () => {
-            if (configManager.contest) return;
-            // A directory scan can insert thousands of newer files ahead of the visible page.
-            const page = await recentLogs.load(undefined, false);
-            const rows = await this.writingLogs(page.recentLogs);
-            if (this._view === webviewView) {
-                await webviewView.webview.postMessage({
-                    type: 'recentLogsPage', activeFile: vscode.window.activeTextEditor?.document.uri.fsPath,
-                    discovering: this.codeFiles.searching, discoveryFailed: this.codeFiles.failed, ...page, recentLogs: rows,
-                });
-            }
+        const discovery = this.codeFiles.onDidChange(() => {
+            if (!webviewView.visible || configManager.contest) return;
+            // New discoveries may move thousands of files ahead of the preview.
+            void this.sendPage(webviewView, recentLogs.load(undefined, false));
         });
-        const controls = BlogPostManager.onDidChangeControls(() => {
+        const sendDocumentContext = () => {
             if (this._view === webviewView && webviewView.visible) {
-                void webviewView.webview.postMessage({ type: 'sidebarWriter', writer: BlogPostManager.sidebarWriter });
+                void webviewView.webview.postMessage({ type: 'sidebarWriter', writer: BlogPostManager.sidebarWriter, historyFile: HistoryManager.activeFile });
             }
-        });
+        };
+        const controls = BlogPostManager.onDidChangeControls(sendDocumentContext);
+        const history = HistoryManager.onDidChangeActive(sendDocumentContext);
         webviewView.onDidDispose(() => {
+            history.dispose();
             controls.dispose();
             discovery.dispose();
             if (this._view === webviewView) {
@@ -201,7 +205,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         });
         webviewView.onDidDispose(() => disposable.dispose());
         const accountUpdate = BlogPostManager.onDidChange(file => {
-            if (!file) void this.updateState();
+            if (!webviewView.visible || configManager.contest) return;
+            if (!file) void this.updateServiceState(webviewView);
             else if (!configManager.contest) void this.updateWritingActivity(file);
         });
         webviewView.onDidDispose(() => accountUpdate.dispose());
@@ -213,6 +218,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         usageTimer.unref();
         const visibility = webviewView.onDidChangeVisibility(() => {
             BlogPostManager.setSidebarVisible(webviewView.visible);
+            if (webviewView.visible) void this.updateState();
             refreshServiceState();
         });
         const focus = vscode.window.onDidChangeWindowState(refreshServiceState);
@@ -222,7 +228,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             void this.updateState();
         });
         webviewView.onDidDispose(() => settingsUpdate.dispose());
-        const updateDirectory = () => webviewView.webview.postMessage({ type: 'currentDirectory', path: configManager.getCurrentDirectory() });
+        const updateDirectory = () => webviewView.webview.postMessage({
+            type: 'currentDirectory', path: configManager.getCurrentDirectory(), hasFolder: !!vscode.workspace.workspaceFolders?.length,
+        });
         const editorUpdate = vscode.window.onDidChangeActiveTextEditor(updateDirectory);
         const workspaceUpdate = vscode.workspace.onDidChangeWorkspaceFolders(updateDirectory);
         webviewView.onDidDispose(() => { editorUpdate.dispose(); workspaceUpdate.dispose(); });
@@ -242,48 +250,47 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             await view.webview.postMessage({ type: 'writingActivity', filePath, writingActivity, writingActivityRevision });
         }
     }
+    private async sendPage(view: vscode.WebviewView, pending: ReturnType<RecentLogsPager['load']>, requestId?: number) {
+        const page = await pending;
+        if (view !== this._view || configManager.contest) return;
+        const message = {
+            type: 'recentLogsPage', activeFile: vscode.window.activeTextEditor?.document.uri.fsPath,
+            discovering: this.codeFiles.searching, discoveryFailed: this.codeFiles.failed, ...page,
+        };
+        await view.webview.postMessage({ ...message, requestId });
+        const recentLogs = await this.writingLogs(page.recentLogs);
+        if (view === this._view && recentLogs.some(log => log.writingActivity)) {
+            await view.webview.postMessage({ ...message, recentLogs });
+        }
+    }
+
+    private async updateServiceState(view: vscode.WebviewView) {
+        const revision = ++this._serviceRevision;
+        const [accountLabel, usage, notices] = await Promise.all([
+            BlogPostManager.accountLabel(), BlogPostManager.usage(), BlogPostManager.notices(),
+        ]);
+        if (view === this._view && revision === this._serviceRevision && !configManager.contest) {
+            await view.webview.postMessage({ type: 'serviceState', accountLabel, usage, notices });
+        }
+    }
+
     public async updateState() {
         const revision = ++this._stateRevision;
         const view = this._view;
-        if (view && !configManager.contest) {
-            const recentLogsPager = this._recentLogs;
-            const [page, totalSize, accountLabel, usage, notices] = await Promise.all([
-                recentLogsPager.load().then(async page => {
-                    // A saved file is ready to show before size scans and account
-                    // lookups finish. Page revisions still protect newer results.
-                    if (view === this._view && recentLogsPager === this._recentLogs) {
-                        await view.webview.postMessage({
-                            type: 'recentLogsPage',
-                            activeFile: vscode.window.activeTextEditor?.document.uri.fsPath,
-                            discovering: this.codeFiles.searching, discoveryFailed: this.codeFiles.failed,
-                            ...page,
-                        });
-                    }
-                    return page;
-                }),
-                storageManager.calculateTotalSize(),
-                BlogPostManager.accountLabel(),
-                BlogPostManager.usage(),
-                BlogPostManager.notices(),
-            ]);
-            const recentLogs = await this.writingLogs(page.recentLogs);
-            if (view !== this._view || revision !== this._stateRevision) return;
-
-            await view.webview.postMessage({
-                type: 'updateState',
-                activeFile: vscode.window.activeTextEditor?.document.uri.fsPath,
-                root: configManager.getRootFolder(),
-                windowRoot: configManager.isWindowRoot(),
-                currentDirectory: configManager.getCurrentDirectory(),
-                isRecording: configManager.isRecording(),
-                languages: configManager.getSupportedLanguages(),
-                ...page,
-                recentLogs,
-                totalLogSize: totalSize,
-                accountLabel,
-                usage,
-                notices,
-            });
-        }
+        if (!view?.visible || configManager.contest) return;
+        await Promise.all([
+            view.webview.postMessage({
+                type: 'updateState', root: configManager.getRootFolder(), windowRoot: configManager.isWindowRoot(),
+                currentDirectory: configManager.getCurrentDirectory(), hasFolder: !!vscode.workspace.workspaceFolders?.length,
+                isRecording: configManager.isRecording(), languages: configManager.getSupportedLanguages(),
+            }),
+            this.sendPage(view, this._recentLogs.load()),
+            this.updateServiceState(view),
+            storageManager.calculateTotalSize().then(totalLogSize => {
+                if (view === this._view && revision === this._stateRevision) {
+                    return view.webview.postMessage({ type: 'storageSize', totalLogSize });
+                }
+            }),
+        ]);
     }
 }

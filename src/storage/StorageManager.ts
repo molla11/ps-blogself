@@ -2,10 +2,22 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { FileHistory, Snapshot, SnapshotTrigger, RequestLog, SessionIndexItem, SnapshotDiff } from '../types';
-import { getHash, generateUUID, computeDiff } from './utils';
+import { getHash, generateUUID, changedSpan, compactDiff, computeDiff } from './utils';
 import { Logger } from '../services/logger';
 import { atomicWrite, observeFile, withFileLock } from './SharedFiles';
+import { nextEditBatch, endsEditBatch, sameBurst } from './EditBatch';
 import { limitedSnapshotText } from './SnapshotLimit';
+
+interface Capture {
+    document: Pick<vscode.TextDocument, 'uri' | 'languageId'>;
+    content: string;
+    timestamp: number;
+    baseline?: string;
+    trigger?: SnapshotTrigger;
+    editSession?: string;
+    undo?: boolean;
+    historyWritten?: boolean;
+}
 
 export class HistoryConflict extends Error {
     constructor() { super('다른 창에서 수정 기록이 변경되었습니다. 최신 기록을 확인해 주세요.'); }
@@ -15,10 +27,18 @@ export class StorageManager {
     private static _instance: StorageManager;
     private _globalStorageUri?: vscode.Uri;
     private _saveQueue: Promise<void> = Promise.resolve();
+    private readonly failed = new Map<string, Capture[]>();
+    private readonly recordingChange = new vscode.EventEmitter<void>();
+    readonly onDidChangeRecording = this.recordingChange.event;
+    get unsavedSnapshots() { return [...this.failed.values()].reduce((sum, captures) => sum + captures.length, 0); }
     private oversized = new Set<string>();
     private _historyDir?: vscode.Uri;
 
     private _indexFileUri?: vscode.Uri;
+    private historySize?: { version: string; size: Promise<string> };
+    private readonly emptyIndex: SessionIndexItem[] = [];
+    private verifiedIndex?: { rows: SessionIndexItem[]; directoryVersion: string };
+    private indexRead?: { version: string; rows: Promise<SessionIndexItem[]> };
     private _onDidUpdateIndex = new vscode.EventEmitter<void>();
     public readonly onDidUpdateIndex = this._onDidUpdateIndex.event;
     private readonly snapshotSaved = new vscode.EventEmitter<string>();
@@ -34,6 +54,9 @@ export class StorageManager {
     }
 
     public init(context: vscode.ExtensionContext) {
+        this.indexRead = undefined;
+        this.verifiedIndex = undefined;
+        this.historySize = undefined;
         this._globalStorageUri = context.globalStorageUri;
         // globalStorage/ps-blogself/history/
         this._historyDir = vscode.Uri.joinPath(this._globalStorageUri, 'history');
@@ -46,11 +69,7 @@ export class StorageManager {
         if (!this._historyDir) {
             throw new Error('StorageManager not initialized');
         }
-        try {
-            await fs.mkdir(this._historyDir.fsPath, { recursive: true });
-        } catch (error) {
-            // Context might prevent mkdir if parent doesn't exist, but recursive true handles it
-        }
+        await fs.mkdir(this._historyDir.fsPath, { recursive: true });
     }
 
     public reconstructFileContent(
@@ -98,7 +117,7 @@ export class StorageManager {
         return this.reconstructFileContent(history, history.snapshots.length - 1);
     }
 
-    public saveSnapshot(document: vscode.TextDocument, baseline?: string, trigger?: SnapshotTrigger): Promise<void> {
+    public saveSnapshot(document: vscode.TextDocument, baseline?: string, trigger?: SnapshotTrigger, editSession?: string, undo = false): Promise<void> {
         const length = typeof document.offsetAt === 'function'
             ? document.offsetAt(new vscode.Position(document.lineCount - 1, Number.MAX_SAFE_INTEGER)) : undefined;
         const content = limitedSnapshotText(length, () => document.getText());
@@ -112,13 +131,41 @@ export class StorageManager {
             return Promise.resolve();
         }
         this.oversized.delete(key);
-        const write = this._saveQueue.then(() => withFileLock(this._indexFileUri!.fsPath, () => this._saveSnapshot(document, content, baseline, trigger)));
+        const capture: Capture = { document: { uri: document.uri, languageId: document.languageId }, content, baseline, trigger, editSession, undo, timestamp: Date.now() };
+        const write = this._saveQueue.then(() => this.writeCaptures(capture.document.uri.fsPath, capture));
         this._saveQueue = write.catch(() => {});
         return write;
     }
 
-    public async flush(): Promise<void> {
-        await this._saveQueue;
+    private async writeCaptures(key: string, capture?: Capture) {
+        const pending = this.failed.get(key) ?? [];
+        if (capture) pending.push(capture);
+        try {
+            await withFileLock(this._indexFileUri!.fsPath, async () => {
+                while (pending.length) {
+                    await this._saveSnapshot(pending[0]);
+                    pending.shift();
+                }
+            });
+            if (this.failed.delete(key)) this.recordingChange.fire();
+        } catch (error) {
+            this.failed.set(key, pending);
+            this.recordingChange.fire();
+            throw error;
+        }
+    }
+
+    public flush(filePath?: string): Promise<void> {
+        const write = this._saveQueue.then(async () => {
+            let failure: unknown;
+            for (const key of [...this.failed.keys()]) {
+                if (filePath && key !== filePath) continue;
+                try { await this.writeCaptures(key); } catch (error) { failure = error; }
+            }
+            if (failure) throw failure;
+        });
+        this._saveQueue = write.catch(() => {});
+        return write;
     }
 
     public async installSampleHistory(): Promise<string> {
@@ -147,18 +194,14 @@ export class StorageManager {
         return filePath;
     }
 
-    private async _saveSnapshot(document: vscode.TextDocument, content: string, baseline?: string, trigger?: SnapshotTrigger): Promise<void> {
-        if (!this._historyDir) {
-            console.warn('StorageManager not initialized');
-            return;
-        }
-
+    private async _saveSnapshot(capture: Capture): Promise<void> {
+        if (!this._historyDir) throw new Error('기록 저장 공간이 준비되지 않았습니다.');
+        const { document, content, baseline, trigger, timestamp } = capture;
         const absolutePath = document.uri.fsPath;
         const fileHash = getHash(absolutePath);
         const historyFileUri = vscode.Uri.joinPath(this._historyDir, `${fileHash}.json`);
 
         const contentHash = getHash(content);
-        const timestamp = Date.now();
 
         try {
             await this._ensureStorageInit();
@@ -184,59 +227,77 @@ export class StorageManager {
                 };
             }
 
+            const marker = historyFileUri.fsPath + '.unindexed';
+            const finishIndex = async () => {
+                await this._updateSessionIndex(document, history.lastModified, fileHash);
+                await fs.rm(marker, { force: true });
+                this.snapshotSaved.fire(absolutePath);
+            };
+            if (capture.historyWritten) {
+                await finishIndex();
+                return;
+            }
             const checkpoint = trigger === 'save' || trigger === 'run' || trigger === 'debug' || trigger === 'task' ? trigger : undefined;
             // Execution identifies an existing saved version. An unsaved buffer may differ from what ran.
             if (checkpoint && checkpoint !== 'save' && history.snapshots.at(-1)?.hash !== contentHash) return;
 
-            // Check content change
-            let lastContent: string | null = null;
-            if (history.snapshots.length > 0) {
-                const lastSnapshot = history.snapshots[history.snapshots.length - 1];
-                if (lastSnapshot.hash === contentHash) {
-                    if (checkpoint && !lastSnapshot.checkpoints?.includes(checkpoint)) {
-                        (lastSnapshot.checkpoints ??= []).push(checkpoint);
-                        await atomicWrite(historyFileUri.fsPath, history);
-                    }
-                    return;
-                }
-                lastContent = this._getLastSnapshotContent(history);
+            const last = history.snapshots.at(-1);
+            if (last?.hash === contentHash) {
+                const mark = checkpoint && !last.checkpoints?.includes(checkpoint);
+                const seal = history.openEdit && (endsEditBatch(trigger) || history.openEdit.session !== capture.editSession);
+                if (mark) (last.checkpoints ??= []).push(checkpoint);
+                if (seal) delete history.openEdit;
+                if (mark || seal) await atomicWrite(historyFileUri.fsPath, history);
+                return;
             }
 
-            // Determine snapshot type (Full vs Diff)
-            let newSnapshot: Snapshot = {
-                timestamp,
-                hash: contentHash, trigger, ...(checkpoint ? { checkpoints: [checkpoint] } : {}),
-            };
-
-            if (lastContent !== null) {
-                const diff = computeDiff(lastContent, content);
-                if (diff) {
-                    newSnapshot.diff = diff;
-                } else {
-                    newSnapshot.content = content;
-                }
+            const before = last ? this._getLastSnapshotContent(history) : baseline ?? null;
+            const edit = before !== null ? changedSpan(before, content) : null;
+            const batch = capture.undo ? undefined : nextEditBatch(history, last, before, content, edit, capture.editSession, trigger, timestamp);
+            // Ctrl+Z can discard the exact unreviewed addition. The saved hash verifies
+            // the editor's Undo without retaining a copy of the intermediate text.
+            const undidInsertion = capture.undo && !endsEditBatch(trigger) && history.openEdit?.beforeInsertHash === contentHash
+                && sameBurst(history, last, capture.editSession, timestamp);
+            const amend = (!!batch && batch.count > 1) || !!undidInsertion;
+            const index = history.snapshots.length - Number(amend);
+            const parent = history.snapshots[index - 1];
+            if (amend && parent?.hash === contentHash) {
+                // The burst returned to the version already on disk.
+                history.snapshots.pop();
+                if (checkpoint && !parent.checkpoints?.includes(checkpoint)) (parent.checkpoints ??= []).push(checkpoint);
+                delete history.openEdit;
             } else {
-                newSnapshot.content = content;
+                let patch = edit && compactDiff(edit);
+                if (index % 128 === 0) patch = null;
+                else if (amend) {
+                    const base = this.reconstructFileContent(history, index - 1);
+                    if (base === null) throw new Error('수정 기록의 기준 코드를 복원하지 못했습니다.');
+                    patch = computeDiff(base, content);
+                }
+                const snapshot: Snapshot = { timestamp, hash: contentHash, trigger, ...(patch ? { diff: patch } : { content }) };
+                // A manual save within the burst still counts as a save checkpoint for memo preparation.
+                if (checkpoint) snapshot.checkpoints = [checkpoint];
+                else if (amend && last?.checkpoints?.includes('save')) snapshot.checkpoints = ['save'];
+                history.snapshots[index] = snapshot;
+                history.openEdit = batch && !undidInsertion ? { ...batch, index, hash: contentHash } : undefined;
             }
-
-            // Add snapshot
-            history.snapshots.push(newSnapshot);
             history.lastModified = timestamp;
 
-            // Save history file
+            // An interrupted history/index pair is repaired when opening the full list.
+            await fs.writeFile(marker, '', { mode: 0o600 });
             await atomicWrite(historyFileUri.fsPath, history);
             Logger.info(`[StorageManager] Saved snapshot for ${absolutePath}`);
 
-            // Update Session Index
-            await this._updateSessionIndex(document, timestamp, fileHash);
-            this.snapshotSaved.fire(absolutePath);
+            capture.historyWritten = true;
+            await finishIndex();
         } catch (error) {
             Logger.error(`[StorageManager] Failed to save snapshot for ${absolutePath}:`, error);
+            throw error;
         }
     }
 
     private async _updateSessionIndex(
-        document: vscode.TextDocument,
+        document: Pick<vscode.TextDocument, 'uri' | 'languageId'>,
         timestamp: number,
         fileHash: string,
     ) {
@@ -247,8 +308,13 @@ export class StorageManager {
         let index: SessionIndexItem[] = [];
         try {
             const indexData = await fs.readFile(this._indexFileUri.fsPath, 'utf-8');
-            index = JSON.parse(indexData);
+            index = this.parseIndex(indexData);
         } catch (error) {
+            if (error instanceof SyntaxError || error instanceof TypeError) {
+                // The history was committed under this lock. Reconstruct the index from it.
+                await this.repairIndex(this._historyDir!.fsPath, this._indexFileUri.fsPath);
+                return;
+            }
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         }
 
@@ -267,11 +333,7 @@ export class StorageManager {
         };
 
         index.unshift(newItem);
-
-        // Limit index size to 20 (User request) -> REMOVED to support Full Log View
-        // if (index.length > 20) {
-        //     index = index.slice(0, 20);
-        // }
+        if (index[1]?.lastModified > timestamp) index.sort((a, b) => b.lastModified - a.lastModified);
 
         await atomicWrite(this._indexFileUri.fsPath, index);
 
@@ -279,72 +341,78 @@ export class StorageManager {
         this._onDidUpdateIndex.fire();
     }
 
+    private parseIndex(data: string): SessionIndexItem[] {
+        const index = JSON.parse(data);
+        if (!Array.isArray(index) || !index.every(item => item && typeof item.filePath === 'string'
+            && typeof item.fileName === 'string' && typeof item.language === 'string'
+            && Number.isFinite(item.lastModified) && typeof item.fileHash === 'string')) throw new TypeError('Invalid session index');
+        return index;
+    }
+
     public async getRecentFiles(): Promise<SessionIndexItem[]> {
         await this._saveQueue;
-        if (!this._indexFileUri) {
-            return [];
-        }
+        if (!this._indexFileUri) return this.emptyIndex;
+        const file = this._indexFileUri.fsPath;
         try {
-            const indexData = await fs.readFile(this._indexFileUri.fsPath, 'utf-8');
-            return JSON.parse(indexData);
-        } catch (error) {
-            return [];
+            // Atomic replacements in other windows must be visible even before the watcher fires.
+            const info = await fs.stat(file, { bigint: true });
+            const version = `${info.ino}:${info.ctimeNs}:${info.size}`;
+            if (this.indexRead?.version !== version) {
+                const rows = fs.readFile(file, 'utf8').then(data => this.parseIndex(data));
+                this.indexRead = { version, rows };
+            }
+            return await this.indexRead.rows;
+        } catch {
+            this.indexRead = undefined;
+            return this.emptyIndex;
         }
     }
 
     public async getAllLogs(): Promise<SessionIndexItem[]> {
-        await this.rebuildIndex(); // Ensure index is up to date with all files
-        return this.getRecentFiles(); // Now returns all
+        if (!this._historyDir) return [];
+        const index = await this.getRecentFiles();
+        let names: string[], directoryVersion: string;
+        try {
+            const info = await fs.stat(this._historyDir.fsPath, { bigint: true });
+            directoryVersion = `${info.ino}:${info.ctimeNs}:${info.mtimeNs}`;
+            if (this.verifiedIndex?.rows === index && this.verifiedIndex.directoryVersion === directoryVersion) return index;
+            names = await fs.readdir(this._historyDir.fsPath);
+        }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+        const hashes = new Set(names.filter(name => /^[0-9a-f]{64}\.json$/.test(name)).map(name => name.slice(0, -5)));
+        if (this.indexRead && hashes.size === index.length && index.every(row => hashes.delete(row.fileHash) && row.fileHash === getHash(row.filePath))
+            && !names.some(name => name.endsWith('.unindexed'))) {
+            this.verifiedIndex = { rows: index, directoryVersion };
+            return index;
+        }
+        await this.rebuildIndex();
+        return this.getRecentFiles();
     }
 
     public async rebuildIndex(): Promise<void> {
-        if (!this._indexFileUri) return;
+        if (!this._indexFileUri || !this._historyDir) return;
+        const directory = this._historyDir.fsPath, file = this._indexFileUri.fsPath;
         await this._saveQueue;
-        await withFileLock(this._indexFileUri.fsPath, () => this._rebuildIndex());
+        await withFileLock(file, () => this.repairIndex(directory, file));
     }
 
-    private async _rebuildIndex(): Promise<void> {
-        if (!this._historyDir || !this._indexFileUri) return;
-
-        try {
-            const files = await fs.readdir(this._historyDir.fsPath);
-            const index: SessionIndexItem[] = [];
-
-            for (const file of files) {
-                if (!file.endsWith('.json')) continue;
-
-                try {
-                    const filePath = path.join(this._historyDir.fsPath, file);
-                    const content = await fs.readFile(filePath, 'utf-8');
-                    const history: FileHistory = JSON.parse(content);
-
-                    // Skip request logs if only creating file index?
-                    // FileHistory has snapshots.
-
-                    if (history.filePath) {
-                        index.push({
-                            filePath: history.filePath,
-                            fileName: path.basename(history.filePath),
-                            language: history.language,
-                            lastModified: history.lastModified,
-                            fileHash: getHash(history.filePath), // Re-calculate or use history.id? history doesn't store hash of path usually on top level?
-                            // In saveSnapshot: const fileHash = getHash(absolutePath);
-                            // historyFileUri is named by fileHash.json.
-                            // So fileHash is path.basename(file, '.json')
-                        });
-                    }
-                } catch (e) {
-                    Logger.error(`[StorageManager] Failed to read ${file} during rebuild`, e);
-                }
+    private async repairIndex(directory: string, file: string) {
+        await this._ensureStorageInit();
+        const names = await fs.readdir(directory);
+        const index: SessionIndexItem[] = [];
+        for (const name of names.filter(name => /^[0-9a-f]{64}\.json$/.test(name))) {
+            try {
+                const history: FileHistory = JSON.parse(await fs.readFile(path.join(directory, name), 'utf8'));
+                const { filePath, language, lastModified } = history;
+                if (getHash(filePath) === name.slice(0, -5)) index.push({ filePath, fileName: path.basename(filePath), language, lastModified, fileHash: name.slice(0, -5) });
+            } catch (error) {
+                if (!(error instanceof SyntaxError)) throw error;
+                Logger.error(`[StorageManager] Failed to read ${name} during rebuild`, error);
             }
-
-            // Sort by lastModified desc
-            index.sort((a, b) => b.lastModified - a.lastModified);
-
-            await atomicWrite(this._indexFileUri.fsPath, index);
-        } catch (error) {
-            Logger.error('[StorageManager] Failed to rebuild index:', error);
         }
+        await atomicWrite(file, index.sort((a, b) => b.lastModified - a.lastModified));
+        for (const name of names.filter(name => /^[0-9a-f]{64}\.json\.unindexed$/.test(name))) await fs.rm(path.join(directory, name), { force: true });
+        this._onDidUpdateIndex.fire();
     }
 
     public async addRequestLog(
@@ -380,6 +448,7 @@ export class StorageManager {
                 promptType,
             };
 
+            delete history.openEdit;
             history.requestLogs.push(newLog);
             await atomicWrite(historyFileUri.fsPath, history);
             Logger.info(`[StorageManager] Added request log for ${absolutePath}`);
@@ -393,45 +462,59 @@ export class StorageManager {
             return '0 KB';
         }
 
+        const directory = this._historyDir.fsPath;
         try {
-            await this._ensureStorageInit();
-            const files = await fs.readdir(this._historyDir.fsPath);
-            let totalBytes = 0;
-
-            for (const file of files) {
-                if (!file.endsWith('.json')) continue;
-                const filePath = path.join(this._historyDir.fsPath, file);
-                const stats = await fs.stat(filePath);
-                totalBytes += stats.size;
+            // History writes replace their files atomically, updating the directory timestamp.
+            const info = await fs.stat(directory, { bigint: true });
+            const version = `${info.ino}:${info.ctimeNs}:${info.mtimeNs}`;
+            if (this.historySize?.version !== version) {
+                this.historySize = { version, size: this.readHistorySize(directory) };
             }
-
-            if (totalBytes < 1024 * 1024) {
-                return `${(totalBytes / 1024).toFixed(1)} KB`;
-            } else {
-                return `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
-            }
+            return await this.historySize.size;
         } catch (error) {
+            this.historySize = undefined;
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '0.0 KB';
             Logger.error('[StorageManager] Failed to calculate size:', error);
             return 'Error';
         }
     }
 
+    private async readHistorySize(directory: string) {
+        const files = (await fs.readdir(directory)).filter(file => file.endsWith('.json'));
+        let next = 0, totalBytes = 0;
+        await Promise.all(Array.from({ length: Math.min(files.length, 8) }, async () => {
+            while (next < files.length) {
+                const file = files[next++];
+                try { const stats = await fs.stat(path.join(directory, file)); totalBytes += stats.size; }
+                catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+            }
+        }));
+        return totalBytes < 1024 * 1024 ? `${(totalBytes / 1024).toFixed(1)} KB`
+            : `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
     public async getFileHistory(absolutePath: string): Promise<FileHistory | null> {
         await this._saveQueue;
-        if (!this._historyDir) {
-            return null;
-        }
-
-        const fileHash = getHash(absolutePath);
-        const historyFileUri = vscode.Uri.joinPath(this._historyDir, `${fileHash}.json`);
-
-        try {
-            const existingData = await fs.readFile(historyFileUri.fsPath, 'utf-8');
-            return JSON.parse(existingData);
-        } catch (error) {
-            return null;
-        }
+        if (!this._historyDir) return null;
+        const file = vscode.Uri.joinPath(this._historyDir, getHash(absolutePath) + '.json').fsPath;
+        const read = async (): Promise<FileHistory | null> => {
+            try { return JSON.parse(await fs.readFile(file, 'utf-8')); }
+            catch { return null; }
+        };
+        const current = await read();
+        if (!current?.openEdit) return current;
+        // Once a reader keeps an index, any later saves (including in another window)
+        // must append. Re-read while holding the same lock as the recorder.
+        return withFileLock(this._indexFileUri!.fsPath, async () => {
+            const latest = await read();
+            if (latest?.openEdit) {
+                delete latest.openEdit;
+                await atomicWrite(file, latest);
+            }
+            return latest;
+        });
     }
+
     public deleteSnapshot(filePath: string, index: number, expectedVersion: string): Promise<void> {
         const write = this._saveQueue.then(() => withFileLock(this._indexFileUri!.fsPath, () => this._deleteSnapshot(filePath, index, expectedVersion)));
         this._saveQueue = write.catch(() => {});
@@ -516,6 +599,7 @@ export class StorageManager {
             }
         }
 
+        delete history.openEdit;
         history.lastModified = Date.now();
 
         await atomicWrite(historyFileUri.fsPath, history);

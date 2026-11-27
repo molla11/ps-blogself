@@ -16,6 +16,8 @@
                     <h2 class="writer-file"><i class="codicon codicon-file-code" aria-hidden="true"></i><span id="writer-file-name"></span></h2>
                     <span id="side-save-status" role="status"></span>
                 </div>
+                <span id="side-sync-status" class="writer-hint" role="status" hidden></span>
+                <button class="secondary" data-writer-action="viewSyncFailures" type="button" hidden>실패한 버전 보기</button>
                 <nav class="writer-tabs" aria-label="글 작성 화면">
                     <button data-writer-action="plan" type="button" aria-pressed="true">변경사항 요약</button>
                     <button data-writer-action="article" type="button" aria-pressed="false">글 확인/수정</button>
@@ -32,12 +34,9 @@
                 <div class="writer-actions">
                     <button class="secondary" data-writer-action="prepare" type="button">메모 생성</button>
                     <button data-writer-action="generate" type="button">글쓰기</button>
+                    <button data-writer-action="cancelWrite" type="button" class="secondary" hidden>글 작성 취소</button>
                 </div>
                 <div id="side-writer-notices"></div>
-                <details class="writer-disclosure" id="side-stream" hidden>
-                    <summary>작성 중인 글</summary>
-                    <div id="side-stream-text"></div>
-                </details>
                 <div id="writer-article-options" hidden>
                     <div class="writer-view-modes" id="side-view-modes" role="group" aria-label="본문 보기 방식" hidden>
                         <button data-writer-action="edit" type="button" aria-pressed="true">편집</button>
@@ -61,14 +60,11 @@
                         <summary>내보내기</summary>
                         <div class="writer-export-actions" id="side-file-actions"></div>
                         <div class="writer-export-actions" id="side-ghost-actions"></div>
+                        <p class="writer-hint">블로그 글쓰기 탭에서 브라우저 확장을 열고 ‘내 글’에서 동기화된 글을 선택하세요.</p>
                     </details>
                     <p class="writer-hint" id="side-ghost-status" role="status" hidden></p>
                 </div>
             </section>
-            <button type="button" id="library-toggle" aria-controls="file-library" aria-expanded="true" hidden>
-                <i class="codicon codicon-chevron-up" aria-hidden="true"></i>코드 파일
-            </button>
-            <div id="file-library">
             <div class="config-section">
                 <div class="config-box">
                     <div class="config-info">
@@ -134,7 +130,10 @@
             </div>
 
             <!-- Recent Logs Section -->
-            <div class="logs-section">
+            <button type="button" id="library-toggle" aria-controls="file-library" aria-expanded="true" hidden>
+                <i class="codicon codicon-chevron-up" aria-hidden="true"></i>코드 파일
+            </button>
+            <div class="logs-section" id="file-library">
                 <div class="logs-title">
                     <span id="recent-logs-title">코드 파일</span>
                     <button id="toggle-logs-search-btn" class="logs-search-toggle" type="button" title="코드 파일 검색" aria-label="코드 파일 검색" aria-expanded="false" aria-controls="logs-search">
@@ -146,6 +145,10 @@
                 </div>
                 <div id="logs-container" class="logs-container" role="group" aria-labelledby="recent-logs-title">
                     <div class="empty-logs">코드 파일을 찾는 중…</div>
+                    <div id="empty-code-actions" hidden>
+                        <button type="button" id="open-code-folder" title="폴더 열기"><i class="codicon codicon-folder-opened" aria-hidden="true"></i><span>폴더를 열면 코드 수정을 자동으로 기록합니다.</span></button>
+                        <button type="button" id="create-code-file" hidden>이 폴더에 코드 파일 만들기</button>
+                    </div>
                     <div id="recent-logs-loader" class="logs-loader" hidden>
                         <span id="recent-logs-status" role="status" aria-live="polite"></span>
                         <button id="retry-logs-btn" class="secondary" hidden>다시 불러오기</button>
@@ -153,12 +156,10 @@
                 </div>
             </div>
 
+            <div id="recording-failure" role="status" hidden><span></span> <button type="button" class="secondary" id="retry-recording">다시 저장</button></div>
             <footer class="sidebar-actions" aria-label="사용량 및 글쓰기">
                 <button id="usage-btn" class="secondary" type="button" aria-label="서버 사용량 확인" hidden></button>
-                <div class="button-group account-actions">
-                    <button id="connect-server-btn" class="secondary" title="계정 및 사용량"><span class="account-action-label">로그인</span></button>
-                    <button id="sample-btn" class="secondary"><span class="account-action-label">샘플로 시작</span></button>
-                </div>
+                <button id="connect-server-btn" class="secondary" title="계정 및 사용량"><span class="account-action-label">로그인</span></button>
                 <div class="bottom-actions">
                     <button id="manage-logs-btn" class="action-btn secondary">
                         <span class="icon">📜</span>
@@ -170,7 +171,6 @@
                     </button>
                 </div>
             </footer>
-            </div>
         </div>
 
         <section id="contest-view" class="view-container" aria-label="대회 모드">

@@ -50,13 +50,29 @@ exports.run = async () => {
             const initialFile = path.join(sandbox, 'workspace', 'solve.py');
             const diskTime = (await fs.stat(initialFile)).mtime.toISOString();
             assert.equal(await folderFile.locator('time').getAttribute('datetime'), diskTime);
-            const folderButton = welcome.frame.getByRole('button', { name: '폴더 열기' });
+            const folderButton = welcome.frame.getByRole('button', { name: '다른 폴더 열기', exact: true });
             await fs.rename(initialFile, initialFile + '.txt');
             await folderButton.click();
             const picker = welcome.page.locator('.quick-input-widget input:visible');
             await picker.waitFor();
             await picker.press('Escape');
             await until(() => folderButton.isEnabled(), 'folder picker can be cancelled');
+            await vscode.commands.executeCommand('psb.sidebar.focus');
+            const { frame: emptySidebar } = await surface(browser, '#open-code-folder');
+            await emptySidebar.getByRole('button', { name: '폴더를 열면 코드 수정을 자동으로 기록합니다.' }).click();
+            await picker.waitFor();
+            await picker.press('Escape');
+            await vscode.commands.executeCommand('psb.welcome');
+            const createdFile = path.join(sandbox, 'workspace', 'onboarding.cpp');
+            await welcome.frame.getByRole('button', { name: '코드 파일 만들기' }).click();
+            await picker.waitFor();
+            await picker.fill(createdFile);
+            await picker.press('Enter');
+            await until(() => vscode.window.activeTextEditor?.document.uri.fsPath === createdFile, 'new file opens for editing');
+            assert.equal(await fs.readFile(createdFile, 'utf8'), '');
+            await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+            await fs.unlink(createdFile);
+            await vscode.commands.executeCommand('psb.welcome');
             await fs.rename(initialFile + '.txt', initialFile);
             await folderFile.waitFor();
             assert.ok(await folderButton.isHidden());
@@ -64,6 +80,12 @@ exports.run = async () => {
             await fs.mkdir(path.dirname(nested), { recursive: true });
             await fs.writeFile(nested, '');
             await welcome.frame.locator('.file-link').filter({ hasText: 'search.CPP' }).waitFor();
+            await welcome.frame.getByRole('button', { name: '코드 목록 열기' }).click();
+            await picker.waitFor();
+            await picker.fill('search.CPP');
+            await picker.press('Enter');
+            await until(() => vscode.window.activeTextEditor?.document.uri.fsPath === nested, 'selected code opens from the list');
+            await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
             const external = path.join(sandbox, 'outside.c');
             await fs.writeFile(external, 'int main() {}');
             await vscode.window.showTextDocument(vscode.Uri.file(external), { preview: false });
@@ -88,11 +110,15 @@ exports.run = async () => {
             await unrecordedTools.getByRole('button', { name: '메모 생성', exact: true }).waitFor();
             assert.equal(await unrecordedTools.locator('#writer-file-name').innerText(), 'search.CPP');
             assert.ok(await unrecordedWriter.locator('#prepare-empty-btn').isHidden());
-            assert.equal(await unrecordedTools.locator('#library-toggle').getAttribute('aria-expanded'), 'false');
-            await unrecordedTools.locator('#library-toggle').click();
+            const toggle = unrecordedTools.locator('#library-toggle');
+            const roomy = await unrecordedTools.evaluate(() => innerHeight >= 600);
+            assert.equal(await toggle.getAttribute('aria-expanded'), String(roomy));
+            if (!roomy) await toggle.click();
             await unrecordedTools.locator('.log-item').filter({ hasText: 'search.CPP' }).click();
             await unrecordedTools.locator('#ctx-view-history').click();
             const emptyHistory = (await surface(browser, '.history-entry')).frame;
+            await unrecordedTools.locator('#main-view.history #library-toggle').waitFor();
+            assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
             assert.equal(await emptyHistory.locator('.history-entry').count(), 1);
             assert.equal(await emptyHistory.locator('.stat-added').innerText(), '+0(0)');
             assert.equal(await emptyHistory.locator('.diff-line').count(), 0);
@@ -126,7 +152,7 @@ exports.run = async () => {
             }
             await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
             await vscode.commands.executeCommand('psb.welcome');
-            await welcome.frame.locator('[data-action="history"]').click();
+            await vscode.commands.executeCommand('psb.sidebar.focus');
             const files = (await surface(browser, '#generate-blog-btn')).frame;
             const candidate = files.locator('.log-item').filter({ hasText: 'solve.py' });
             await candidate.click();
@@ -202,11 +228,15 @@ exports.run = async () => {
             await controls.locator('#side-model').selectOption('standard');
             await until(async () => (await writer.frame.locator('#writing-model-value').innerText()) === 'standard', 'sidebar model selection reaches the editor');
             await controls.getByRole('button', { name: '글쓰기', exact: true }).click();
-            await until(async () => (await controls.locator('#side-stream-text').textContent()).includes('생성 중인 본문'), 'stream available in sidebar before completion');
-            assert.ok(await writer.frame.locator('#generate-btn').isDisabled());
+            const streaming = writer.frame.locator('.prose-editor[contenteditable=false]');
+            await streaming.locator('h2', { hasText: '접근' }).waitFor();
+            assert.ok((await streaming.innerText()).includes('생성 중인 본문'));
+            await controls.getByRole('button', { name: '글 작성 취소', exact: true }).waitFor();
+            assert.equal(await controls.locator('#side-progress-box').count(), 0);
             await writer.page.screenshot({ path: path.join(sandbox, 'streaming.png') });
             if (!autoMode) await vscode.commands.executeCommand('workbench.action.files.newUntitledFile');
             if (autoMode === 'publish') {
+                await controls.getByRole('button', { name: '변경사항 요약' }).click();
                 await writer.frame.locator('#summary').fill('생성 중 수정한 풀이 의도');
                 await until(async () => (await controls.locator('#side-save-status').innerText()) === '저장됨', 'concurrent edits saved before generation finishes');
                 await controls.locator('#side-candidate-box').waitFor();
@@ -264,6 +294,7 @@ exports.run = async () => {
             await writer.frame.locator('#article-title').fill('에디터에서 고친 제목');
             await writer.frame.locator('#article-body').fill('## 재시작\n\n서버와 무관하게 보존된 로컬 본문');
             await until(async () => (await controls.locator('#side-save-status').innerText()) === '저장됨', 'draft persisted');
+            await until(async () => (await controls.locator('#side-sync-status').innerText()) === '서버 동기화됨', 'server confirmed the edited version');
             const api = process.env.PSB_API_URL;
             const { token } = await (await fetch(api + '/auth/local', { method: 'POST' })).json();
             const get = async route => {
@@ -290,7 +321,8 @@ exports.run = async () => {
         assert.equal((await requests()).length, stage === 'first' ? 2 : 3, 'reopening must not repeat model work');
         if (stage === 'first') {
             await vscode.commands.executeCommand('psb.sidebar.focus');
-            await sidebar.frame.locator('#library-toggle').click();
+            const toggle = sidebar.frame.locator('#library-toggle');
+            if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
             // The earlier history panel is retained while the new webview opens.
             const previousFrames = new Set(browser.contexts().flatMap(ctx => ctx.pages().flatMap(page => page.frames())));
             await recorded.click({ button: 'right' });

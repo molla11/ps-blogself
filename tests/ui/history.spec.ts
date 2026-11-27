@@ -36,7 +36,7 @@ test('all 354 versions load without scrolling and only one batch is requested at
     expect((await requests(page)).length).toBe(354);
 });
 
-test('stale and duplicate replies are ignored and appended snapshot buttons retain their version', async ({ page }) => {
+test('stale and duplicate replies are ignored and appended snapshot buttons refer to their original load', async ({ page }) => {
     await openWebview(page, 'history', { total: 2 });
     await expect.poll(async () => (await requests(page)).length).toBe(1);
     await send(page, entry(0, 1, { loadId: 'old-load' }));
@@ -49,8 +49,8 @@ test('stale and duplicate replies are ignored and appended snapshot buttons reta
     await page.locator('.history-entry').last().getByText('이 시점의 코드 보기').click();
     await page.locator('.history-entry').last().getByText('로그 삭제').click();
     expect(await page.evaluate(() => (window as any).__messages.filter((m: any) => ['viewSnapshot', 'deleteSnapshot'].includes(m.type)))).toEqual([
-        { type: 'viewSnapshot', index: 0, version: 'test-version', loadId: 'test-load' },
-        { type: 'deleteSnapshot', index: 0, version: 'test-version', loadId: 'test-load' },
+        { type: 'viewSnapshot', index: 0, loadId: 'test-load' },
+        { type: 'deleteSnapshot', index: 0, loadId: 'test-load' },
     ]);
 });
 
@@ -81,4 +81,24 @@ test('failed loading keeps existing entries and offers a reload', async ({ page 
     await expect(page.locator('#history-progress')).toContainText('1 / 2개 표시됨');
     await page.getByRole('button', { name: '다시 불러오기' }).click();
     expect(await page.evaluate(() => (window as any).__messages.at(-1))).toEqual({ type: 'reloadHistory', loadId: 'test-load' });
+});
+
+test('the latest diff is visible before any idle work and gains colors without duplicating the entry', async ({ page }) => {
+    await page.evaluate(() => { window.requestIdleCallback = cb => { (window as any).__runIdle = cb; return 1; }; });
+    const firstEntry = entry(0, 0).html.replace('<tbody></tbody>', '<tbody><tr><td>최신 변경</td></tr></tbody>');
+    await openWebview(page, 'history', { total: 1, firstEntry });
+    await expect(page.getByText('최신 변경')).toBeVisible();
+    expect(await requests(page)).toHaveLength(0);
+    const button = page.getByText('이 시점의 코드 보기');
+    await button.focus();
+    await page.evaluate(() => (window as any).__runIdle());
+    await send(page, entry(0, 0, { complete: false, rows: '<tr><td><span>색상이 적용된 변경</span></td></tr>' }));
+    await expect(button).toBeFocused();
+    await expect(page.locator('tbody tr')).toHaveCount(1);
+    await expect(page.getByText('색상이 적용된 변경')).toBeVisible();
+    await page.evaluate(() => (window as any).__runIdle());
+    await send(page, entry(1, 0, { html: '', rows: '<tr><td>나머지 줄</td></tr>' }));
+    await expect(page.locator('.history-entry')).toHaveCount(1);
+    await expect(page.locator('tbody tr')).toHaveCount(2);
+    await expect(page.locator('#history-progress')).toHaveText('1개 기록을 모두 불러왔습니다.');
 });

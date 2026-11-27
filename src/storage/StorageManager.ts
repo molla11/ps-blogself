@@ -249,7 +249,8 @@ export class StorageManager {
                     }
                     return;
                 }
-                lastContent = this._getLastSnapshotContent(history);
+                // Bound replay for long runs of small edits. Older history files remain readable.
+                if (history.snapshots.length % 128 !== 0) lastContent = this._getLastSnapshotContent(history);
             }
 
             // Determine snapshot type (Full vs Diff)

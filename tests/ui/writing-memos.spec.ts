@@ -26,14 +26,14 @@ const remove = (page: Page, number: number) => page.getByRole('button', { name: 
 test.beforeEach(async ({ page }) => { await openWebview(page); await model(page); });
 
 test('the summary stays visible below the title and separate memos form a thread at wide and narrow widths', async ({ page }) => {
-    await expect(page.getByRole('button', { name: '변경사항 요약', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('tab', { name: '풀이 메모', selected: true })).toBeVisible();
     await expect(page.getByRole('textbox', { name: '전체 설명', exact: true })).toBeVisible();
     await expect(page.getByRole('textbox', { name: '전체 설명', exact: true })).toHaveValue(plan.summary);
     await expect(page.locator('#steps h3')).toHaveText(['메모 #1', '메모 #2']);
     for (const width of [1050, 500, 360, 320]) {
         await page.setViewportSize({ width, height: 900 });
         const panel = (await page.locator('#plan-view').boundingBox())!;
-        expect(panel.width).toBeLessThanOrEqual(640);
+        expect(panel.width).toBe(Math.min(640, width - (width <= 700 ? 28 : 40)));
         const title = (await page.locator('#plan-title').boundingBox())!;
         const summary = (await page.locator('#summary').boundingBox())!;
         const titleCard = (await page.locator('.plan-title-section').boundingBox())!;
@@ -44,6 +44,13 @@ test('the summary stays visible below the title and separate memos form a thread
         expect(first.y).toBeGreaterThan(titleCard.y + titleCard.height);
         expect(second.y).toBeGreaterThan(first.y + first.height);
         expect(first.x).toBe(second.x);
+        expect(first.width).toBe(panel.width);
+        const rule = await body(page, 1).evaluate(node => {
+            const { lineHeight, backgroundSize, backgroundImage } = getComputedStyle(node);
+            return { lineHeight, backgroundSize, backgroundImage };
+        });
+        expect(rule.backgroundImage).toContain('linear-gradient');
+        expect(parseFloat(rule.backgroundSize.split(' ')[1])).toBeCloseTo(parseFloat(rule.lineHeight), 1);
         expect(first.x + first.width).toBeLessThanOrEqual(panel.x + panel.width);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         if (width === 1050 || width === 320) await page.screenshot({ path: `test-results/writing-memos-${width}.png`, fullPage: true });

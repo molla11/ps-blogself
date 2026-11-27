@@ -236,7 +236,7 @@ exports.run = async () => {
             await writer.page.screenshot({ path: path.join(sandbox, 'streaming.png') });
             if (!autoMode) await vscode.commands.executeCommand('workbench.action.files.newUntitledFile');
             if (autoMode === 'publish') {
-                await controls.getByRole('button', { name: '변경사항 요약' }).click();
+                await writer.frame.getByRole('tab', { name: '풀이 메모' }).click();
                 await writer.frame.locator('#summary').fill('생성 중 수정한 풀이 의도');
                 await until(async () => (await controls.locator('#side-save-status').innerText()) === '저장됨', 'concurrent edits saved before generation finishes');
                 await controls.locator('#side-candidate-box').waitFor();
@@ -262,15 +262,15 @@ exports.run = async () => {
             } else {
                 assert.deepEqual(JSON.parse(await fs.readFile(path.join(sandbox, 'ghost-posts.json'), 'utf8').catch(() => '[]')), [], 'disabled automatic upload keeps completed articles local');
             }
-            const planTab = sidebar.frame.locator('[data-writer-action=plan]');
-            const articleTab = sidebar.frame.locator('[data-writer-action=article]');
+            const planTab = writer.frame.getByRole('tab', { name: '풀이 메모' });
+            const articleTab = writer.frame.getByRole('tab', { name: '본문 편집' });
             await planTab.click();
             await writer.frame.locator('#plan-view').waitFor();
             await sidebar.frame.locator('#side-style').waitFor();
             await writer.page.screenshot({ path: path.join(sandbox, 'writer-plan.png') });
             await articleTab.click();
             await writer.frame.locator('#article-view').waitFor();
-            assert.ok(await writer.frame.locator('#writing-header').isHidden());
+            assert.ok(await writer.frame.getByRole('tablist', { name: '글 작성 화면' }).isVisible());
             assert.ok(await writer.frame.locator('#article-toolbar').isHidden());
             await writer.frame.locator('#format-bar').waitFor();
             assert.ok(await controls.locator('#side-view-modes').isHidden());

@@ -1,4 +1,5 @@
 const { runTests } = require('@vscode/test-electron');
+const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
@@ -20,7 +21,8 @@ async function main() {
     const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), 'ps-blogself-host-'));
     const workspace = path.join(sandbox, 'workspace');
     await fs.mkdir(path.join(workspace, '.vscode'), { recursive: true });
-    await fs.writeFile(path.join(workspace, 'solve.py'), '# 풀이\nvalue = "<코드>&"\nprint(value)\n');
+    const initialCode = '# 풀이\nvalue = "<코드>&"\nprint(value)\n';
+    await fs.writeFile(path.join(workspace, 'solve.py'), initialCode);
     await fs.writeFile(
         path.join(workspace, '.vscode/settings.json'),
         JSON.stringify({
@@ -72,7 +74,10 @@ async function main() {
             throw new Error(
                 'Unexpected number of writing and memo requests: ' + requests.length,
             );
-        if (requests[0].source.changes.length !== 2 || requests[0].source.finalCode !== 'total = 0\nfor value in [1, 2, 3]:\n    total += value\nprint(total)\n') throw new Error('Rapid saves were not preserved');
+        const source = requests[0].source;
+        assert.equal(source.initialCode, initialCode, 'rapid saves keep the original baseline');
+        assert.equal(source.changes.length, 1, 'rapid saves in one edit session form a single memo change');
+        assert.equal(source.finalCode, 'total = 0\nfor value in [1, 2, 3]:\n    total += value\nprint(total)\n', 'the memo includes the latest saved code');
         await fs.writeFile(path.join(sandbox, 'requests.json'), JSON.stringify(requests, null, 2));
         console.log('HOST_TEST_ARTIFACTS=' + sandbox);
     }

@@ -28,7 +28,7 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode) {
     function useLocalDrawer(local) {
         if (local === (positions.size > 0)) return;
         if (local) {
-            for (const id of ['writing-header', 'contest-backend-notice', ...noticeIds, 'article-toolbar', 'article-outline']) {
+            for (const id of ['writer-file-tools', 'writer-options', 'contest-backend-notice', ...noticeIds, 'article-toolbar', 'article-outline']) {
                 const node = el(id), position = document.createComment(id);
                 node.before(position);
                 positions.set(node, position);
@@ -58,7 +58,7 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode) {
             }));
             const controls = {
                 tab: el('plan-view').hidden ? 'article' : 'plan',
-                articleDisabled: el('article-tab').disabled,
+                hasArticle: el('article-empty').hidden,
                 generateLabel: el('generate-label').textContent,
                 generateDisabled: el('generate-btn').disabled,
                 showCancelWrite: !el('cancel-write-btn').hidden,

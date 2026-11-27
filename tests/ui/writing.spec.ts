@@ -83,6 +83,43 @@ test('the compact sidebar selects a file and starts writing without another navi
     await page.screenshot({ path: 'test-results/sidebar.png' });
 });
 
+test('document tabs stay visible and the empty article generates only on request', async ({ page }) => {
+    await open(page);
+    const memo = page.getByRole('tab', { name: '풀이 메모' });
+    const article = page.getByRole('tab', { name: '본문 편집' });
+    const draft = page.getByRole('button', { name: '이 메모로 초안 만들기' });
+    const jobs = async () => (await messages(page)).filter((m: any) => ['prepare', 'generate'].includes(m.type));
+    await model(page, { plan: undefined });
+    await article.click();
+    await page.getByRole('button', { name: '풀이 메모로 이동' }).click();
+    await expect(memo).toBeFocused();
+    await model(page, { backendEnabled: false });
+    await article.click();
+    await expect(draft).toBeDisabled();
+    await model(page, { editable: false });
+    await expect(draft).toBeDisabled();
+    await model(page);
+    await memo.click();
+    await page.locator('#summary').fill('집합으로 중복 탐색을 피했다.');
+    for (const [linked, available] of [[true, true], [false, false], [false, true]]) {
+        await page.evaluate(data => window.dispatchEvent(new MessageEvent('message', { data })), { type: 'writerSidebar', linked, available });
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await expect(page.getByRole('tablist')).toBeInViewport();
+        await memo.focus();
+        await page.keyboard.press('ArrowRight');
+        await expect(article).toBeFocused();
+        await expect(draft).toBeVisible();
+        await expect(page.locator('#format-bar')).toBeHidden();
+        await page.keyboard.press('Home');
+        await expect(page.locator('#summary')).toHaveValue('집합으로 중복 탐색을 피했다.');
+    }
+    await article.click();
+    expect(await jobs()).toHaveLength(0);
+    await draft.click();
+    expect(await jobs()).toHaveLength(1);
+    expect((await jobs())[0]).toMatchObject({ type: 'generate', fields: { plan: { summary: '집합으로 중복 탐색을 피했다.' } } });
+});
+
 test('AI-filled text and range can generate a complete draft without typing', async ({ page }) => {
     await open(page);
     await model(page);
@@ -411,8 +448,8 @@ test('article tools in the sidebar use the live draft and the selected version',
     await expect(library).toBeVisible();
     await refreshSidebar();
     await sidebar.setViewportSize({ width: 260, height: 700 });
-    await expect(sidebar.locator('.writer-tabs button')).toHaveText(['변경사항 요약', '글 확인/수정']);
-    await expect(sidebar.locator('.writer-tabs :is(i, svg)')).toHaveCount(0);
+    await expect(sidebar.getByRole('tablist', { name: '글 작성 화면' })).toHaveCount(0);
+    await expect(page.getByRole('tab')).toHaveText(['풀이 메모', '본문 편집']);
     await expect(sidebar.getByRole('button', { name: '글쓰기', exact: true })).toBeVisible();
     await expect(sidebar.locator('#writer-article-options')).toBeHidden();
     await model(page, { pending: true, running: true, pendingKind: 'write_blog', status: '글을 작성하고 있어요…' });
@@ -557,8 +594,8 @@ test('version selection supports keyboard navigation and fits narrow editors wit
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: 'test-results/writer-versions-narrow.png' });
     await page.locator('#plan-tab').click();
-    await expect(page.locator('#plan-tab')).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('#article-tab')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByRole('tab', { name: '풀이 메모', selected: true })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '본문 편집', selected: false })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: 'test-results/writer-plan-narrow.png' });
 });

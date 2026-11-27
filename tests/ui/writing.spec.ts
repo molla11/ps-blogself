@@ -522,6 +522,67 @@ test('article tools in the sidebar use the live draft and the selected version',
     expect(await sidebar.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
+test('sidebar export icons explain their actions and follow the Ghost connection', async ({ page, context }) => {
+    const sidebar = await context.newPage();
+    await sidebar.setViewportSize({ width: 205, height: 480 });
+    await Promise.all([open(page), open(sidebar, true)]);
+    const deliver = (target: Page, data: unknown) => target.evaluate(message =>
+        window.dispatchEvent(new MessageEvent('message', { data: message })), data);
+    const refresh = async () => {
+        const controls = (await messages(page)).findLast((m: any) => m.type === 'writerControls').controls;
+        await deliver(sidebar, { type: 'sidebarWriter', writer: { filePath: base.filePath, fileName: base.fileName, controls } });
+    };
+    await model(page, { title: '제목', markdown: '본문' });
+    await deliver(page, { type: 'writerSidebar', linked: true, available: true });
+    await refresh();
+    const menu = sidebar.locator('#side-export');
+    const summary = menu.locator('summary');
+    await summary.click();
+    const files = menu.getByRole('group', { name: '파일 저장 및 복사' });
+    const ghost = menu.getByRole('group', { name: 'Ghost', exact: true });
+    const tip = menu.getByRole('tooltip');
+    await expect(files.getByRole('button')).toHaveCount(3);
+    for (const name of ['Markdown 파일 저장', 'HTML 파일 저장', 'Markdown 복사']) {
+        const control = files.getByRole('button', { name, exact: true });
+        await expect(control).toHaveText('');
+        await expect(control.locator('.codicon')).toHaveCount(1);
+        await control.hover();
+        await expect(tip).toHaveText(name);
+    }
+    await expect(ghost.getByRole('button')).toHaveCount(1);
+    await expect(ghost.getByRole('button', { name: 'Ghost 연결 설정' })).toBeVisible();
+    await sidebar.mouse.move(0, 0);
+    await summary.focus();
+    await sidebar.keyboard.press('Tab');
+    await expect(files.getByRole('button', { name: 'Markdown 파일 저장' })).toBeFocused();
+    await expect(tip).toHaveText('Markdown 파일 저장');
+    await sidebar.keyboard.press('Escape');
+    await expect(tip).toHaveCount(0);
+
+    const state = { connected: true, site: 'https://ghost.example/', postId: '42', editorUrl: 'https://ghost.example/ghost/' };
+    await deliver(page, { type: 'ghost', state: { ...state, status: 'draft' } });
+    await refresh();
+    await expect(ghost.getByRole('button', { name: 'Ghost에 게시…' })).toBeEnabled();
+    await expect(ghost.getByRole('button', { name: 'Ghost에서 열기' })).toBeEnabled();
+    await deliver(page, { type: 'ghost', state: { ...state, status: 'published' } });
+    await refresh();
+    await expect(ghost.getByRole('button', { name: 'Ghost에 게시…' })).toHaveCount(0);
+    await expect(ghost.getByRole('button', { name: 'Ghost 변경 사항 저장' })).toBeEnabled();
+    await deliver(page, { type: 'ghost', state: { ...state, busy: true } });
+    await refresh();
+    const busy = ghost.getByRole('button', { name: 'Ghost 저장 중…' });
+    await expect(busy).toBeDisabled();
+    await busy.focus();
+    await expect(tip).toHaveText('Ghost 저장 중…');
+    const before = (await messages(sidebar)).length;
+    await busy.press('Enter');
+    expect((await messages(sidebar)).length).toBe(before);
+    await deliver(page, { type: 'ghost', state: { connected: false } });
+    await refresh();
+    await expect(tip).toHaveCount(0);
+    await expect(ghost.getByRole('button')).toHaveCount(1);
+});
+
 test('contest writing keeps tools in a local drawer and preserves the draft when the main sidebar returns', async ({ page }) => {
     await open(page);
     const sidebar = (linked: boolean, available: boolean) => page.evaluate(data =>

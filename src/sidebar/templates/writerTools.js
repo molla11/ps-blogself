@@ -23,6 +23,29 @@ export function bindWriterTools(vscode, onFileChange, onFold, onHome) {
     function send(action, value) {
         if (filePath) vscode.postMessage({ type: 'writerAction', filePath, action, value });
     }
+    const exportButtons = Array.from(el('side-export').querySelectorAll('button'), control => {
+        const action = control.dataset.writerAction;
+        const tip = document.createElement('span');
+        tip.id = 'side-tip-' + action;
+        tip.popover = 'hint';
+        tip.setAttribute('role', 'tooltip');
+        control.setAttribute('interestfor', tip.id);
+        control.setAttribute('aria-labelledby', tip.id);
+        control.after(tip);
+        return { action, control, tip };
+    });
+    function renderExports(actions) {
+        for (const { action, control, tip } of exportButtons) {
+            const state = actions.find(item => item.action === action);
+            control.hidden = !state;
+            if (state) {
+                if (tip.textContent !== state.label) tip.textContent = state.label;
+                control.setAttribute('aria-disabled', String(state.disabled));
+            } else if (tip.matches(':popover-open')) {
+                tip.hidePopover();
+            }
+        }
+    }
     function renderButtons(container, actions) {
         for (const node of [...container.children]) {
             if (!actions.some(item => item.action === node.dataset.writerAction)) node.remove();
@@ -79,7 +102,7 @@ export function bindWriterTools(vscode, onFileChange, onFold, onHome) {
     }
     tools.addEventListener('click', event => {
         const target = event.target.closest('button[data-writer-action]');
-        if (!target || target.disabled) return;
+        if (!target || target.disabled || target.getAttribute('aria-disabled') === 'true') return;
         send(target.dataset.writerAction, target.dataset.value);
     });
     tools.addEventListener('change', event => {
@@ -138,8 +161,7 @@ export function bindWriterTools(vscode, onFileChange, onFold, onHome) {
         for (const mode of ['edit', 'source', 'preview']) button(mode).setAttribute('aria-pressed', String(c.editorMode === mode));
         el('side-outline').hidden = c.browsingVersion || c.editorMode !== 'edit';
         renderOutline(c.headings);
-        renderButtons(el('side-file-actions'), c.exports.filter(item => !item.action.startsWith('ghost-')));
-        renderButtons(el('side-ghost-actions'), c.exports.filter(item => item.action.startsWith('ghost-')));
+        renderExports(c.exports);
         button('viewSyncFailures').hidden = !c.hasSyncFailures;
         for (const [id, text] of [['side-sync-status', c.syncStatus || ''], ['side-save-status', c.saveStatus], ['side-ghost-status', c.ghostStatus]]) {
             const node = el(id);

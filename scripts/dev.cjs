@@ -3,7 +3,10 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 // The installed VS Code CLI launches an Extension Development Host. --wait
 // lets closing that window also stop the build watchers in this terminal.
-const editor = spawn('code', ['--new-window', '--wait', '--extensionDevelopmentPath=' + root, ...process.argv.slice(2)], {
+const editor = spawn('code', [
+    '--new-window', '--wait', '--extensionDevelopmentPath=' + root,
+    '--disable-extension=molla11.autoblogger-recorder', ...process.argv.slice(2),
+], {
     cwd: root, stdio: 'inherit',
 });
 const watcher = spawn('pnpm', ['watch'], {

@@ -1,6 +1,6 @@
 // The editor owns unsaved inputs, version previews and paid-model checks.
 // Both surfaces invoke its controls so a sidebar action includes the latest edits.
-export function connectWriterSidebar(vscode, currentModel, selectEditorMode) {
+export function connectWriterSidebar(vscode, currentModel, selectEditorMode, ghostConnected) {
     const el = id => document.getElementById(id);
     let linked = false, queued = false, previous = '';
     const selectState = id => {
@@ -78,7 +78,9 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode) {
                 editorMode: el('preview-btn').getAttribute('aria-pressed') === 'true' ? 'preview'
                     : el('source-btn').getAttribute('aria-pressed') === 'true' ? 'source' : 'edit',
                 headings: [...el('outline-list').children].map(button => [button.dataset.level, button.textContent]),
-                exports: buttons(el('export-menu')), ghostStatus: el('ghost-status').hidden ? '' : el('ghost-status').textContent,
+                exports: buttons(el('export-menu')).filter(({ action }) =>
+                    !action.startsWith('ghost-') || action === 'ghost-connect-btn' || ghostConnected()),
+                ghostStatus: el('ghost-status').hidden ? '' : el('ghost-status').textContent,
                 saveStatus: el('save-status').textContent, syncStatus: el('sync-status').textContent,
                 hasSyncFailures: !el('view-sync-failures').hidden, notices,
             };

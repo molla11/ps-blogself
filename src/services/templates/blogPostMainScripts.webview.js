@@ -24,7 +24,8 @@ let model,
     readyVersion = '',
     versionNotices,
     restoreRequest;
-const updateSidebar = connectWriterSidebar(vscode, () => model, selectEditorMode);
+let ghostState = { connected: false };
+const updateSidebar = connectWriterSidebar(vscode, () => model, selectEditorMode, () => ghostState.connected);
 const showAuthorNotices = bindAuthorNotices();
 const dirty = new Set(),
     sent = new Map();
@@ -32,7 +33,6 @@ const recovered = vscode.getState();
 let localRecovery = recovered?.localRecovery;
 let recoveryApplied = false, planHistory = recovered?.planHistory;
 const imageRequests = new Map();
-let ghostState = { connected: false };
 const modelOptions = [...el('writing-model-options').querySelectorAll('[role=option]')];
 // Keep the UI within validatePlan's saved-step limit.
 const MAX_MEMOS = 12;

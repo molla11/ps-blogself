@@ -278,13 +278,6 @@ input:checked + .slider:before {
 #path-menu .menu-item:disabled { opacity: 0.5; cursor: default; background: transparent; }
 .path-suffix { flex-shrink: 0; }
 
-/* Button Group */
-.button-group {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
 button {
     display: flex;
     align-items: center;
@@ -646,7 +639,6 @@ label.config-box .switch { flex-shrink: 0; }
     font-size: 11px;
 }
 #lang-status-text { font-size: 12px; }
-.account-actions { display: flex; flex-direction: row; align-items: center; gap: 6px; flex-shrink: 0; }
 #usage-btn {
     flex-shrink: 0;
     display: block;
@@ -659,9 +651,6 @@ label.config-box .switch { flex-shrink: 0; }
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-#connect-server-btn { flex: 1; text-align: left; }
-#sample-btn { flex: 0 0 auto; }
-.account-actions button { display: flex; align-items: center; width: auto; min-width: 0; }
 .account-action-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* The file library yields space to the active document, keeping its scroll position. */

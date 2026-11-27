@@ -687,5 +687,4 @@ vscode.postMessage({ type: 'getInitialData' });
 document
     .getElementById('connect-server-btn')
     .addEventListener('click', () => vscode.postMessage({ type: 'connectServer' }));
-document.getElementById('sample-btn').addEventListener('click', () => vscode.postMessage({ type: 'sample' }));
 document.getElementById('usage-btn').addEventListener('click', () => vscode.postMessage({ type: 'showUsage' }));

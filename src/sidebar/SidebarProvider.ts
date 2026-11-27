@@ -155,9 +155,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         if (typeof data.id === 'string' && /^[a-f0-9-]{36}$/i.test(data.id)) await BlogPostManager.dismissNotice(data.id);
                         break;
                     }
-                    case 'sample':
-                        await vscode.commands.executeCommand('psb.sample');
-                        break;
                     case 'generateBlog':
                     case 'selectLogForBlog': {
                         const discovered = this.codeFiles.files.find(file => file.filePath === data.path);

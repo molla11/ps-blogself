@@ -40,7 +40,7 @@ test('welcome accepts actions during discovery and opens the exact path from the
     await expect(page.locator('#files-status')).toContainText('찾는 중');
     const folder = page.getByRole('button', { name: '폴더 열기' });
     await expect(folder).toBeHidden();
-    await expect(page.locator('[data-action="sample"]')).toBeEnabled();
+    await expect(page.getByRole('button', { name: '예제 코드로 테스트', exact: true })).toBeEnabled();
     await expect(page.locator('#start-file')).toBeHidden();
     await page.evaluate(files => window.dispatchEvent(new MessageEvent('message', { data: {
         type: 'codeFiles', searching: false, total: files.length, files,

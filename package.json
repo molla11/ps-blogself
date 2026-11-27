@@ -51,7 +51,7 @@
             },
             {
                 "command": "psb.sample",
-                "title": "PS-Blogself: 샘플로 글 만들기"
+                "title": "PS-Blogself: 예제 코드로 테스트"
             },
             {
                 "command": "psb.openSettings",

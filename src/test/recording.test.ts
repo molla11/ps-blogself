@@ -11,10 +11,14 @@ const event = (key: string) => (callback: (...args: any[]) => any, context?: unk
 let recording = true;
 let activeDocument: unknown;
 const saved: string[] = [];
+const sessions: string[] = [];
+const undos: boolean[] = [];
 const original = Module._load;
 Module._load = function(name: string, ...args: any[]) {
     if (name === 'vscode') {
         return {
+            TextDocumentChangeReason: { Undo: 1, Redo: 2 },
+            Uri: { file: (file: string) => ({ toString: () => file }) },
             TextDocumentSaveReason: { Manual: 1, AfterDelay: 2, FocusOut: 3 },
             workspace: { textDocuments: [], onDidOpenTextDocument: event('open'), onWillSaveTextDocument: event('willSave'), onDidSaveTextDocument: event('save'), onDidChangeTextDocument: event('change'), onDidCloseTextDocument: event('close') },
             tasks: { onDidStartTaskProcess: event('task') }, debug: { onDidStartDebugSession: event('debug') },
@@ -22,19 +26,19 @@ Module._load = function(name: string, ...args: any[]) {
         };
     }
     if (name === '../config') return { configManager: { isRecording: () => recording, getRootFolder: () => '', getSupportedLanguages: () => ['cpp'], onDidChange: event('config') } };
-    if (name === './StorageManager') return { storageManager: { saveSnapshot: async (doc: any) => { saved.push(doc.getText()); }, flush: async () => {} } };
+    if (name === './StorageManager') return { storageManager: { saveSnapshot: async (doc: any, _baseline: unknown, _reason: string, session: string, undo: boolean) => { saved.push(doc.getText()); sessions.push(session); undos.push(undo); }, flush: async () => {} } };
     return original.call(this, name, ...args);
 };
 const { FileWatcher } = require('../storage/FileWatcher');
 Module._load = original;
 function setup() {
-    saved.length = 0; recording = true;
+    saved.length = sessions.length = undos.length = 0; recording = true;
     const watcher = new FileWatcher(), subscriptions: { dispose(): void }[] = [];
     watcher.init({ subscriptions });
     let text = '';
     const document = { uri: { scheme: 'file', fsPath: '/work/2527.cpp', toString: () => '/work/2527.cpp' }, fileName: '/work/2527.cpp', isClosed: false, getText: () => text };
     return { watcher, document,
-        edit(value: string) { text = value; listeners.change({ document, contentChanges: [{}] }); },
+        edit(value: string, reason?: number) { text = value; listeners.change({ document, contentChanges: [{}], reason }); },
         async save(reason: number) { listeners.willSave({ document, reason }); await listeners.save(document); },
         dispose() { subscriptions.forEach(item => item.dispose()); },
     };
@@ -52,7 +56,7 @@ test('frequent autosaves coalesce until idle while continuous editing records by
     f.dispose();
 });
 
-test('rapid manual saves and focus-out saves preserve every explicit checkpoint', async t => {
+test('manual and focus-out saves reach durable storage immediately', async t => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const f = setup();
     for (const content of ['a', 'ab', 'abc']) { f.edit(content); await f.save(1); }
@@ -97,4 +101,20 @@ test('an execution marks only the matching saved source in its working directory
         run('g++ 2527.cpp', '/work');
         assert.equal(saved.length, 1);
     } finally { activeDocument = undefined; f.dispose(); }
+});
+
+
+test('review and window changes end a burst even after an explicit save already drained pending text', async () => {
+    const f = setup();
+    try {
+        f.edit('a'); await f.save(1); f.edit('ab'); await f.save(1);
+        await f.watcher.flushFile(f.document.fileName);
+        f.edit('a', 1); await f.save(1);
+        await listeners.focus({ focused: false });
+        f.edit('abc', 2); await f.save(1);
+        assert.equal(sessions[0], sessions[1]);
+        assert.notEqual(sessions[1], sessions[2]);
+        assert.notEqual(sessions[2], sessions[3]);
+        assert.deepEqual(undos, [false, false, true, false]);
+    } finally { f.dispose(); }
 });

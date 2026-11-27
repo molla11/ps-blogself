@@ -5,6 +5,7 @@ import { FileHistory, Snapshot, SnapshotTrigger, RequestLog, SessionIndexItem, S
 import { getHash, generateUUID, computeDiff } from './utils';
 import { Logger } from '../services/logger';
 import { atomicWrite, observeFile, withFileLock } from './SharedFiles';
+import { nextEditBatch, endsEditBatch, sameBurst } from './EditBatch';
 import { limitedSnapshotText } from './SnapshotLimit';
 
 interface Capture {
@@ -13,6 +14,8 @@ interface Capture {
     timestamp: number;
     baseline?: string;
     trigger?: SnapshotTrigger;
+    editSession?: string;
+    undo?: boolean;
     historyWritten?: boolean;
 }
 
@@ -114,7 +117,7 @@ export class StorageManager {
         return this.reconstructFileContent(history, history.snapshots.length - 1);
     }
 
-    public saveSnapshot(document: vscode.TextDocument, baseline?: string, trigger?: SnapshotTrigger): Promise<void> {
+    public saveSnapshot(document: vscode.TextDocument, baseline?: string, trigger?: SnapshotTrigger, editSession?: string, undo = false): Promise<void> {
         const length = typeof document.offsetAt === 'function'
             ? document.offsetAt(new vscode.Position(document.lineCount - 1, Number.MAX_SAFE_INTEGER)) : undefined;
         const content = limitedSnapshotText(length, () => document.getText());
@@ -128,7 +131,7 @@ export class StorageManager {
             return Promise.resolve();
         }
         this.oversized.delete(key);
-        const capture: Capture = { document: { uri: document.uri, languageId: document.languageId }, content, baseline, trigger, timestamp: Date.now() };
+        const capture: Capture = { document: { uri: document.uri, languageId: document.languageId }, content, baseline, trigger, editSession, undo, timestamp: Date.now() };
         const write = this._saveQueue.then(() => this.writeCaptures(capture.document.uri.fsPath, capture));
         this._saveQueue = write.catch(() => {});
         return write;
@@ -238,40 +241,46 @@ export class StorageManager {
             // Execution identifies an existing saved version. An unsaved buffer may differ from what ran.
             if (checkpoint && checkpoint !== 'save' && history.snapshots.at(-1)?.hash !== contentHash) return;
 
-            // Check content change
-            let lastContent: string | null = null;
-            if (history.snapshots.length > 0) {
-                const lastSnapshot = history.snapshots[history.snapshots.length - 1];
-                if (lastSnapshot.hash === contentHash) {
-                    if (checkpoint && !lastSnapshot.checkpoints?.includes(checkpoint)) {
-                        (lastSnapshot.checkpoints ??= []).push(checkpoint);
-                        await atomicWrite(historyFileUri.fsPath, history);
-                    }
-                    return;
-                }
-                // Bound replay for long runs of small edits. Older history files remain readable.
-                if (history.snapshots.length % 128 !== 0) lastContent = this._getLastSnapshotContent(history);
+            const last = history.snapshots.at(-1);
+            if (last?.hash === contentHash) {
+                const mark = checkpoint && !last.checkpoints?.includes(checkpoint);
+                const seal = history.openEdit && (endsEditBatch(trigger) || history.openEdit.session !== capture.editSession);
+                if (mark) (last.checkpoints ??= []).push(checkpoint);
+                if (seal) delete history.openEdit;
+                if (mark || seal) await atomicWrite(historyFileUri.fsPath, history);
+                return;
             }
 
-            // Determine snapshot type (Full vs Diff)
-            let newSnapshot: Snapshot = {
-                timestamp,
-                hash: contentHash, trigger, ...(checkpoint ? { checkpoints: [checkpoint] } : {}),
-            };
-
-            if (lastContent !== null) {
-                const diff = computeDiff(lastContent, content);
-                if (diff) {
-                    newSnapshot.diff = diff;
-                } else {
-                    newSnapshot.content = content;
-                }
+            const before = last ? this._getLastSnapshotContent(history) : baseline ?? null;
+            const delta = before !== null ? computeDiff(before, content) : null;
+            const batch = nextEditBatch(history, last, before, content, delta, capture.editSession, trigger, timestamp);
+            // Ctrl+Z can discard the exact unreviewed addition. The saved hash verifies
+            // the editor's Undo without retaining a copy of the intermediate text.
+            const undidInsertion = capture.undo && !endsEditBatch(trigger) && history.openEdit?.beforeInsertHash === contentHash
+                && sameBurst(history, last, capture.editSession, timestamp);
+            const amend = (!!batch && batch.count > 1) || !!undidInsertion;
+            const index = history.snapshots.length - Number(amend);
+            const parent = history.snapshots[index - 1];
+            if (amend && parent?.hash === contentHash) {
+                // The burst returned to the version already on disk.
+                history.snapshots.pop();
+                if (checkpoint && !parent.checkpoints?.includes(checkpoint)) (parent.checkpoints ??= []).push(checkpoint);
+                delete history.openEdit;
             } else {
-                newSnapshot.content = content;
+                let patch = delta;
+                if (index % 128 === 0) patch = null;
+                else if (amend) {
+                    const base = this.reconstructFileContent(history, index - 1);
+                    if (base === null) throw new Error('수정 기록의 기준 코드를 복원하지 못했습니다.');
+                    patch = computeDiff(base, content);
+                }
+                const snapshot: Snapshot = { timestamp, hash: contentHash, trigger, ...(patch ? { diff: patch } : { content }) };
+                // A manual save within the burst still counts as a save checkpoint for memo preparation.
+                if (checkpoint) snapshot.checkpoints = [checkpoint];
+                else if (amend && last?.checkpoints?.includes('save')) snapshot.checkpoints = ['save'];
+                history.snapshots[index] = snapshot;
+                history.openEdit = batch && !undidInsertion ? { ...batch, index, hash: contentHash } : undefined;
             }
-
-            // Add snapshot
-            history.snapshots.push(newSnapshot);
             history.lastModified = timestamp;
 
             // An interrupted history/index pair is repaired when opening the full list.
@@ -439,6 +448,7 @@ export class StorageManager {
                 promptType,
             };
 
+            delete history.openEdit;
             history.requestLogs.push(newLog);
             await atomicWrite(historyFileUri.fsPath, history);
             Logger.info(`[StorageManager] Added request log for ${absolutePath}`);
@@ -485,20 +495,26 @@ export class StorageManager {
 
     public async getFileHistory(absolutePath: string): Promise<FileHistory | null> {
         await this._saveQueue;
-        if (!this._historyDir) {
-            return null;
-        }
-
-        const fileHash = getHash(absolutePath);
-        const historyFileUri = vscode.Uri.joinPath(this._historyDir, `${fileHash}.json`);
-
-        try {
-            const existingData = await fs.readFile(historyFileUri.fsPath, 'utf-8');
-            return JSON.parse(existingData);
-        } catch (error) {
-            return null;
-        }
+        if (!this._historyDir) return null;
+        const file = vscode.Uri.joinPath(this._historyDir, getHash(absolutePath) + '.json').fsPath;
+        const read = async (): Promise<FileHistory | null> => {
+            try { return JSON.parse(await fs.readFile(file, 'utf-8')); }
+            catch { return null; }
+        };
+        const current = await read();
+        if (!current?.openEdit) return current;
+        // Once a reader keeps an index, any later saves (including in another window)
+        // must append. Re-read while holding the same lock as the recorder.
+        return withFileLock(this._indexFileUri!.fsPath, async () => {
+            const latest = await read();
+            if (latest?.openEdit) {
+                delete latest.openEdit;
+                await atomicWrite(file, latest);
+            }
+            return latest;
+        });
     }
+
     public deleteSnapshot(filePath: string, index: number, expectedVersion: string): Promise<void> {
         const write = this._saveQueue.then(() => withFileLock(this._indexFileUri!.fsPath, () => this._deleteSnapshot(filePath, index, expectedVersion)));
         this._saveQueue = write.catch(() => {});
@@ -583,6 +599,7 @@ export class StorageManager {
             }
         }
 
+        delete history.openEdit;
         history.lastModified = Date.now();
 
         await atomicWrite(historyFileUri.fsPath, history);

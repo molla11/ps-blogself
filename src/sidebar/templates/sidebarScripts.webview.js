@@ -554,6 +554,12 @@ function showView(view) {
 window.addEventListener('message', (event) => {
     const message = event.data;
     switch (message.type) {
+        case 'recordingState': {
+            const box = document.getElementById('recording-failure');
+            box.hidden = !message.pending;
+            box.querySelector('span').textContent = message.pending ? `수정 기록 ${message.pending}개를 저장하지 못했습니다. 디스크 공간과 쓰기 권한을 확인한 뒤 창을 닫기 전에 다시 저장해 주세요.` : '';
+            break;
+        }
         case 'contestMode': {
             const active = !!message.contest;
             const changed = active !== document.body.classList.contains('contest-mode');
@@ -648,6 +654,7 @@ window.addEventListener('message', (event) => {
     }
 });
 
+document.getElementById('retry-recording').onclick = () => vscode.postMessage({ type: 'retryRecording' });
 contestToggle.addEventListener('change', () => vscode.postMessage({ type: 'setContestMode', enabled: contestToggle.checked }));
 exitContest.addEventListener('click', () => vscode.postMessage({ type: 'setContestMode', enabled: false }));
 for (const input of contestOptions) {

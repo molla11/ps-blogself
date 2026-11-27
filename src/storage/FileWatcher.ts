@@ -40,7 +40,7 @@ export class FileWatcher {
             const doc = vscode.window.activeTextEditor?.document;
             if (!doc || doc.isDirty || !this.isTrackedDocument(doc)) return;
             if (args.some(arg => (path.isAbsolute(arg) || cwd) && path.resolve(cwd || '', arg) === doc.uri.fsPath)) {
-                void storageManager.saveSnapshot(doc, this.baselines.get(doc), kind);
+                void storageManager.saveSnapshot(doc, this.baselines.get(doc), kind).catch(error => Logger.error('실행 기록을 저장하지 못했습니다.', error));
             }
         };
         const commandArgs = (command: string) => (command.match(/"[^"]*"|'[^']*'|[^\s;&|]+/g) || []).map(arg => arg.replace(/^["']|["']$/g, ''));
@@ -82,18 +82,18 @@ export class FileWatcher {
                 if (!active && !configManager.contest && tab && tab.input instanceof vscode.TabInputWebview) return;
                 if (previous && previous !== active) return this.pending.flush(previous.uri.toString(), 'switch');
             }),
-            vscode.window.onDidChangeWindowState(state => { if (!state.focused) return this.flush('blur'); }),
+            vscode.window.onDidChangeWindowState(state => { if (!state.focused) return this.flush('blur').catch(error => Logger.error('수정 기록 저장 대기 중', error)); }),
             configManager.onDidChange(() => {
                 this.pending.discardWhere(document => !this.isTrackedDocument(document));
                 vscode.workspace.textDocuments.forEach(rememberBaseline);
             }),
-            { dispose: () => { void this.flush(); } },
+            { dispose: () => { void this.flush().catch(error => Logger.error('수정 기록 저장 대기 중', error)); } },
         );
     }
 
     public async flushFile(filePath: string) {
         await this.pending.flush(vscode.Uri.file(filePath).toString());
-        await storageManager.flush();
+        await storageManager.flush(filePath);
     }
 
     public async flush(reason: SnapshotTrigger = 'close') {

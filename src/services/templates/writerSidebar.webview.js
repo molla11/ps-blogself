@@ -10,7 +10,7 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode) {
     };
     const sourceButtons = {
         plan: 'plan-tab', article: 'article-tab', generate: 'generate-btn', cancelWrite: 'cancel-write-btn', restore: 'restore-version-btn',
-        older: 'version-older-btn', newer: 'version-newer-btn',
+        viewSyncFailures: 'view-sync-failures', older: 'version-older-btn', newer: 'version-newer-btn',
     };
     const noticeIds = ['ownership-box', 'recovery-box', 'progress-box', 'error-box', 'candidate-box'];
     const forwarded = new Map([...noticeIds.map(el), el('export-menu')]
@@ -79,7 +79,8 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode) {
                     : el('source-btn').getAttribute('aria-pressed') === 'true' ? 'source' : 'edit',
                 headings: [...el('outline-list').children].map(button => [button.dataset.level, button.textContent]),
                 exports: buttons(el('export-menu')), ghostStatus: el('ghost-status').hidden ? '' : el('ghost-status').textContent,
-                saveStatus: el('save-status').textContent, notices,
+                saveStatus: el('save-status').textContent, syncStatus: el('sync-status').textContent,
+                hasSyncFailures: !el('view-sync-failures').hidden, notices,
             };
             const key = JSON.stringify(controls);
             if (key === previous) return;
@@ -89,7 +90,7 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode) {
     }
     // Saves, Ghost updates and outline edits can arrive independently of the document model.
     const observer = new MutationObserver(update);
-    for (const id of ['save-status', 'ghost-status', 'export-menu', 'outline-list', ...noticeIds]) {
+    for (const id of ['save-status', 'sync-status', 'view-sync-failures', 'ghost-status', 'export-menu', 'outline-list', ...noticeIds]) {
         observer.observe(el(id), { childList: true, subtree: true, attributes: true, characterData: true });
     }
     window.addEventListener('message', ({ data }) => {

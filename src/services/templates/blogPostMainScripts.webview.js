@@ -509,6 +509,8 @@ window.addEventListener('message', (event) => {
     }
     if (message.type === 'ghost') { ghostState = message.state; renderGhost(); return; }
     if (message.type === 'model') {
+        el('sync-status').textContent = message.syncLabel || '';
+        el('view-sync-failures').hidden = !message.hasSyncFailures;
         setArticleImagePolicy(message.backendEnabled !== false, message.localImageBase);
         el('notice-panel').dataset.language = message.language || '';
         document.body.classList.toggle('writing-locked', message.writingAllowed === false);
@@ -828,3 +830,5 @@ function renderGhost() {
 for (const [id, type] of [['ghost-save-btn', 'ghostSave'], ['ghost-publish-btn', 'ghostPublish'], ['ghost-connect-btn', 'ghostConnect'], ['ghost-open-btn', 'ghostOpen']]) {
     el(id).onclick = () => { el('export-menu').hidePopover(); clearTimeout(editTimer); send(type, {}, type === 'ghostSave' || type === 'ghostPublish'); };
 }
+
+el('view-sync-failures').onclick = () => vscode.postMessage({ type: 'viewSyncFailures' });

@@ -330,7 +330,7 @@ test('service polling refreshes notices and usage while the window and sidebar a
         vscode: { window: { state: { focused: false }, onDidChangeWindowState: (listener: () => void) => { onFocus = listener; return disposed(); }, onDidChangeActiveTextEditor: disposed },
             workspace: { onDidChangeWorkspaceFolders: disposed } },
         '../config': { configManager: { onDidChange: disposed } },
-        '../storage/StorageManager': { storageManager: { onDidUpdateIndex: disposed } },
+        '../storage/StorageManager': { storageManager: { onDidChangeRecording: disposed, onDidUpdateIndex: disposed } },
         './getSidebarHtml': { getSidebarHtml: () => '' },
         '../services/HistoryManager': { HistoryManager: { onDidChangeActive: disposed } },
         '../services/BlogPostManager': { BlogPostManager: manager },

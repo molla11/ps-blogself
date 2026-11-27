@@ -16,6 +16,8 @@
                     <h2 class="writer-file"><i class="codicon codicon-file-code" aria-hidden="true"></i><span id="writer-file-name"></span></h2>
                     <span id="side-save-status" role="status"></span>
                 </div>
+                <span id="side-sync-status" class="writer-hint" role="status" hidden></span>
+                <button class="secondary" data-writer-action="viewSyncFailures" type="button" hidden>실패한 버전 보기</button>
                 <nav class="writer-tabs" aria-label="글 작성 화면">
                     <button data-writer-action="plan" type="button" aria-pressed="true">변경사항 요약</button>
                     <button data-writer-action="article" type="button" aria-pressed="false">글 확인/수정</button>
@@ -153,6 +155,7 @@
                 </div>
             </div>
 
+            <div id="recording-failure" role="status" hidden><span></span> <button type="button" class="secondary" id="retry-recording">다시 저장</button></div>
             <footer class="sidebar-actions" aria-label="사용량 및 글쓰기">
                 <button id="usage-btn" class="secondary" type="button" aria-label="서버 사용량 확인" hidden></button>
                 <button id="connect-server-btn" class="secondary" title="계정 및 사용량"><span class="account-action-label">로그인</span></button>

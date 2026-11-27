@@ -157,6 +157,5 @@ async function toggleLanguage(sidebarProvider: SidebarProvider, lang: string) {
 }
 
 export async function deactivate() {
-    await fileWatcher.flush();
-    await BlogPostManager.flush();
+    try { await fileWatcher.flush(); } finally { await BlogPostManager.flush(); }
 }

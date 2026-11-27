@@ -294,6 +294,7 @@ exports.run = async () => {
             await writer.frame.locator('#article-title').fill('에디터에서 고친 제목');
             await writer.frame.locator('#article-body').fill('## 재시작\n\n서버와 무관하게 보존된 로컬 본문');
             await until(async () => (await controls.locator('#side-save-status').innerText()) === '저장됨', 'draft persisted');
+            await until(async () => (await controls.locator('#side-sync-status').innerText()) === '서버 동기화됨', 'server confirmed the edited version');
             const api = process.env.PSB_API_URL;
             const { token } = await (await fetch(api + '/auth/local', { method: 'POST' })).json();
             const get = async route => {

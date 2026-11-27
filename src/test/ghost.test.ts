@@ -194,3 +194,15 @@ test('malformed persisted node structures fail before reaching the editor', () =
         assert.throws(() => validateDocument({ version: 1, root }), /블록 구조/);
     }
 });
+
+test('two articles from solve.py keep independent Ghost posts and claim the matching legacy post', () => fixture(async ctx => {
+    const file = '/work/solve.py';
+    const original = await ctx.publisher.publish(ctx.settings, file, article);
+    const second = { title: '최단 경로', markdown: '다익스트라 풀이' };
+    const legacyArticles = [{ id: 'old', article }, { id: 'other', article: second }];
+    const other = await ctx.publisher.publish(ctx.settings, file, second, false, { identity: { id: 'other', legacyArticles } });
+    assert.notEqual(other.postId, original.postId);
+    const restored = await ctx.publisher.publish(ctx.settings, file, { ...article, title: '정렬 풀이 수정' }, false, { identity: { id: 'old', legacyArticles } });
+    assert.equal(restored.postId, original.postId);
+    assert.deepEqual(ctx.posts.map((p: { title: string }) => p.title), ['정렬 풀이 수정', '최단 경로']);
+}));

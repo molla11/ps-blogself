@@ -45,6 +45,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.html = getSidebarHtml(webviewView.webview, this._extensionUri, !!configManager.contest);
 
+        const sendRecordingState = () => webviewView.webview.postMessage({ type: 'recordingState', pending: storageManager.unsavedSnapshots });
+        const recording = storageManager.onDidChangeRecording(sendRecordingState);
+        webviewView.onDidDispose(() => recording.dispose());
         const sendContestMode = () => webviewView.webview.postMessage({ type: 'contestMode', contest: configManager.contest });
 
         webviewView.webview.onDidReceiveMessage(async (data) => {
@@ -89,7 +92,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         await this._onToggleLanguage(data.value);
                         break;
                     }
+                    case 'retryRecording': {
+                        await storageManager.flush();
+                        break;
+                    }
                     case 'getInitialData': {
+                        await sendRecordingState();
                         BlogPostManager.setSidebarVisible(webviewView.visible);
                         await sendContestMode();
                         this.codeFiles.start();

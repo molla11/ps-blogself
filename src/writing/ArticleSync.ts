@@ -34,6 +34,7 @@ export class ArticleSync {
             if (this.closed || !backendRequests.enabled) return;
             this.files.delete(file);
             const ack = new Set<string>();
+            const rejected = new Map<string, number>();
             try {
                 for (const edit of await this.store.pendingEdits(file)) {
                     const { origin, id, ...body } = edit;
@@ -43,14 +44,18 @@ export class ArticleSync {
                         await this.connection.request('/jobs/' + encodeURIComponent(origin.jobId) + '/versions/' + encodeURIComponent(id),
                             'PUT', body, base, owner);
                     } catch (error) {
-                        // Only an explicit deletion/missing parent is final. Older APIs also return generic 404s.
-                        if ((error as {code?: string})?.code !== 'JOB_NOT_FOUND') throw error;
+                        const { code, status } = error as { code?: string; status?: number };
+                        if (code === 'JOB_NOT_FOUND' || (status && [400, 409, 413, 422].includes(status))) {
+                            rejected.set(id, status ?? 404);
+                            continue;
+                        }
+                        throw error;
                     }
                     ack.add(id);
                 }
             } catch { this.files.add(file); }
-            if (ack.size) {
-                try { await this.store.acknowledgeEdits(file, ack); } catch { this.files.add(file); }
+            if (ack.size || rejected.size) {
+                try { await this.store.acknowledgeEdits(file, ack, rejected); } catch { this.files.add(file); }
             }
         }
     }

@@ -147,7 +147,8 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         renderOutline(c.headings);
         renderButtons(el('side-file-actions'), c.exports.filter(item => !item.action.startsWith('ghost-')));
         renderButtons(el('side-ghost-actions'), c.exports.filter(item => item.action.startsWith('ghost-')));
-        for (const [id, text] of [['side-save-status', c.saveStatus], ['side-ghost-status', c.ghostStatus]]) {
+        button('viewSyncFailures').hidden = !c.hasSyncFailures;
+        for (const [id, text] of [['side-sync-status', c.syncStatus || ''], ['side-save-status', c.saveStatus], ['side-ghost-status', c.ghostStatus]]) {
             const node = el(id);
             if (node.textContent !== text) node.textContent = text;
             node.hidden = !text;

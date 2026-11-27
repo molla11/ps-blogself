@@ -68,3 +68,47 @@ suite('Storage Logic Suite', () => {
         assert.strictEqual(reconstructed, newText);
     });
 });
+
+test('an index write failure retains immutable snapshots in order and repairs a partial commit', async t => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const dir = await fs.mkdtemp(path.join(tmpdir(), 'psb-retry-'));
+    t.after(() => fs.rm(dir, { recursive: true, force: true }));
+    const uri = (fsPath: string) => ({ fsPath, toString: () => fsPath });
+    const Module = require('node:module'), original = Module._load;
+    Module._load = function(name: string, ...args: unknown[]) {
+        if (name === 'vscode') {return {
+            Uri: { joinPath: (base: { fsPath: string }, file: string) => uri(path.join(base.fsPath, file)) },
+            EventEmitter: class { event = () => {}; fire() {} },
+        };}
+        return original.call(this, name, ...args);
+    };
+    let manager;
+    try { manager = require('../storage/StorageManager').StorageManager.getInstance(); }
+    finally { Module._load = original; }
+    manager.init({ globalStorageUri: uri(dir) });
+    const index = path.join(dir, 'session-index.json');
+    await fs.mkdir(index);
+    let content = 'first';
+    const document = { uri: uri('/project/solve.py'), languageId: 'python', getText: () => content };
+    await assert.rejects(manager.saveSnapshot(document, '', 'save'));
+    content = 'second';
+    await assert.rejects(manager.saveSnapshot(document, '', 'save'));
+    assert.equal(manager.unsavedSnapshots, 2);
+    await assert.rejects(manager.flush());
+    content = 'unsaved';
+    await fs.rmdir(index);
+    await manager.flush();
+    assert.equal(manager.unsavedSnapshots, 0);
+    const history = await manager.getFileHistory(document.uri.fsPath);
+    assert.equal(history.snapshots.length, 2);
+    assert.deepEqual([0, 1].map(i => manager.reconstructFileContent(history, i)), ['first', 'second']);
+    const rows = await manager.getAllLogs();
+    assert.equal(rows[0].filePath, document.uri.fsPath);
+    const stat = await fs.stat(index, { bigint: true });
+    await manager.getAllLogs();
+    assert.equal((await fs.stat(index, { bigint: true })).ino, stat.ino);
+    await fs.writeFile(index, '[]');
+    assert.deepEqual(await manager.getAllLogs(), rows);
+});

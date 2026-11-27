@@ -1,6 +1,6 @@
 import { ArticleDocument } from './ArticleDocument';
 import * as path from 'path';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { createTwoFilesPatch } from 'diff';
 import { FileHistory } from '../types';
 import { meritsAutomaticMemo } from './MemoPreparation';
@@ -76,6 +76,7 @@ export interface WritingJob {
 }
 export type ArticleOrigin = import('./JobRouter').JobTarget & { jobId: string };
 export interface ArticleVersion {
+    publicationId?: string;
     articleOrigin?: ArticleOrigin;
     title: string;
     markdown: string;
@@ -84,7 +85,12 @@ export interface ArticleVersion {
     notices?: AuthorNotice[];
 }
 export interface WritingDraft extends WritingPreferences {
+    publicationId?: string;
     lastArticleEditAt?: number;
+    /** UUID of the last queued edit, or local when it was saved without a matching account. */
+    syncEditId?: string;
+    syncLabel?: string;
+    hasSyncFailures?: boolean;
     articleOrigin?: ArticleOrigin;
     writingModel?: WritingModel;
     schemaVersion: 1;
@@ -118,7 +124,7 @@ export interface WritingDraft extends WritingPreferences {
         cancelRequested?: boolean;
         append?: boolean;
     };
-    candidate?: { articleOrigin?: ArticleOrigin; plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory; notices?: AuthorNotice[] };
+    candidate?: { publicationId?: string; articleOrigin?: ArticleOrigin; plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory; notices?: AuthorNotice[] };
     planNotices?: AuthorNotice[];
     articleNotices?: AuthorNotice[];
     articleVersions: ArticleVersion[];
@@ -252,6 +258,7 @@ function buildSource(
 export function newDraft(history: FileHistory): WritingDraft {
     return {
         schemaVersion: 1,
+        publicationId: randomUUID(),
         filePath: history.filePath,
         history: structuredClone(history),
         fingerprint: historyFingerprint(history),
@@ -410,13 +417,17 @@ export function mergeResult(
     if (typeof result.markdown === 'string' && typeof result.title === 'string') {
         if (articleVersionKey(draft) !== articleVersionKey({ title: result.title, markdown: result.markdown })) {
             if (draft.markdown.trim()) {
-                draft.articleVersions.push({ articleOrigin: draft.articleOrigin, title: draft.title, markdown: draft.markdown, document: draft.document, notices: draft.articleNotices, at: Date.now() });
+                draft.articleVersions.push({ publicationId: draft.publicationId, articleOrigin: draft.articleOrigin, title: draft.title, markdown: draft.markdown, document: draft.document, notices: draft.articleNotices, at: Date.now() });
             }
             draft.title = result.title;
             draft.markdown = result.markdown;
             draft.document = result.document;
         }
+        draft.publicationId = result.publicationId ?? randomUUID();
         draft.articleOrigin = result.articleOrigin;
+        delete draft.syncEditId;
+        delete draft.syncLabel;
+        delete draft.hasSyncFailures;
         draft.articleNotices = notices;
         draft.articleVersions = previousArticleVersions(draft);
     }

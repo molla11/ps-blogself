@@ -9,7 +9,12 @@ import { GhostClient, GhostPost, GhostSettings } from './GhostClient';
 import { normalizeExportTags } from '../settings/ExportTags';
 
 export interface PublishArticle { title: string; markdown: string; document?: ArticleDocument; tags?: string[] }
+export interface PublicationIdentity {
+    id: string;
+    legacyArticles?: { id: string; article: PublishArticle }[];
+}
 interface Publication {
+    articleId?: string;
     slug: string; postId?: string; remoteHash?: string; localHash?: string; status?: string; updatedAt?: string;
     pending?: { owner: SessionOwner; token: string };
 }
@@ -30,17 +35,38 @@ function postHash(post: Pick<GhostPost, 'title' | 'lexical' | 'status'>) { retur
 export class GhostPublisher {
     readonly session = new WindowSession();
     constructor(readonly directory: string, readonly assets: ArticleAssets) {}
-    private file(settings: GhostSettings, filePath: string) { return path.join(this.directory, hash([new GhostClient(settings).url, filePath]) + '.json'); }
-    async state(settings: GhostSettings | undefined, filePath: string): Promise<GhostState> {
+    private async file(settings: GhostSettings, filePath: string, identity?: PublicationIdentity) {
+        const url = new GhostClient(settings).url;
+        const legacy = path.join(this.directory, hash([url, filePath]) + '.json');
+        if (!identity) return legacy;
+        const scoped = path.join(this.directory, hash([url, filePath, identity.id]) + '.json');
+        if (!identity.legacyArticles?.length || !await readJson<Publication>(legacy)) return scoped;
+        const candidates = identity.legacyArticles;
+        return withFileLock(legacy, async () => {
+            const record = await readJson<Publication>(legacy);
+            if (!record || await readJson<Publication>(scoped)) return scoped;
+            if (!record.articleId) {
+                const matches = candidates.filter(({ article }) => record.localHash === articleHash(article)
+                    || record.localHash === articleHash({ ...article, tags: [] }));
+                const ids = new Set((matches.length ? matches : candidates).map(item => item.id));
+                if (ids.size === 1) {
+                    record.articleId = [...ids][0];
+                    await atomicWrite(legacy, record);
+                }
+            }
+            return record.articleId === identity.id ? legacy : scoped;
+        });
+    }
+    async state(settings: GhostSettings | undefined, filePath: string, identity?: PublicationIdentity): Promise<GhostState> {
         if (!settings) return { connected: false };
-        const client = new GhostClient(settings), record = await readJson<Publication>(this.file(settings, filePath));
+        const client = new GhostClient(settings), record = await readJson<Publication>(await this.file(settings, filePath, identity));
         return { connected: true, site: client.url, postId: record?.postId, editorUrl: record?.postId ? new URL(`ghost/#/editor/post/${record.postId}`, client.url).href : undefined, status: record?.status, localHash: record?.localHash, updatedAt: record?.updatedAt, busy: !!record?.pending && await WindowSession.alive(record.pending.owner) };
     }
-    async publish(settings: GhostSettings, filePath: string, article: PublishArticle, publish = false, options: { draftOnly?: boolean } = {}): Promise<GhostState> {
+    async publish(settings: GhostSettings, filePath: string, article: PublishArticle, publish = false, options: { draftOnly?: boolean; identity?: PublicationIdentity } = {}): Promise<GhostState> {
         article = separateArticleTitle(article);
         if (!article.title.trim() || !article.markdown.trim()) throw new Error('글 제목과 본문을 먼저 작성해 주세요.');
         const additionalTags = normalizeExportTags(article.tags || []);
-        const client = new GhostClient(settings), file = this.file(settings, filePath), token = randomUUID(), owner = await this.session.owner();
+        const client = new GhostClient(settings), file = await this.file(settings, filePath, options.identity), token = randomUUID(), owner = await this.session.owner();
         const record = await withFileLock(file, async () => {
             const record = await readJson<Publication>(file) || { slug: 'psb-' + randomUUID() };
             if (record.pending && await WindowSession.alive(record.pending.owner)) throw new Error('다른 창에서 이 글을 Ghost에 저장 중입니다. 완료 후 다시 시도해 주세요.');
@@ -78,7 +104,7 @@ export class GhostPublisher {
                 const latest = await readJson<Publication>(file); if (latest?.pending?.token !== token) throw new Error('Ghost 저장 권한이 변경되었습니다.');
                 await atomicWrite(file, { ...latest, pending: undefined, postId: saved.id, remoteHash: postHash(saved), localHash: articleHash(article), status: saved.status, updatedAt: saved.updated_at });
             });
-            return this.state(settings, filePath);
+            return this.state(settings, filePath, options.identity);
         } finally {
             await withFileLock(file, async () => { const latest = await readJson<Publication>(file); if (latest?.pending?.token === token) { delete latest.pending; await atomicWrite(file, latest); } });
         }

@@ -173,3 +173,26 @@ test('applying a pending generated article carries its own job and preserves the
     assert.deepEqual(value.articleOrigin, origin);
     assert.deepEqual(value.articleVersions.at(-1)?.articleOrigin, old);
 });
+
+test('a conflicting version stays local while the following version syncs and is not sent again', () => setup(async store => {
+    const value = await store.open(draft());
+    const origin = { kind: 'server' as const, base: 'https://writer.example/api', owner: 'writer', jobId: 'job' };
+    value.articleOrigin = origin;
+    for (const id of ['first', 'second']) {
+        value.syncEditId = id;
+        await store.save(value, { id, origin, editedAt: 1, title: id, markdown: id });
+    }
+    const calls: string[] = [];
+    const connection = { base: origin.base, saved: async () => ({ user: { id: origin.owner } }), request: async (route: string) => {
+        calls.push(route);
+        if (route.endsWith('/first')) throw Object.assign(new Error('conflict'), { status: 409 });
+    } };
+    for (let i = 0; i < 2; i++) {
+        const sync = new ArticleSync(store, connection as any);
+        try { await sync.start(); } finally { await sync.close(); }
+    }
+    assert.deepEqual((await store.rejectedEdits(value.filePath, origin)).map(edit => edit.markdown), ['first']);
+    assert.deepEqual(await store.rejectedEdits(value.filePath, { ...origin, owner: 'other' }), []);
+    assert.deepEqual(calls, ['/jobs/job/versions/first', '/jobs/job/versions/second']);
+    assert.equal((await store.read(value.filePath))?.syncLabel, '서버 동기화됨 · 이전 버전 1개 동기화 실패');
+}));

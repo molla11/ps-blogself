@@ -684,6 +684,51 @@ export class BlogPostManager {
             if (this.ghostUploads.get(filePath) === operation) this.ghostUploads.delete(filePath);
         }).catch(() => {});
     }
+    private static async sendToBrowser(view: View, versionId?: string) {
+        backendRequests.requireEnabled();
+        const draft = view.draft;
+        const article = versionId ? this.version(draft, versionId) : draft;
+        if (!article.articleOrigin) {
+            const copy = 'Markdown 복사', link = '서버 글에 연결';
+            const actions = !versionId && view.editable ? [link, copy] : [copy];
+            const choice = await vscode.window.showInformationMessage('이 글은 이 기기에만 있습니다. 브라우저에서 이어쓰려면 같은 계정의 서버 글에 연결하세요.', ...actions);
+            if (choice === copy) await vscode.env.clipboard.writeText(this.markdown(article));
+            if (choice !== link || !await this.attachArticleJob(view)) return;
+        }
+        const origin = article.articleOrigin;
+        if (!origin || origin.base !== this.connection.base) throw new Error('이 글을 작성한 서버에 연결한 뒤 다시 시도해 주세요.');
+        const credentials = await this.connection.credentials(true, origin.base);
+        if (credentials.user.id !== origin.owner) throw new Error('이 글을 작성한 계정으로 로그인한 뒤 다시 시도해 주세요.');
+        if (!versionId && view.editable && draft.syncEditId === 'local') await this.saveArticleEdit(draft);
+        const id = randomUUID();
+        const version = versionId ? undefined : draft.syncEditId;
+        try {
+            const handoff = await this.connection.request<{ handoffId: string }>('/browser-export', 'POST', {
+                id, jobId: origin.jobId, title: article.title, markdown: article.markdown, document: article.document,
+                versionId: version && version !== 'local' ? version : undefined,
+                editedAt: 'at' in article ? article.at : draft.lastArticleEditAt ?? draft.updatedAt,
+            }, origin.base, origin.owner);
+            if (handoff?.handoffId !== id) throw new Error('서버가 이어쓰기를 확인하지 못했습니다.');
+        } catch (error) {
+            if (error instanceof ServiceError && error.status === 404 && error.code !== 'JOB_NOT_FOUND') {
+                throw new Error('이 서버는 브라우저 이어쓰기를 지원하지 않습니다. 확장의 내 글에서 선택하거나 Markdown 복사를 이용해 주세요.');
+            }
+            throw error;
+        }
+        const images = imageRefs(article.document || documentFromMarkdown(article.markdown)).filter(ref => ref.startsWith('psb-image:'));
+        const install = '브라우저 확장 설치 안내', cancel = '보내기 취소';
+        const account = credentials.user.email || '현재 계정';
+        const message = `‘${article.title}’을 준비했습니다. 1시간 안에 블로그 글쓰기 탭에서 PS-Blogself 확장을 열고 ${account} 계정으로 이어가세요.`
+            + (images.length ? ` 로컬 이미지 ${images.length}개는 편집기에서 직접 첨부하세요.` : '');
+        view.status = message;
+        void vscode.window.showInformationMessage(message, install, cancel).then(async choice => {
+            if (choice === install) await vscode.env.openExternal(vscode.Uri.parse('https://github.com/molla11/ps-blogself-extension#설치와-사용'));
+            if (choice === cancel) {
+                await this.connection.request('/browser-export/' + id + '/dismiss', 'POST', {}, origin.base, origin.owner);
+                void vscode.window.showInformationMessage('이 버전의 이어쓰기 요청을 취소했습니다.');
+            }
+        }).then(undefined, error => vscode.window.showErrorMessage(error instanceof Error ? error.message : '이어쓰기 작업을 완료하지 못했습니다.'));
+    }
     private static async exportContent(article: PublishArticle, html: boolean, uri: vscode.Uri) {
         const doc = article.document || documentFromMarkdown(article.markdown);
         const tags = article.tags || [];
@@ -770,16 +815,17 @@ export class BlogPostManager {
             void vscode.window.showInformationMessage('서버 작업에 연결할 기존 로컬 글을 편집 화면에서 열어 주세요.');
             return;
         }
+        await this.enqueue(view, async () => { await this.attachArticleJob(view); });
+    }
+    private static async attachArticleJob(view: View): Promise<boolean> {
+        if (view.draft.articleOrigin || !view.editable) return false;
         const target = await this.jobs.target();
         const picked = await this.connection.pickJob(target.base, target.owner,
             '현재 글과 이후 편집본을 저장할 서버 작업 선택 · ' + target.owner, path.basename(view.draft.filePath));
-        if (!picked) return;
-        await this.enqueue(view, async () => {
-            if (!view.editable || view.draft.articleOrigin || this.connection.base !== target.base ||
-                (await this.connection.saved(target.base))?.user.id !== target.owner) return;
-            view.draft.articleOrigin = { ...target, jobId: picked.id };
-            await this.saveArticleEdit(view.draft);
-        });
+        if (!picked || this.connection.base !== target.base || (await this.connection.saved(target.base))?.user.id !== target.owner) return false;
+        view.draft.articleOrigin = { ...target, jobId: picked.id };
+        await this.saveArticleEdit(view.draft);
+        return true;
     }
     private static async saveArticleEdit(draft: WritingDraft) {
         const origin = draft.articleOrigin;
@@ -807,7 +853,7 @@ export class BlogPostManager {
         if (!this.writingAllowed && !['ready', 'save', 'viewedWriting'].includes(message.type)) {
             throw new Error('대회 모드에서 글쓰기 화면 진입을 차단했습니다.');
         }
-        const reading = ['ready', 'takeover', 'viewedWriting', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'rechargeCredits', 'ghostConnect', 'ghostOpen', 'viewSyncFailures'].includes(message.type);
+        const reading = ['ready', 'takeover', 'viewedWriting', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'rechargeCredits', 'ghostConnect', 'ghostOpen', 'viewSyncFailures', 'browserExport'].includes(message.type);
         if (!reading && (!view.editable || message.editToken !== view.draft.editor?.token)) throw new DraftConflict();
         if (message.fields && Array.isArray(message.dirtyKeys)) {
             const fields = Object.fromEntries(Object.entries(message.fields).filter(([key]) => message.dirtyKeys.includes(key)));
@@ -942,6 +988,14 @@ export class BlogPostManager {
                     type: 'versionPreview', versionId: message.versionId, title: version.title, notices: version.notices,
                     html: documentHtml(version.document || documentFromMarkdown(version.markdown), this.imageSources(view, version)),
                 });
+                break;
+            }
+            case 'browserExport': {
+                if (!message.versionId && view.editable) {
+                    if (message.editToken !== view.draft.editor?.token) throw new DraftConflict();
+                    await this.edit(view, message.fields);
+                }
+                await this.sendToBrowser(view, message.versionId);
                 break;
             }
             case 'export': {

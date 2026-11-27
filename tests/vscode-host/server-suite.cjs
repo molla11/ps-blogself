@@ -310,6 +310,15 @@ exports.run = async () => {
                 const version = await get('/jobs/' + job.id + '/versions/' + latest.id);
                 return version.title === '에디터에서 고친 제목' && version.markdown.includes('서버와 무관하게 보존된 로컬 본문');
             }, 'a saved editor change appears in the latest version of its server job');
+            const menu = controls.locator('#side-export');
+            if (!await menu.evaluate(node => node.open)) await menu.locator('summary').click();
+            await controls.getByRole('button', { name: '브라우저 확장에서 이어쓰기' }).click();
+            await until(async () => {
+                const { handoff } = await get('/browser-export');
+                if (!handoff?.versionId || handoff.title !== '에디터에서 고친 제목') return false;
+                const pinned = await get('/jobs/' + handoff.id + '/versions/' + handoff.versionId);
+                return pinned.markdown.includes('서버와 무관하게 보존된 로컬 본문');
+            }, 'the export action pins the exact editor version for the browser');
         }
         await until(async () => (await writer.frame.locator('#article-body').inputValue()).includes('서버와 무관하게 보존된 로컬 본문'), 'local draft restored');
         await until(async () => (await writingCounts.innerText()).includes('글 1'), 'saved article count survives reopening');

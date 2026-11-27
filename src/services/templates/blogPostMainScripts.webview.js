@@ -20,6 +20,7 @@ let model,
     previewMode = false,
     sourceMode = false,
     outlineOpen = false,
+    browserExportRequest,
     selectedVersion = '',
     readyVersion = '',
     versionNotices,
@@ -343,6 +344,7 @@ function renderVersions() {
     el('version-preview').hidden = !browsing;
     updateAuthorNotices();
     const exportDisabled = loading || (streaming && !browsing);
+    el('browser-export-btn').disabled = !!browserExportRequest || exportDisabled || model.backendEnabled === false;
     el('copy-btn').disabled = el('export-btn').disabled = el('export-html-btn').disabled = exportDisabled;
     renderEditorMode();
     markDisplayedWriting();
@@ -488,6 +490,11 @@ function render() {
 }
 window.addEventListener('message', (event) => {
     const message = event.data;
+    if (browserExportRequest && message.id === browserExportRequest && ['ack', 'saveError'].includes(message.type)) {
+        browserExportRequest = undefined;
+        el('browser-export-btn').textContent = '브라우저 확장에서 이어쓰기';
+        el('browser-export-btn').disabled = model?.backendEnabled === false;
+    }
     if (message.type === 'writingVisibility') { setWritingVisibility(message.visible); return; }
     if (message.type === 'writingModelChecked' || message.type === 'saveError' && message.id === modelSelectionRequest?.id) {
         const request = modelSelectionRequest;
@@ -743,11 +750,16 @@ for (const [id, type] of [
         action(type);
     });
 }
-for (const [id, type, format] of [['copy-btn', 'copy'], ['export-btn', 'export', 'markdown'], ['export-html-btn', 'export', 'html']]) {
+for (const [id, type, format] of [['browser-export-btn', 'browserExport'], ['copy-btn', 'copy'], ['export-btn', 'export', 'markdown'], ['export-html-btn', 'export', 'html']]) {
     el(id).addEventListener('click', () => {
         el('export-menu').hidePopover();
-        if (selectedVersion) send(type, { versionId: selectedVersion, format });
-        else { clearTimeout(editTimer); send(type, { format }, true); }
+        if (!selectedVersion) clearTimeout(editTimer);
+        const request = send(type, { versionId: selectedVersion || undefined, format }, !selectedVersion);
+        if (type === 'browserExport') {
+            browserExportRequest = request;
+            el(id).textContent = '이어쓰기 준비 중…';
+            el(id).disabled = true;
+        }
     });
 }
 for (const [id, type] of [

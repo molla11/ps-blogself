@@ -238,7 +238,7 @@ function renderSteps() {
                 changed('plan');
             });
             const body = document.createElement('textarea');
-            body.className = 'plan-text';
+            body.className = 'plan-text step-body';
             body.id = 'step-body-' + index;
             body.rows = 1;
             body.maxLength = 12000;
@@ -273,10 +273,11 @@ function switchTab(tab) {
     el('plan-options').hidden = tab !== 'plan';
     el('plan-view').hidden = tab !== 'plan';
     el('article-view').hidden = tab !== 'article';
-    el('plan-tab').classList.toggle('active', tab === 'plan');
-    el('article-tab').classList.toggle('active', tab === 'article');
-    el('plan-tab').setAttribute('aria-pressed', String(tab === 'plan'));
-    el('article-tab').setAttribute('aria-pressed', String(tab === 'article'));
+    for (const name of ['plan', 'article']) {
+        const button = el(name + '-tab');
+        button.setAttribute('aria-selected', String(name === tab));
+        button.tabIndex = name === tab ? 0 : -1;
+    }
     updateAuthorNotices();
     document.querySelectorAll('textarea').forEach(height);
     markDisplayedWriting();
@@ -297,7 +298,7 @@ function renderEditorMode() {
     el('outline-toggle').setAttribute('aria-expanded', String(!el('article-outline').hidden));
     el('outline-toggle').disabled = browsing || preview || source;
     el('insert-block-btn').disabled = streaming || model?.editable === false;
-    richEditor.setActive(!browsing && !preview && !source);
+    richEditor.setActive(el('article-empty').hidden && !browsing && !preview && !source);
     document.querySelectorAll('textarea').forEach(height);
 }
 function updateAuthorNotices() {
@@ -460,7 +461,9 @@ function render() {
     value('article-body', form.markdown);
     richEditor.setMarkdown(form.markdown, editable && !streaming, form.document, model.images,
         streaming ? model.streamMarkdown || '' : undefined);
-    el('article-tab').disabled = !streaming && !form.markdown && !form.title && !model.versions.length && (wasStreaming || activeTab !== 'article');
+    const hasArticle = !!(streaming || form.markdown || form.title || form.document || model.versions.length);
+    el('article-empty').hidden = hasArticle;
+    el('article-toolbar').hidden = el('document-layout').hidden = !hasArticle;
     const previewKey = model.showAdvancedWritingViews ? JSON.stringify([form.markdown, form.document]) : '';
     if (streaming && !wasStreaming) {
         selectedVersion = readyVersion = '';
@@ -470,7 +473,7 @@ function render() {
     if (!streaming && previewKey !== lastPreviewKey && previewMode) send('preview');
     lastMarkdown = form.markdown || '';
     if (!streaming) lastPreviewKey = previewKey;
-    if (el('article-tab').disabled) switchTab('plan');
+    if (wasStreaming && !hasArticle) switchTab('plan');
     renderVersions();
     document.querySelectorAll('textarea, input:not([type="range"])').forEach(node => { node.readOnly = !editable; });
     el('article-title').readOnly = el('article-body').readOnly = !editable || streaming;
@@ -483,6 +486,12 @@ function render() {
     if (model.backendEnabled === false) {
         for (const id of ['generate-btn', 'prepare-btn', 'prepare-empty-btn', 'retry-btn', 'cancel-btn']) el(id).disabled = true;
     }
+    el('start-draft').textContent = form.plan ? '이 메모로 초안 만들기' : '풀이 메모로 이동';
+    el('start-draft').disabled = !!form.plan && el('generate-btn').disabled;
+    el('draft-hint').textContent = !form.plan ? '풀이 메모를 먼저 준비해 주세요.'
+        : !editable ? '초안을 만들려면 이 창으로 편집 권한을 가져오세요.'
+        : model.backendEnabled === false ? '대회 모드에서는 AI 초안을 만들 수 없어요.'
+        : '풀이 메모로 초안을 만든 뒤 여기에서 다듬으세요.';
     renderWritingModel();
     stash();
 }
@@ -759,8 +768,30 @@ for (const [id, type] of [
 ]) {
     el(id).addEventListener('click', () => send(type));
 }
-el('plan-tab').addEventListener('click', () => switchTab('plan'));
-el('article-tab').addEventListener('click', () => switchTab('article'));
+for (const name of ['plan', 'article']) {
+    el(name + '-tab').addEventListener('click', () => {
+        if (activeTab === name) return;
+        switchTab(name);
+        window.scrollTo(0, 0);
+    });
+}
+el('view-tabs').addEventListener('keydown', event => {
+    let next;
+    if (event.key === 'Home') next = 'plan';
+    else if (event.key === 'End') next = 'article';
+    else if (['ArrowLeft', 'ArrowRight'].includes(event.key)) next = activeTab === 'plan' ? 'article' : 'plan';
+    else return;
+    event.preventDefault();
+    el(next + '-tab').focus();
+    el(next + '-tab').click();
+});
+el('start-draft').addEventListener('click', () => {
+    if (form.plan) el('generate-btn').click();
+    else {
+        el('plan-tab').focus();
+        el('plan-tab').click();
+    }
+});
 window.addEventListener('resize', () => document.querySelectorAll('textarea').forEach(height));
 // Wrapped options and version controls can change height in narrow editor panes.
 const toolbarObserver = new ResizeObserver(entries => {

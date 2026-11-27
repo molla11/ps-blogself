@@ -77,19 +77,10 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         }));
         el('side-outline-empty').hidden = headings.length > 0;
     }
-    function selectTab(plan) {
-        button('plan').setAttribute('aria-pressed', String(plan));
-        button('article').setAttribute('aria-pressed', String(!plan));
-        el('writer-plan-options').hidden = !plan;
-        el('writer-article-options').hidden = plan;
-        button('prepare').hidden = !plan;
-    }
     tools.addEventListener('click', event => {
         const target = event.target.closest('button[data-writer-action]');
         if (!target || target.disabled) return;
-        const action = target.dataset.writerAction;
-        if (action === 'plan' || action === 'article') selectTab(action === 'plan');
-        send(action, target.dataset.value);
+        send(target.dataset.writerAction, target.dataset.value);
     });
     tools.addEventListener('change', event => {
         const target = event.target.closest('select[data-writer-action]');
@@ -123,8 +114,9 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         const c = writer.controls, plan = c.tab === 'plan';
         el('writer-file-name').textContent = writer.fileName;
         el('writer-file-name').title = filePath;
-        selectTab(plan);
-        button('article').disabled = c.articleDisabled;
+        el('writer-plan-options').hidden = !plan;
+        el('writer-article-options').hidden = plan || !c.hasArticle;
+        button('prepare').hidden = !plan;
         for (const key of ['model', 'mode', 'style', 'version']) field(key, c[key]);
         el('side-mode-hint').textContent = c.modeHint;
         el('side-model-hint').textContent = c.modelHint;
@@ -133,7 +125,7 @@ export function bindWriterTools(vscode, onFileChange, onFold) {
         button('prepare').classList.toggle('secondary', c.hasPlan);
         button('prepare').textContent = c.prepareLabel;
         button('cancelWrite').hidden = !c.showCancelWrite;
-        button('generate').hidden = c.showCancelWrite || (!c.hasPlan && plan);
+        button('generate').hidden = c.showCancelWrite || (plan ? !c.hasPlan : !c.hasArticle);
         button('generate').textContent = c.generateLabel;
         button('generate').disabled = c.generateDisabled;
         button('restore').hidden = c.restoreHidden;

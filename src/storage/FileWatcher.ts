@@ -4,6 +4,7 @@ import * as path from 'path';
 import { randomUUID } from 'node:crypto';
 import { configManager } from '../config';
 import { storageManager } from './StorageManager';
+import { endsEditBatch } from './EditBatch';
 import { BackgroundRecorder } from './BackgroundRecorder';
 import { limitedSnapshotText } from './SnapshotLimit';
 import { Logger } from '../services/logger';
@@ -39,7 +40,7 @@ export class FileWatcher {
 
     private finishEdits(key: string, reason: SnapshotTrigger) {
         const write = this.pending.flush(key, reason);
-        this.editSessions.delete(key);
+        if (endsEditBatch(reason)) this.editSessions.delete(key);
         return write;
     }
 
@@ -118,7 +119,7 @@ export class FileWatcher {
 
     public async flush(reason: SnapshotTrigger = 'close') {
         const writes = this.pending.flushAll(reason);
-        this.editSessions.clear();
+        if (endsEditBatch(reason)) this.editSessions.clear();
         await writes;
         await storageManager.flush();
     }

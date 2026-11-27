@@ -2,7 +2,7 @@ import { describe as suite, test, type TestContext } from 'node:test';
 import type { FileHistory, SnapshotTrigger } from '../types';
 import * as assert from 'assert';
 import { nextEditBatch } from '../storage/EditBatch';
-import { computeDiff, getHash } from '../storage/utils';
+import { changedSpan, computeDiff, getHash } from '../storage/utils';
 
 suite('Storage Logic Suite', () => {
     test('computeDiff - small change in middle (long file)', () => {
@@ -132,10 +132,10 @@ test('bursts replace the durable tail, preserve deletion boundaries, and respect
     await save('result');
     await save('resultValue');
     assert.deepEqual(versions(await read()), ['', 'resultValue']);
-    await save('result'); // an ordinary deletion is independently recoverable
+    await save('result'); // correcting a recently typed name stays in the same stage
     await save('resultCode');
     await save('resultCodeHere');
-    assert.deepEqual(versions(await read()), ['', 'resultValue', 'result', 'resultCodeHere']);
+    assert.deepEqual(versions(await read()), ['', 'resultCodeHere']);
     const sealed: FileHistory = await manager.getFileHistory(doc.uri.fsPath);
     assert.equal(sealed.openEdit, undefined);
     await save('resultCodeHereNext');
@@ -143,9 +143,9 @@ test('bursts replace the durable tail, preserve deletion boundaries, and respect
     await save('resultCodeHereNextPart');
     await save('resultCodeHereNextPartExtra', 'save', 'second-host');
     const after = await read();
-    assert.deepEqual(versions(after).slice(0, 4), versions(sealed));
-    assert.deepEqual(after.snapshots[4].checkpoints, ['save', 'run']);
-    assert.deepEqual(versions(after).slice(4), ['resultCodeHereNext', 'resultCodeHereNextPart', 'resultCodeHereNextPartExtra']);
+    assert.deepEqual(versions(after).slice(0, sealed.snapshots.length), versions(sealed));
+    assert.deepEqual(after.snapshots[sealed.snapshots.length].checkpoints, ['save', 'run']);
+    assert.deepEqual(versions(after).slice(sealed.snapshots.length), ['resultCodeHereNext', 'resultCodeHereNextPart', 'resultCodeHereNextPartExtra']);
 });
 
 test('only a verified undo of a recent unsealed insertion cancels an intermediate version', async t => {
@@ -165,35 +165,54 @@ test('only a verified undo of a recent unsealed insertion cancels an intermediat
     assert.deepEqual(await versions(), ['', 'word', 'wordWrong', 'wor']);
 });
 
-test('only nearby, brief additions and recognized whitespace edits are combined', async () => {
+test('continuous editing groups small corrections by time, with boundaries for pauses, sections and destructive edits', () => {
     const h: FileHistory = { id: 'x', filePath: '/work/example', language: 'cpp', startedAt: 0, lastModified: 0, snapshots: [], requestLogs: [] };
-    const last = { hash: 'prior', timestamp: 10_000 };
+    const last = { hash: 'prior', timestamp: 235_000 };
     h.snapshots.push(last);
-    h.openEdit = { index: 0, hash: last.hash, session: 'a', since: 0, count: 2, start: 0, end: 20 };
-    const check = (before: string, after: string, time = 11_000) => nextEditBatch(h, last, before, after, computeDiff(before, after), 'a', 'save', time);
-    assert.equal(check('int  x;', 'int x;')?.count, 3);
-    assert.equal(check('int x;', 'intx;'), undefined);
-    assert.equal(check('if (!x)', 'if (x)'), undefined);
-    assert.equal(check('if (x)', 'if (!x)'), undefined);
-    assert.equal(check('int  x;', 'int x;', 30_000)?.count, 1);
-    assert.equal(check('int  x;', 'int x;', 9_000)?.count, 1);
-    h.openEdit.since = -40_000;
-    assert.equal(check('int  x;', 'int x;')?.count, 1);
-    h.openEdit.since = 0;
-    h.openEdit.hash = 'changed-by-another-writer';
-    assert.equal(check('int  x;', 'int x;')?.count, 1);
-    h.openEdit.hash = last.hash;
-    assert.equal(nextEditBatch(h, last, 'value', 'valueNext', computeDiff('value', 'valueNext'), 'a', 'autosave', 11_000), undefined);
-    h.openEdit.count = 8;
-    assert.equal(check('int  x;', 'int x;')?.count, 1);
-    h.openEdit.count = 2;
-    const apart = 'x'.repeat(120);
-    assert.equal(check(apart, apart + 'suffix')?.count, 1);
-    h.language = 'python';
-    assert.equal(check('if x:\n    f()', 'if x:\n  f()'), undefined);
-    assert.equal(check('print("a  b")', 'print("a b")'), undefined);
-    h.language = 'unknown';
-    assert.equal(check('a  b', 'a b'), undefined);
+    const prior = h.openEdit = { index: 0, hash: last.hash, session: 'a', since: 0, count: 90, start: 0, end: 10, initialLength: 10 };
+    const check = (before: string, after: string, time: number, trigger: SnapshotTrigger = 'save') =>
+        nextEditBatch(h, last, before, after, changedSpan(before, after), 'a', trigger, time);
+    for (const trigger of ['idle', 'deadline', 'switch', 'blur', 'autosave'] as const) {
+        assert.equal(check('answer++', 'answer+', 299_999, trigger)?.count, 91);
+    }
+    assert.equal(check('answer++', 'answer+', 300_000)?.count, 1);
+    assert.equal(check('answer', 'answer;', 240_000)?.count, 1);
+    assert.equal(check('answer', 'answer;', 234_999)?.count, 1); // clock moved back
+    assert.equal(check('answer', 'answer;', 240_000, 'run'), undefined);
+    last.timestamp = 0;
+    for (const gap of [119_999, 120_000, 120_001]) {
+        assert.equal(check('answer++', 'answer+', gap)?.count, gap < 120_000 ? 91 : 1);
+    }
+    const distant = 'first\n' + 'another line\n'.repeat(10);
+    assert.equal(check(distant, distant + 'end', 59_999)?.count, 91);
+    assert.equal(check(distant, distant + 'end', 60_000)?.count, 1);
+    // Edits at opposite ends of the same code span do not count as replacing its entire body.
+    assert.equal(check(distant, 'X' + distant.slice(1, -1) + 'Y', 5_000)?.count, 91);
+    assert.equal(check(distant, 'first\n', 5_000), undefined);
+    assert.equal(check('ready();\nreturn result;\n', 'ready();\n', 5_000), undefined);
+    assert.equal(check('ready();\nreturn result;', 'ready();\n', 5_000), undefined);
+    prior.initialLength = 250;
+    assert.equal(check('a'.repeat(91), 'a'.repeat(90), 5_000), undefined);
+    prior.hash = 'different writer';
+    assert.equal(check('result', 'resultValue', 5_000)?.count, 1);
+});
+
+test('repeated saves for twelve minutes produce four durable stages with reconstructable contents', async t => {
+    const { manager, uri, raw } = await storageFixture(t);
+    const file = '/work/cadence.cpp', document = { uri: uri(file), languageId: 'cpp' };
+    let text = '';
+    const captures = [];
+    for (let seconds = 0; seconds < 720; seconds += 5) {
+        text += seconds % 10 === 0 ? 'name' : '();\n';
+        captures.push(text);
+        await manager._saveSnapshot({ document, content: text, baseline: '', editSession: 'one', trigger: 'save', timestamp: seconds * 1000 });
+    }
+    const history = await raw(file);
+    assert.equal(history.snapshots.length, 4);
+    for (const [i, s] of history.snapshots.entries()) {
+        assert.equal(manager.reconstructFileContent(history, i), captures[s.timestamp / 5000]);
+    }
+    assert.equal(manager.reconstructFileContent(history, 3), text);
 });
 
 test('a second window reviewing the tail fences both saves and Undo, even when they race', async t => {

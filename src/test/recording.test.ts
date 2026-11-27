@@ -104,7 +104,7 @@ test('an execution marks only the matching saved source in its working directory
 });
 
 
-test('review and window changes end a burst even after an explicit save already drained pending text', async () => {
+test('review seals a stage, but briefly losing window focus preserves it after an explicit save', async () => {
     const f = setup();
     try {
         f.edit('a'); await f.save(1); f.edit('ab'); await f.save(1);
@@ -114,7 +114,7 @@ test('review and window changes end a burst even after an explicit save already 
         f.edit('abc', 2); await f.save(1);
         assert.equal(sessions[0], sessions[1]);
         assert.notEqual(sessions[1], sessions[2]);
-        assert.notEqual(sessions[2], sessions[3]);
+        assert.equal(sessions[2], sessions[3]);
         assert.deepEqual(undos, [false, false, true, false]);
     } finally { f.dispose(); }
 });

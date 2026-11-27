@@ -30,8 +30,8 @@ export interface FileHistory {
     lastModified: number;
     /** Code before the first recorded edit. Null refers to the first snapshot. */
     memoBaseline?: string | null;
-    /** Last unreviewed typing burst. Offsets refer to the current tail's content. */
-    openEdit?: { index: number; hash: string; session: string; since: number; count: number; start: number; end: number; beforeInsertHash?: string };
+    /** Last unreviewed editing stage. Offsets refer to the current tail's content. */
+    openEdit?: { index: number; hash: string; session: string; since: number; initialLength?: number; count: number; start: number; end: number; beforeInsertHash?: string };
     snapshots: Snapshot[];
     requestLogs: RequestLog[];
 }

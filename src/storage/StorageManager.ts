@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { FileHistory, Snapshot, SnapshotTrigger, RequestLog, SessionIndexItem, SnapshotDiff } from '../types';
-import { getHash, generateUUID, computeDiff } from './utils';
+import { getHash, generateUUID, changedSpan, compactDiff, computeDiff } from './utils';
 import { Logger } from '../services/logger';
 import { atomicWrite, observeFile, withFileLock } from './SharedFiles';
 import { nextEditBatch, endsEditBatch, sameBurst } from './EditBatch';
@@ -252,8 +252,8 @@ export class StorageManager {
             }
 
             const before = last ? this._getLastSnapshotContent(history) : baseline ?? null;
-            const delta = before !== null ? computeDiff(before, content) : null;
-            const batch = nextEditBatch(history, last, before, content, delta, capture.editSession, trigger, timestamp);
+            const edit = before !== null ? changedSpan(before, content) : null;
+            const batch = capture.undo ? undefined : nextEditBatch(history, last, before, content, edit, capture.editSession, trigger, timestamp);
             // Ctrl+Z can discard the exact unreviewed addition. The saved hash verifies
             // the editor's Undo without retaining a copy of the intermediate text.
             const undidInsertion = capture.undo && !endsEditBatch(trigger) && history.openEdit?.beforeInsertHash === contentHash
@@ -267,7 +267,7 @@ export class StorageManager {
                 if (checkpoint && !parent.checkpoints?.includes(checkpoint)) (parent.checkpoints ??= []).push(checkpoint);
                 delete history.openEdit;
             } else {
-                let patch = delta;
+                let patch = edit && compactDiff(edit);
                 if (index % 128 === 0) patch = null;
                 else if (amend) {
                     const base = this.reconstructFileContent(history, index - 1);

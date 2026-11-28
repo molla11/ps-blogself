@@ -24,7 +24,7 @@ test('backend usage fits the compact sidebar, exposes details, and opens the ser
     await expect(button.locator('#usage-reset')).toHaveCSS('font-size', '11px');
     await expect(button.locator('#usage-reset')).toHaveCSS('color', 'rgb(157, 157, 157)');
     await expect(button.locator('#usage-paid')).toHaveCSS('font-size', '12px');
-    expect(await button.innerText()).toBe('무료 크레딧: 0 / 3,000\n27분 뒤 / 12:17 PM 초기화\n유료 크레딧: 119,807');
+    expect(await button.innerText()).toBe('남은 무료 크레딧: 3,000 / 3,000\n27분 뒤 / 12:17 PM 초기화\n유료 크레딧: 119,807');
     await expect(button.locator('.codicon-chevron-right')).toHaveJSProperty('hidden', false);
     await expect(button).toHaveAccessibleDescription('사용량 상세 보기');
     await expect(button).toHaveAttribute('title', usageView(account).detail);
@@ -33,7 +33,7 @@ test('backend usage fits the compact sidebar, exposes details, and opens the ser
         await page.setViewportSize({width, height: 650});
         if (width === 220) {
             await state(page, usageView({...account, hourlyUsedCredits: 2999, freeHourlyUsedCredits: 2999, freeRemainingCredits: 1}));
-            await expect(button).toContainText('2,999 / 3,000');
+            await expect(button).toContainText('1 / 3,000');
         }
         const balanceBox = (await button.boundingBox())!, writeBox = (await write.boundingBox())!;
         const labelBox = (await button.locator('#usage-label').boundingBox())!;
@@ -69,12 +69,12 @@ test('backend usage fits the compact sidebar, exposes details, and opens the ser
     await expect(button.locator('#usage-reset')).toHaveText('26분 뒤 / 12:17 PM 초기화');
     await page.clock.fastForward('26:00');
     await expect(button.locator('#usage-reset')).toHaveText('사용량 갱신 중…');
-    await expect(button).toContainText('2,999 / 3,000');
+    await expect(button).toContainText('1 / 3,000');
     await state(page, usageView(account));
     expect(await page.evaluate(() => (window as any).__messages.filter((m: any) => m.type === 'refreshUsage'))).toHaveLength(1);
     await state(page, usageView({...account, resetsAt: '2026-11-29T13:17:00Z'}));
     await expect(button.locator('#usage-reset')).toHaveText('60분 뒤 / 1:17 PM 초기화');
-    await expect(button).toContainText('0 / 3,000');
+    await expect(button).toContainText('3,000 / 3,000');
     await button.press('Enter');
     expect(await page.evaluate(() => (window as any).__messages.at(-1))).toEqual({type: 'showUsage'});
 });

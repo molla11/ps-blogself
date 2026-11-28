@@ -38,7 +38,7 @@ async function withFetch(action: () => Promise<void>) {
 
 test('usage uses backend amounts, limits and window without deriving a remaining balance or daily quota', () => {
     const view = usageView(accountUsage({...sample, windowSeconds: 1800, freeRemainingCredits: 1700}));
-    assert.equal(view.label, '무료 크레딧: 2,469 / 5,000');
+    assert.equal(view.label, '남은 무료 크레딧: 1,700 / 5,000');
     assert.deepEqual(view.detail.split('\n'), [
         '남은 크레딧: 무료 1,700 · 유료 24,000',
         '무료 크레딧은 사용한 만큼이 30분 뒤 채워집니다.',
@@ -51,7 +51,7 @@ test('usage uses backend amounts, limits and window without deriving a remaining
     const credit = usageView(accountUsage({...sample, creditBalance: -500, canStart: false, nextFunding: null}));
     assert.match(credit.paidLabel!, /유료 크레딧: -500$/); assert.match(credit.detail, /새 요청을 시작할 수 없어요/);
     const limited = usageView({...sample, freeHourlyUsedCredits: 12400, freeRemainingCredits: 0, retryAt: '2026-10-31T12:34:56Z'});
-    assert.match(limited.label, /12,400 \/ 5,000/);
+    assert.equal(limited.label, '남은 무료 크레딧: 0 / 5,000');
     assert.match(limited.detail, /12,400 \/ 5,000/); assert.match(limited.detail, /다시 요청 가능 ·/);
     assert.doesNotMatch(view.label + view.detail, /USD|\$|달러|비용|환산/);
     assert.match(usageView({...sample, creditBalance: 0.025}).paidLabel!, /유료 크레딧: 0$/);
@@ -88,7 +88,7 @@ test('simultaneous usage refreshes share one authenticated request and round dis
         return response();
     };
     await Promise.all([connection.refreshUsage(), connection.refreshUsage(), connection.refreshUsage()]);
-    assert.equal(calls, 1); assert.equal((await connection.usage())?.label, '무료 크레딧: 2,469 / 5,000');
+    assert.equal(calls, 1); assert.equal((await connection.usage())?.label, '남은 무료 크레딧: 2,530 / 5,000');
 }));
 
 test('a usage failure is unavailable, never a fabricated zero balance; retry recovers', () => withFetch(async () => {

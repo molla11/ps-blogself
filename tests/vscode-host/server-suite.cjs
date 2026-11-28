@@ -387,7 +387,7 @@ exports.run = async () => {
         const label = await usageSidebar.frame.locator('#usage-btn').innerText();
         const credits = value => new Intl.NumberFormat('ko-KR', {maximumFractionDigits: 0}).format(Math.floor(value));
         const lines = label.split('\n');
-        assert.equal(lines[0], `무료 크레딧: ${credits(usage.freeHourlyUsedCredits)} / ${credits(usage.freeHourlyLimitCredits)}`);
+        assert.equal(lines[0], `남은 무료 크레딧: ${credits(usage.freeRemainingCredits)} / ${credits(usage.freeHourlyLimitCredits)}`);
         assert.equal(lines.at(-1), `유료 크레딧: ${credits(usage.creditBalance)}`);
         assert.equal(lines.length, usage.resetsAt ? 3 : 2);
         if (usage.resetsAt) assert.match(lines[1], /^\d+분 뒤 \/ \d{1,2}:\d{2} [AP]M 초기화$/);

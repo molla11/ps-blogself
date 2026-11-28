@@ -12,7 +12,7 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode, gho
         plan: 'plan-tab', article: 'article-tab', generate: 'generate-btn', cancelWrite: 'cancel-write-btn', restore: 'restore-version-btn',
         viewSyncFailures: 'view-sync-failures', older: 'version-older-btn', newer: 'version-newer-btn',
     };
-    const noticeIds = ['ownership-box', 'recovery-box', 'progress-box', 'error-box', 'candidate-box'];
+    const noticeIds = ['ownership-box', 'recovery-box', 'progress-box', 'candidate-box'];
     const forwarded = new Map([...noticeIds.map(el), el('export-menu')]
         .flatMap(group => [...group.querySelectorAll('button')].map(button => [button.id, button])));
     function buttons(group) {
@@ -63,13 +63,13 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode, gho
                 generateDisabled: el('generate-btn').disabled,
                 showCancelWrite: !el('cancel-write-btn').hidden,
                 hasPlan: !el('plan-content').hidden,
-                prepareLabel: currentModel().pendingKind === 'prepare_blog' ? '메모 생성 중…' : prepare.textContent.trim(),
+                prepareLabel: currentModel().pendingKind === 'prepare_blog' && !currentModel().error ? '메모 생성 중…' : prepare.textContent.trim(),
                 prepareDisabled: prepare.disabled || prepare.hidden || (el('preparing').hidden && el('plan-content').hidden),
                 model: { value: options.find(option => option.getAttribute('aria-selected') === 'true')?.value,
                     options: options.map(option => [option.value, option.textContent]), disabled: el('writing-model').disabled },
                 modelHint: [el('writing-model-help').hidden ? '' : el('writing-model-help').textContent,
                     el('writing-model-hint').textContent].filter(Boolean).join(' '),
-                mode: selectState('writing-mode'), style: selectState('writing-style'), modeHint: el('writing-mode-help').textContent,
+                mode: selectState('writing-mode'), style: selectState('writing-style'),
                 version: selectState('version-select'), restoreHidden: el('restore-version-btn').hidden,
                 restoreDisabled: el('restore-version-btn').disabled, versionsHidden: el('versions-box').hidden,
                 olderDisabled: el('version-older-btn').disabled, newerDisabled: el('version-newer-btn').disabled,

@@ -49,12 +49,11 @@ test('mode and style survive webview recovery and respect the editing lease', as
 
 test('three modes travel with prepare and generate without triggering generation on selection', async ({ page }) => {
     await openWebview(page); await model(page);
-    await expect(page.getByLabel('글 구성', { exact: true })).toHaveValue('evolution');
+    await expect(page.getByLabel('구성', { exact: true })).toHaveValue('evolution');
     await expect(page.locator('#writing-mode option')).toHaveCount(3);
     await page.locator('#writing-mode').selectOption('solution');
-    await expect(page.locator('#writing-mode-help')).toContainText('현재 코드');
+    await expect(page.locator('#writing-mode-help')).toHaveCount(0);
     await page.locator('#writing-mode').selectOption('algorithm');
-    await expect(page.locator('#writing-mode-help')).toContainText('원리부터');
     await model(page, { pending: true, running: true, progress: 30 });
     await expect(page.locator('#writing-mode')).toHaveValue('algorithm');
     await model(page);

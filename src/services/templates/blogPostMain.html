@@ -53,14 +53,13 @@
                         <span id="writing-model-hint" role="status"></span>
                     </div>
                     <div class="plan-options" id="plan-options">
-                        <label class="option-field" for="writing-mode"><span id="writing-mode-label">글 구성</span>
-                            <select id="writing-mode" aria-labelledby="writing-mode-label" aria-describedby="writing-mode-help">
+                        <label class="option-field" for="writing-mode"><span id="writing-mode-label">구성</span>
+                            <select id="writing-mode" aria-labelledby="writing-mode-label">
                                 <option value="evolution">수정 과정 중심 (기본)</option>
                                 <option value="solution">풀이 해설 중심</option>
                                 <option value="algorithm">알고리즘 설명 중심</option>
                             </select>
                         </label>
-                        <p id="writing-mode-help" class="muted">이전 코드와 수정 이유, 바뀐 결과를 따라가며 씁니다.</p>
                         <label class="option-field" for="writing-style">문체
                             <select id="writing-style">
                                 <option value="plain">했다/이다체 (기본)</option>
@@ -86,16 +85,6 @@
             <div class="notice" id="progress-box" role="status">
                 <span id="status-text">기록을 불러오고 있어요…</span
                 ><button class="quiet" id="cancel-btn" hidden>취소</button>
-            </div>
-            <div class="notice error" id="error-box" role="alert" hidden>
-                <span id="error-text"></span>
-                <div class="actions">
-                    <button id="retry-btn">다시 시도</button
-                    ><button class="secondary" id="recharge-credits-btn">크레딧 충전</button>
-                    <button class="quiet error-close" id="discard-pending-btn" type="button" aria-label="오류 닫기" title="닫기" hidden>
-                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-                    </button>
-                </div>
             </div>
             <div class="notice" id="candidate-box" hidden>
                 <div class="actions">

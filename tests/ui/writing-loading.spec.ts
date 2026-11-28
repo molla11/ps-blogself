@@ -49,7 +49,7 @@ test('preparation, errors, retry and completion update the small status indicato
     await expect(page.locator('.skeleton')).toHaveCount(0);
     await update(page, { ...preparing, running: false, error: '연결에 실패했습니다.' });
     await expect(page.locator('#generation-loading')).toBeHidden();
-    await expect(page.locator('#error-box')).toBeVisible();
+    await expect(page.locator('#status-text')).toHaveText('메모 생성 보류');
     await update(page, preparing);
     await expect(page.locator('#generation-loading')).toBeVisible();
     await update(page, { pending: false, running: false });
@@ -75,34 +75,31 @@ test('loading fits a narrow editor, respects reduced motion and keeps explanatio
     await expect(page.locator('#generation-loading')).toHaveAttribute('role', 'status');
 });
 
-test('model errors offer retry, credits and dismissal without losing the draft', async ({ page }) => {
-    await page.setViewportSize({ width: 340, height: 650 });
+test('native retry applies to the current failed draft and keeps unsaved edits', async ({ page }) => {
     await openWebview(page);
-    await update(page, { running: false, error: '선택한 모델은 유료 크레딧으로만 사용할 수 있습니다.' });
-    const actions = page.locator('#error-box .actions');
-    expect(await actions.getByRole('button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label') || button.textContent?.trim()))).toEqual(['다시 시도', '크레딧 충전', '오류 닫기']);
-    for (const button of await actions.getByRole('button').all()) await expect(button).toBeVisible();
-    await expect(page.getByRole('button', { name: '오류 닫기', exact: true })).toBeVisible();
-    await expect(page.locator('#error-box')).not.toContainText('새 요청 준비');
-    await expect(page.locator('#writing-model')).toBeDisabled();
+    const failure = { running: false, error: '입력 보안 검사를 완료하지 못했습니다.', errorId: 'error-a' };
+    await update(page, failure);
+    await expect(page.getByText(failure.error)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '크레딧 충전' })).toHaveCount(0);
     await page.locator('#summary').fill('유지할 풀이 설명');
-    await page.getByRole('button', { name: '다시 시도', exact: true }).click();
-    expect(await page.evaluate(() => (window as any).__messages.at(-1))).toMatchObject({ type: 'retry', fields: { plan: { summary: '유지할 풀이 설명' } } });
-    await page.getByRole('button', { name: '크레딧 충전', exact: true }).click();
-    expect(await page.evaluate(() => (window as any).__messages.at(-1).type)).toBe('rechargeCredits');
-    await page.getByRole('button', { name: '오류 닫기', exact: true }).click();
+    const retry = async (patch: Record<string, unknown> = {}) => {
+        await page.evaluate(data => window.dispatchEvent(new MessageEvent('message', { data })), {
+            type: 'retryWriting', action: 'retry', errorId: 'error-a', editToken: 'window-a', pendingId: 'write-1', ...patch,
+        });
+    };
+    const retries = () => page.evaluate(() => (window as any).__messages.filter((m: any) => m.type === 'retry'));
+    await retry({ errorId: 'old-error' });
+    await retry({ editToken: 'other-window' });
+    await retry({ pendingId: 'old-job' });
+    expect(await retries()).toHaveLength(0);
+    await retry();
+    expect(await retries()).toMatchObject([{ errorId: 'error-a', fields: { plan: { summary: '유지할 풀이 설명' } } }]);
+    await page.locator('#cancel-btn').click();
     expect(await page.evaluate(() => (window as any).__messages.at(-1).type)).toBe('discardPending');
-    await update(page, { pending: false, running: false });
-    await expect(page.locator('#error-box')).toBeHidden();
-    await expect(page.locator('#writing-model')).toBeEnabled();
-    await expect(page.locator('#summary')).toHaveValue('유지할 풀이 설명');
-    expect(await page.evaluate(() => (window as any).__messages.filter((m: any) => ['prepare', 'generate'].includes(m.type)))).toHaveLength(0);
-    await update(page, { pending: false, running: false, error: '요청을 시작할 수 없습니다.' });
-    await expect(page.getByRole('button', { name: '오류 닫기', exact: true })).toBeVisible();
-    await page.screenshot({ path: 'test-results/writing-error-actions.png', fullPage: true });
-    await update(page, { running: false, editable: false, error: '모델 응답을 처리하지 못했습니다.' });
-    await expect(page.locator('#retry-btn')).toBeDisabled();
-    await expect(page.locator('#discard-pending-btn')).toBeDisabled();
-    await expect(page.locator('#recharge-credits-btn')).toBeEnabled();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await update(page, { ...failure, editable: false });
+    await retry();
+    await expect(page.locator('#generate-btn')).toBeDisabled();
+    await update(page, { ...failure, backendEnabled: false });
+    await retry();
+    expect(await retries()).toHaveLength(1);
 });

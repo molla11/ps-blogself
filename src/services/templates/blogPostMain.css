@@ -73,8 +73,6 @@ body:has(#generation-loading:not([hidden])) #author-notices { bottom: 48px; }
 #notice-panel :not(pre) > code { padding: 1px 3px; border-radius: 3px; background: var(--vscode-textCodeBlock-background, var(--desk)); }
 .notice > span { flex: 1; min-width: 180px; }
 #progress-box { color: var(--muted); }
-.error { padding: 10px 12px; border: 1px solid var(--vscode-inputValidation-errorBorder, #b14444); background: var(--vscode-inputValidation-errorBackground, #fff1ef); white-space: pre-wrap; border-radius: 4px; }
-.error-close { display: grid; place-items: center; align-self: stretch; flex: 0 0 32px; padding: 0; }
 #generation-loading {
     position: fixed;
     z-index: 20;
@@ -132,7 +130,6 @@ select { min-width: 0; color: var(--vscode-dropdown-foreground, #24342c); backgr
 .model-options [role=option]:hover, .model-options [role=option]:focus-visible { background: var(--vscode-list-hoverBackground, var(--hover)); filter: none; }
 .model-options [role=option]:focus-visible { outline: 1px solid var(--vscode-focusBorder, #527c67); outline-offset: -1px; }
 #writing-mode, #writing-style { min-height: 32px; max-width: 100%; }
-#writing-mode-help { grid-column: 1 / -1; flex-basis: 100%; order: 1; margin: 0; font-size: 12px; line-height: 1.6; text-align: right; }
 .plan-title-section, .step, #preparing { padding: 24px 28px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); }
 .plan-title-section { margin-top: 24px; }
 #plan-view :is(input:not([type=range]), textarea) { border: 0; border-radius: 0; padding: 4px 0; background: transparent; color: var(--ink); box-shadow: none; }

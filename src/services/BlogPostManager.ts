@@ -55,6 +55,7 @@ interface View {
     previousMemoHistory?: { history: FileHistory; fingerprint: string };
     memoRetryAt?: number;
     error: string;
+    errorId?: string;
     status: string;
     progress: number;
     ready: boolean;
@@ -471,6 +472,12 @@ export class BlogPostManager {
             }
         });
         panel.webview.onDidReceiveMessage((message) => {
+            if (message?.type === 'editorError') {
+                if (current.panel === panel && typeof message.message === 'string' && message.message) {
+                    void vscode.window.showErrorMessage(message.message.slice(0, 2000));
+                }
+                return;
+            }
             if (message?.type === 'openWriterSidebar') {
                 if (current.panel === panel && panel.active && !configManager.contest) {
                     current.sidebarDismissed = false;
@@ -493,11 +500,16 @@ export class BlogPostManager {
                     void panel.webview.postMessage({ type: 'ack', id: message?.id });
                 } catch (error) {
                     if (error instanceof DraftConflict) await this.refresh(current);
-                    current.error = error instanceof Error ? error.message : String(error);
+                    const text = error instanceof Error ? error.message : String(error);
+                    // An image failure rejects the editor's import promise, which reports it once.
+                    if (message?.type !== 'importImage') {
+                        const retry = ['prepare', 'generate', 'retry'].includes(message?.type) ? message.type : undefined;
+                        this.notifyError(current, text, retry);
+                    }
                     void panel.webview.postMessage({
                         type: 'saveError',
                         id: message?.id,
-                        message: current.error,
+                        message: text,
                     });
                 }
                 this.render(current);
@@ -512,11 +524,32 @@ export class BlogPostManager {
             .replace('{{styles}}', () => `<style nonce="${nonce}">${css}</style>`)
             .replace('{{script}}', () => `<script nonce="${nonce}" src="${panel.webview.asWebviewUri(vscode.Uri.joinPath(webviews, 'writer.js'))}"></script>`);
     }
+    private static notifyError(view: View, text: string, retry?: 'prepare' | 'generate' | 'retry') {
+        if (this.closing) return;
+        const panel = view.panel;
+        if (!retry) {
+            if (panel) void vscode.window.showErrorMessage(text);
+            else Logger.warn(text);
+            return;
+        }
+        view.error = text;
+        const errorId = view.errorId = randomUUID();
+        const editToken = view.draft.editor?.token;
+        const pendingId = view.draft.pending?.request.requestId;
+        if (!view.editable) return;
+        const canRetry = panel && this.writingAllowed && backendRequests.enabled;
+        void vscode.window.showErrorMessage(text, ...(canRetry ? ['다시 시도'] : [])).then(choice => {
+            if (choice !== '다시 시도' || this.closing || view.panel !== panel || view.errorId !== errorId || !view.error ||
+                view.task || !view.editable || !this.writingAllowed || !backendRequests.enabled ||
+                view.draft.editor?.token !== editToken || view.draft.pending?.request.requestId !== pendingId) return;
+            void panel?.webview.postMessage({ type: 'retryWriting', action: retry, errorId, editToken, pendingId });
+        });
+    }
     private static enqueue(view: View, action: () => Promise<void>) {
         const next = view.queue.then(action);
         view.queue = next.catch((error) => {
             if (error?.name === 'AbortError') return;
-            view.error = error instanceof Error ? error.message : String(error);
+            this.notifyError(view, error instanceof Error ? error.message : String(error));
             this.render(view);
         });
         return next;
@@ -591,6 +624,7 @@ export class BlogPostManager {
             progress: view.progress,
             status: view.status,
             error: view.error,
+            errorId: view.errorId,
             candidate: !!draft.candidate,
             planNotices: draft.planNotices,
             articleNotices: draft.articleNotices,
@@ -818,10 +852,12 @@ export class BlogPostManager {
             throw new Error('화면 요청을 확인할 수 없습니다.');
         }
         await this.refresh(view);
+        if (message.errorId && (!view.error || message.errorId !== view.errorId || view.task ||
+            message.pendingId !== view.draft.pending?.request.requestId)) return;
         if (!this.writingAllowed && !['ready', 'save', 'viewedWriting'].includes(message.type)) {
             throw new Error('대회 모드에서 글쓰기 화면 진입을 차단했습니다.');
         }
-        const reading = ['ready', 'takeover', 'viewedWriting', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'rechargeCredits', 'ghostConnect', 'ghostOpen', 'viewSyncFailures'].includes(message.type);
+        const reading = ['ready', 'takeover', 'viewedWriting', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'ghostConnect', 'ghostOpen', 'viewSyncFailures'].includes(message.type);
         if (!reading && (!view.editable || message.editToken !== view.draft.editor?.token)) throw new DraftConflict();
         if (message.fields && Array.isArray(message.dirtyKeys)) {
             const fields = Object.fromEntries(Object.entries(message.fields).filter(([key]) => message.dirtyKeys.includes(key)));
@@ -1042,9 +1078,6 @@ export class BlogPostManager {
                 this.uploadGhost(view, article, message.type === 'ghostPublish');
                 break;
             }
-            case 'rechargeCredits':
-                await this.connection.showCreditRecharge();
-                break;
             case 'connect':
                 await this.connect();
                 break;
@@ -1238,7 +1271,7 @@ export class BlogPostManager {
                         view.error = '';
                         view.status = '';
                     });
-                } else if (!signal.aborted) view.error = error instanceof Error ? error.message : String(error);
+                } else if (!signal.aborted) this.notifyError(view, error instanceof Error ? error.message : String(error), 'retry');
             } finally {
                 if (!this.closing) void this.connection.refreshUsage(true);
                 if (view.watcher === controller) {

@@ -76,7 +76,7 @@ export function bindWriterTools(vscode, onFileChange, onFold, onHome) {
                 notice.id = 'side-' + id;
                 notice.className = 'writer-notice';
                 const message = document.createElement('p');
-                message.setAttribute('role', id === 'error-box' ? 'alert' : 'status');
+                message.setAttribute('role', 'status');
                 notice.append(message, document.createElement('div'));
                 container.insertBefore(notice, container.children[index] || null);
             }
@@ -142,7 +142,6 @@ export function bindWriterTools(vscode, onFileChange, onFold, onHome) {
         el('writer-article-options').hidden = plan || !c.hasArticle;
         button('prepare').hidden = !plan;
         for (const key of ['model', 'mode', 'style', 'version']) field(key, c[key]);
-        el('side-mode-hint').textContent = c.modeHint;
         el('side-model-hint').textContent = c.modelHint;
         el('side-model-hint').hidden = !c.modelHint;
         button('prepare').disabled = c.prepareDisabled;

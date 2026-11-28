@@ -5,7 +5,6 @@ import { ConnectionEnvironment, resolveConnectionSettings, serviceUrl, loginUrl 
 import { AccountUsage, accountUsage, UsageView, usageView } from './Usage';
 import { NoticeFeed } from './NoticeFeed';
 import { LOGIN_BRIDGE_URL, startLoginBridge } from './LoginBridge';
-import { SUPPORT_EMAIL } from '../support';
 import { WritingModel } from './WritingModels';
 
 export interface Account {
@@ -100,17 +99,6 @@ export class ServiceConnection {
             await vscode.window.showInformationMessage('크레딧 사용량', { modal: true, detail: usage.detail }, { title: '닫기', isCloseAffordance: true });
         }
         else if (usage?.status === 'error') void vscode.window.showErrorMessage(usage.detail);
-    }
-    async showCreditRecharge() {
-        const account = await this.account();
-        const copy = '계정 이메일 복사';
-        const choice = await vscode.window.showInformationMessage('크레딧 충전은 관리자에게 요청해 주세요.', {
-            modal: true,
-            detail: account?.email
-                ? `문의: ${SUPPORT_EMAIL}\n충전할 계정 이메일을 함께 전달해 주세요.\n\n${account.email}`
-                : `문의: ${SUPPORT_EMAIL}\n충전할 계정의 로그인 이메일을 함께 전달해 주세요.`,
-        }, ...(account?.email ? [copy] : []));
-        if (choice === copy && account?.email) await vscode.env.clipboard.writeText(account.email);
     }
     private async store(base: string, value: Credentials) {
         await this.context.secrets.store(this.key(base), JSON.stringify(value)); this.changed.fire();

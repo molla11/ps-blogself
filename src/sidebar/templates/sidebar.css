@@ -310,11 +310,6 @@ button.action-btn {
     font-size: 0.8rem;
 }
 
-.icon {
-    font-size: 0.9rem;
-    flex-shrink: 0;
-}
-
 .hint {
     margin-top: 4px;
     margin-bottom: 8px;
@@ -344,7 +339,8 @@ button.action-btn {
     margin-bottom: 4px;
     padding: 0;
     display: flex;
-    justify-content: space-between;
+    justify-content: flex-end;
+    gap: 2px;
     align-items: center;
 }
 
@@ -359,20 +355,21 @@ button.action-btn {
     overflow-anchor: none;
 }
 
-.logs-title > span { opacity: 0.7; }
-.logs-search-toggle {
+.logs-title > span { margin-inline-end: auto; opacity: 0.7; }
+.logs-toolbar-button {
     flex: 0 0 auto;
-    width: 18px;
-    height: 18px;
+    width: 24px;
+    height: 24px;
     padding: 2px;
     justify-content: center;
     color: var(--vscode-foreground);
     background: transparent;
 }
-.logs-search-toggle .codicon { font-size: 12px; line-height: 1; }
-.logs-search-toggle:hover,
-.logs-search-toggle[aria-expanded="true"] { background: var(--vscode-toolbar-hoverBackground); }
-.logs-search-toggle:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+.logs-toolbar-button .codicon { font-size: 14px; line-height: 1; }
+.logs-toolbar-button:hover,
+.logs-toolbar-button[aria-expanded="true"] { background: var(--vscode-toolbar-hoverBackground); }
+.logs-toolbar-button:focus-visible,
+#usage-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 .logs-search { flex-shrink: 0; margin: 0 0 4px; }
 .logs-search input {
     display: block;
@@ -586,12 +583,16 @@ label.config-box .switch { flex-shrink: 0; }
     width: auto;
     flex: none;
     align-self: flex-start;
-    min-height: 26px;
-    gap: 5px;
-    padding: 4px 6px;
+    min-height: 24px;
+    gap: 4px;
+    padding: 0 4px;
     background: none;
     border: none;
-    color: var(--vscode-foreground);
+    color: var(--vscode-descriptionForeground);
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 14px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -599,6 +600,7 @@ label.config-box .switch { flex-shrink: 0; }
     border-radius: 3px;
 }
 
+.back-btn .codicon { font-size: 12px; line-height: 14px; color: inherit; }
 .back-btn:hover {
     background: var(--vscode-toolbar-hoverBackground);
 }
@@ -619,18 +621,16 @@ label.config-box .switch { flex-shrink: 0; }
 }
 .bottom-actions {
     display: flex;
-    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 6px;
     flex-shrink: 0;
 }
 .bottom-actions .action-btn {
-    flex: 2;
+    flex: 1 0 auto;
+    width: auto;
     justify-content: center;
     min-width: 0;
-}
-.bottom-actions #manage-logs-btn { flex: 3; }
-.bottom-actions .icon {
-    display: none;
 }
 .log-item:focus-visible,
 .lang-chip:focus-visible {
@@ -645,16 +645,34 @@ label.config-box .switch { flex-shrink: 0; }
 }
 #lang-status-text { font-size: 12px; }
 #usage-btn {
-    flex-shrink: 0;
-    display: block;
-    width: 100%;
+    flex: 3 1 auto;
+    justify-content: space-between;
+    gap: 8px;
+    width: auto;
     min-width: 0;
-    font-size: 11px;
+    height: auto;
+    min-height: 28px;
+    padding: 3px 0;
+    background: transparent;
+    color: var(--vscode-foreground);
+    font: inherit;
+    font-size: 12px;
     font-weight: 400;
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
     text-align: left;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+}
+#usage-label { min-width: 0; }
+#usage-label > span { display: block; }
+#usage-free { font-weight: 600; }
+#usage-reset { font-size: 11px; color: var(--vscode-descriptionForeground, var(--vscode-foreground)); }
+#usage-btn .codicon { flex: 0 0 1em; font-size: 14px; color: var(--vscode-icon-foreground, currentColor); }
+#usage-btn:hover:enabled { background: var(--vscode-toolbar-hoverBackground); }
+#usage-btn:disabled { cursor: default; }
+@media (max-width: 245px) {
+    #usage-btn { flex-basis: 100%; }
 }
 .account-action-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -669,7 +687,6 @@ label.config-box .switch { flex-shrink: 0; }
 #main-view.context-library #file-library { box-sizing: border-box; flex: 0 1 calc(100vh / 3 - 32px); border-top: 0; }
 #main-view.context-library:not(.library-open) #file-library { display: none; }
 #main-view.context-library .logs-title > span { display: none; }
-#main-view.context-library .logs-title { justify-content: flex-end; }
 #library-toggle {
     flex: none; margin-top: 8px; padding: 6px 2px; height: 32px;
     background: transparent; color: var(--vscode-foreground);
@@ -679,10 +696,8 @@ label.config-box .switch { flex-shrink: 0; }
 #library-toggle .codicon { transition: transform 220ms ease; }
 #library-toggle[aria-expanded="true"] .codicon { transform: rotate(180deg); }
 .writer-heading { display: flex; flex-wrap: wrap; gap: 3px 8px; align-items: baseline; justify-content: space-between; margin: 5px 0 12px; }
-.writer-file { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 1rem; margin: 0; }
 #side-save-status { font-size: 11px; color: var(--vscode-descriptionForeground); }
-.writer-file .codicon { color: var(--vscode-descriptionForeground); flex: none; }
-#writer-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#writer-file-name { margin: 0; min-width: 0; font-size: 1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .writer-options { margin: 16px 0 12px; }
 .writer-field { display: grid; grid-template-columns: minmax(3.3em,auto) minmax(0,1fr); align-items: center; column-gap: 8px; font-size: 12px; margin: 7px 0; }
 .writer-field select {
@@ -724,7 +739,6 @@ label.config-box .switch { flex-shrink: 0; }
 .writer-notice { margin-block: 8px; padding-inline-start: 8px; border-inline-start: 2px solid var(--vscode-focusBorder); }
 .writer-notice p { font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
 .writer-notice button { margin-top: 4px; height: auto; min-height: 26px; }
-#side-error-box { border-color: var(--vscode-errorForeground); }
 #writer-tools :is(button,select,summary):focus-visible, #library-toggle:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 @media (prefers-reduced-motion: reduce) {
     #library-toggle .codicon { transition: none; }

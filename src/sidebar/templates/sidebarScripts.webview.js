@@ -23,18 +23,45 @@ function renderNotices(notices = []) {
     }
 }
 
+let usageClock, requestedReset;
+const resetTimeFormat = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+function renderUsageReset(resetsAt) {
+    clearTimeout(usageClock);
+    const label = document.getElementById('usage-reset');
+    label.hidden = !resetsAt;
+    if (resetsAt) {
+        const reset = Date.parse(resetsAt);
+        const remaining = reset - Date.now();
+        if (remaining > 0) {
+            const minutes = Math.ceil(remaining / 60000);
+            label.textContent = `${minutes}분 뒤 / ${resetTimeFormat.format(reset)} 초기화`;
+            usageClock = setTimeout(() => renderUsageReset(resetsAt), remaining - (minutes - 1) * 60000);
+        } else {
+            label.textContent = '사용량 갱신 중…';
+            if (requestedReset !== reset) {
+                requestedReset = reset;
+                vscode.postMessage({ type: 'refreshUsage' });
+            }
+        }
+    } else requestedReset = undefined;
+}
 function renderServiceState(message) {
     document.querySelector('#connect-server-btn .account-action-label').textContent = message.accountLabel || '로그인';
     renderNotices(message.notices);
     const usage = document.getElementById('usage-btn');
     usage.hidden = !message.usage;
-    usage.textContent = message.usage?.label || '';
+    document.getElementById('usage-free').textContent = message.usage?.label ?? '';
+    const paid = document.getElementById('usage-paid');
+    paid.textContent = message.usage?.paidLabel ?? '';
+    paid.hidden = !paid.textContent;
+    renderUsageReset(message.usage?.resetsAt);
+    usage.querySelector('.codicon').hidden = message.usage?.status !== 'ready';
     usage.title = message.usage?.detail || '서버 사용량 확인';
     usage.disabled = message.usage?.status === 'loading';
 }
 
 function renderStorageSize(size) {
-    document.querySelector('#manage-logs-btn span:last-child').textContent = `전체 기록 (${size})`;
+    document.getElementById('manage-logs-btn').title = `전체 기록 (${size})`;
 }
 
 const rootDisplay = document.getElementById('root-folder-display');
@@ -544,8 +571,10 @@ const showWriter = bindWriterTools(vscode, filePath => {
     showView(mainView);
     selectPath(filePath);
 }, closeMenus, () => {
+    const fromFullLogs = !fullLogsView.classList.contains('hidden');
     showView(mainView);
-    (logsContainer.querySelector('.log-item.selected') || logsSearchToggle).focus({ preventScroll: true });
+    const target = fromFullLogs ? document.getElementById('manage-logs-btn') : logsContainer.querySelector('.log-item.selected') || logsSearchToggle;
+    target.focus({ preventScroll: true });
 });
 
 function showView(view) {
@@ -653,6 +682,7 @@ window.addEventListener('message', (event) => {
             if (document.body.classList.contains('contest-mode')) break;
             showView(fullLogsView);
             renderLogs(message.logs, fullLogsContainer);
+            document.getElementById('full-logs-back-btn').focus();
             break;
     }
 });

@@ -154,6 +154,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         await BlogPostManager.showUsage();
                         break;
                     }
+                    case 'refreshUsage': {
+                        await BlogPostManager.refreshUsage();
+                        break;
+                    }
                     case 'dismissNotice': {
                         if (typeof data.id === 'string' && /^[a-f0-9-]{36}$/i.test(data.id)) await BlogPostManager.dismissNotice(data.id);
                         break;

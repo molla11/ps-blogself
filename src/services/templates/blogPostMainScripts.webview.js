@@ -826,7 +826,7 @@ el('export-menu').addEventListener('toggle', event => {
 });
 document.querySelectorAll('.action-menu').forEach(menu => menu.addEventListener('keydown', event => {
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-    const buttons = [...menu.querySelectorAll('button:not(:disabled)')].filter(button => !button.hidden);
+    const buttons = [...menu.querySelectorAll('button:not(:disabled), a[href]')].filter(button => !button.hidden);
     if (!buttons.length) return;
     event.preventDefault();
     const current = buttons.indexOf(document.activeElement);
@@ -834,7 +834,7 @@ document.querySelectorAll('.action-menu').forEach(menu => menu.addEventListener(
         : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
     buttons[index].focus();
 }));
-document.querySelectorAll('.article-preview').forEach(preview => preview.addEventListener('click', (event) => {
+document.querySelectorAll('.article-preview, .export-hint').forEach(container => container.addEventListener('click', (event) => {
     const link = event.target.closest('a');
     if (link) {
         event.preventDefault();

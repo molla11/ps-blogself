@@ -239,7 +239,7 @@ body:has(#article-view:not([hidden]) #article-empty:not([hidden])) #generate-btn
 .prose-editor :is(ul,ol), .article-preview :is(ul,ol) { padding-left: 24px; }
 .prose-editor li p { margin-bottom: .3em; }
 .prose-editor img, .article-preview img { max-width: 100%; height: auto; }
-.prose-editor a, .article-preview a { color: var(--vscode-textLink-foreground, #35644e); text-decoration: underline; }
+.prose-editor a, .article-preview a, .export-hint a { color: var(--vscode-textLink-foreground, #35644e); text-decoration: underline; }
 .prose-editor table, .article-preview table { border-collapse: collapse; table-layout: fixed; width: 100%; }
 .prose-editor :is(td,th), .article-preview :is(td,th) { padding: 7px 10px; border: 1px solid var(--line); min-width: 40px; vertical-align: top; }
 .prose-editor th, .article-preview th { background: var(--desk); }

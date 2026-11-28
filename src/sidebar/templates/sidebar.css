@@ -690,6 +690,7 @@ label.config-box .switch { flex-shrink: 0; }
     border: 1px solid var(--vscode-dropdown-border, var(--vscode-widget-border, transparent));
     border-radius: 3px; padding: 0 4px; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background);
 }
+.writer-hint a { color: var(--vscode-textLink-foreground, #3794ff); }
 .writer-hint { font-size: 11px; line-height: 1.5; color: var(--vscode-descriptionForeground); margin: 0 0 10px; }
 #writer-tools button:disabled, #writer-tools select:disabled { opacity: .55; cursor: default; }
 .writer-actions { display: grid; gap: 6px; padding: 10px 0; border-top: 1px solid var(--vscode-widget-border); }

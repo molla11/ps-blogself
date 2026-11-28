@@ -61,7 +61,7 @@ test('usage uses backend amounts, limits and window without deriving a remaining
     const reset = '2026-11-29T12:00:00.000Z';
     const hourly = usageView(accountUsage({...sample, resetsAt: reset}));
     assert.equal(hourly.resetsAt, reset);
-    assert.match(hourly.detail, /매시 정각/);
+    assert.match(hourly.detail, /계정 접속 시각을 기준으로 1시간마다/);
     assert.throws(() => accountUsage({...sample, resetsAt: 'unknown'}));
     assert.throws(() => accountUsage({...sample, unit: 'USD'}));
     assert.throws(() => accountUsage({requests: 0, dailyLimit: 30}));

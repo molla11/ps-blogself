@@ -44,8 +44,14 @@ test('backend usage fits the compact sidebar, exposes details, and opens the ser
         expect(labelBox.x).toBeCloseTo(balanceBox.x, 1);
         expect(chevron.right).toBeCloseTo(balanceBox.x + balanceBox.width, 1);
         expect(chevron.left - (labelBox.x + labelBox.width)).toBeGreaterThanOrEqual(8);
-        if (width === 300) expect(balanceBox.x + balanceBox.width).toBeLessThanOrEqual(writeBox.x);
-        else expect(balanceBox.y + balanceBox.height).toBeLessThanOrEqual(writeBox.y);
+        const email = (await page.locator('#connect-server-btn .account-action-label').boundingBox())!;
+        const emailButton = (await page.locator('#connect-server-btn').boundingBox())!;
+        const divider = (await page.locator('.account-divider').boundingBox())!;
+        expect(labelBox.x).toBeCloseTo(email.x, 1);
+        expect(chevron.right).toBeCloseTo(emailButton.x + emailButton.width, 1);
+        expect(divider.x).toBeCloseTo(0, 1);
+        expect(divider.width).toBeCloseTo(width, 1);
+        expect(balanceBox.y + balanceBox.height).toBeLessThanOrEqual(writeBox.y);
         const lines = button.locator('#usage-label > span:visible');
         await expect(lines).toHaveCount(3);
         for (const line of await lines.all()) {

@@ -45,7 +45,7 @@ export function usageView(usage: AccountUsage): UsageView {
     const label = `무료 크레딧: ${freeUsed} / ${freeLimit}`;
     const details = [
         `남은 크레딧: 무료 ${credits(usage.freeRemainingCredits)} · 유료 ${paid}`,
-        usage.resetsAt ? '무료 사용량은 매시 정각(UTC)에 초기화됩니다.' : `무료 크레딧은 사용한 만큼이 ${window} 뒤 채워집니다.`,
+        usage.resetsAt ? '무료 크레딧은 계정 접속 시각을 기준으로 1시간마다 초기화됩니다.' : `무료 크레딧은 사용한 만큼이 ${window} 뒤 채워집니다.`,
         usage.canStart
             ? `현재 선택된 모델은 다음 요청에 ${usage.nextFunding === 'credit' ? '유료' : '무료'} 크레딧을 사용합니다.`
             : '지금은 새 요청을 시작할 수 없어요.',

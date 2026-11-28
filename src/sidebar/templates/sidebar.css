@@ -619,10 +619,17 @@ label.config-box .switch { flex-shrink: 0; }
     padding: 4px 8px;
     line-height: 16px;
 }
+#file-library { border-bottom: 0; margin-bottom: 0; }
+.account-divider {
+    margin: 0 calc(-1 * var(--container-padding));
+    border: 0;
+    border-top: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border, var(--vscode-widget-border, currentColor)));
+}
+#connect-server-btn { padding-inline: 0; }
 .bottom-actions {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
+    flex-direction: column;
+    align-items: stretch;
     gap: 6px;
     flex-shrink: 0;
 }
@@ -645,7 +652,6 @@ label.config-box .switch { flex-shrink: 0; }
 }
 #lang-status-text { font-size: 12px; }
 #usage-btn {
-    flex: 3 1 auto;
     justify-content: space-between;
     gap: 8px;
     width: auto;
@@ -671,9 +677,6 @@ label.config-box .switch { flex-shrink: 0; }
 #usage-btn .codicon { flex: 0 0 1em; font-size: 14px; color: var(--vscode-icon-foreground, currentColor); }
 #usage-btn:hover:enabled { background: var(--vscode-toolbar-hoverBackground); }
 #usage-btn:disabled { cursor: default; }
-@media (max-width: 245px) {
-    #usage-btn { flex-basis: 100%; }
-}
 .account-action-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* The file library yields space to the active document, keeping its scroll position. */

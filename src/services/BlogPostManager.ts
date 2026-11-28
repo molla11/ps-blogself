@@ -933,12 +933,7 @@ export class BlogPostManager {
                 else await this.start(view, view.draft.plan ? 'write_blog' : 'prepare_blog');
                 break;
             case 'cancel':
-                if (view.draft.pending) {
-                    view.draft.pending.cancelRequested = true;
-                    await this.store.save(view.draft);
-                    if (view.draft.pending.jobId && isServerTarget(view.draft.pending.target)) await this.jobs.cancel(view.draft.pending.jobId, view.draft.pending.target);
-                    this.run(view);
-                }
+                await this.cancelPending(view);
                 break;
             case 'discardPending':
                 if (view.task) throw new Error('작업을 취소한 뒤 다시 시도해 주세요.');
@@ -1161,6 +1156,14 @@ export class BlogPostManager {
         await this.store.save(draft);
         this.run(view);
     }
+    private static async cancelPending(view: View) {
+        const pending = view.draft.pending;
+        if (!pending) return;
+        pending.cancelRequested = true;
+        await this.store.save(view.draft);
+        if (pending.jobId && isServerTarget(pending.target)) await this.jobs.cancel(pending.jobId, pending.target);
+        this.run(view);
+    }
     private static run(view: View, retry = false) {
         if (!backendRequests.enabled || this.closing || view.task || !view.draft.pending) return;
         const pending = view.draft.pending;
@@ -1169,7 +1172,7 @@ export class BlogPostManager {
         view.partial = '';
         view.watcher = new AbortController();
         const controller = view.watcher, signal = controller.signal;
-        view.status = pending.append ? '최근 코드 변경을 메모에 반영하고 있어요…' : pending.request.kind === 'prepare_blog' ? '구간과 풀이 설명을 준비하고 있어요…' : '글을 작성하고 있어요…';
+        view.status = '';
         view.task = Promise.resolve().then(async () => {
             try {
                 if (pending.apiUrl || !isServerTarget(pending.target)) {
@@ -1213,7 +1216,23 @@ export class BlogPostManager {
                 if (retry && ['failed', 'cancelled'].includes(job.status) && !pending.cancelRequested) job = await this.jobs.retry(job.id, target);
                 if (pending.cancelRequested && ['queued', 'running', 'failed'].includes(job.status)) job = (await this.jobs.cancel(job.id, target))!;
                 update(job);
-                if (['queued', 'running'].includes(job.status)) job = await this.jobs.watch(job.id, target, update, signal);
+                if (['queued', 'running'].includes(job.status)) {
+                    const watch = () => this.jobs.watch(job.id, target, update, signal);
+                    if (pending.request.priority === 'prefetch' || !view.panel) job = await watch();
+                    else {
+                        const title = pending.request.kind === 'prepare_blog' ? '구간과 풀이 설명을 준비하고 있어요…' : '글을 작성하고 있어요…';
+                        job = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (_progress, token) => {
+                            const cancel = token.onCancellationRequested(() => {
+                                void this.enqueue(view, async () => {
+                                    if (!signal.aborted && view.watcher === controller && view.editable && view.draft.pending?.request.requestId === pending.request.requestId) {
+                                        await this.cancelPending(view);
+                                    }
+                                }).catch(() => {});
+                            });
+                            try { return await watch(); } finally { cancel.dispose(); }
+                        });
+                    }
+                }
                 if (job.status === 'completed') {
                     if (!job.result || (pending.request.kind === 'prepare_blog' ? !job.result.plan : typeof job.result.markdown !== 'string')) throw new Error('AI 응답에 글이 없습니다. 다시 시도해 주세요.');
                     await this.enqueue(view, async () => {

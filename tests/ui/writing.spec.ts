@@ -291,11 +291,10 @@ test('partial text stays out of saves and undo history across a failed rewrite a
     await expect(page.locator('#article-title')).toHaveValue('완성한 제목');
 });
 
-test('cancelled initial preparation can restart without closing the writer', async ({ page }) => {
+test('initial preparation can restart in the writer after cancellation from the notification', async ({ page }) => {
     await open(page);
-    await model(page, { plan: undefined, pending: true, running: true });
-    await page.locator('#cancel-btn').click();
-    expect((await messages(page)).at(-1).type).toBe('cancel');
+    await model(page, { plan: undefined, pending: true, running: true, pendingKind: 'prepare_blog' });
+    await expect(page.locator('#progress-box')).toBeHidden();
     await model(page, { plan: undefined, pending: false, running: false, status: '작업을 취소했습니다.' });
     await page.getByRole('button', { name: '메모 생성', exact: true }).click();
     expect((await messages(page)).at(-1).type).toBe('prepare');
@@ -720,7 +719,7 @@ test('existing notes stay editable and can be used for writing during automatic 
     await open(page);
     await model(page, { pending: true, running: true, pendingKind: 'prepare_blog', updatingMemos: true });
     await expect(page.locator('#memo-updating')).toBeVisible();
-    await expect(page.locator('#generation-loading')).toBeHidden();
+    await expect(page.locator('#progress-box')).toBeHidden();
     await page.locator('#summary').fill('직접 수정한 설명');
     await page.getByRole('button', { name: '글쓰기', exact: true }).click();
     const request = (await messages(page)).find((m: any) => m.type === 'generate');

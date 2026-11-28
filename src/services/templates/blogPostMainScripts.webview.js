@@ -364,13 +364,6 @@ function chooseVersion(id) {
     if (id) send('previewVersion', { versionId: id });
     document.querySelectorAll('textarea').forEach(height);
 }
-function renderLoading(kind) {
-    const busy = !model.updatingMemos && model.backendEnabled !== false && !!(model.pending || model.running) && !model.error;
-    el('generation-loading').hidden = !busy;
-    if (!busy) return false;
-    el('loading-title').textContent = kind === 'prepare_blog' ? '준비 중…' : '작성 중…';
-    return true;
-}
 function renderWritingMode() {
     updateSidebar();
     value('writing-mode', form.writingMode || 'evolution');
@@ -405,8 +398,7 @@ function openModelOptions() {
 }
 function render() {
     form = separateArticleTitle(form);
-    const kind = model.pendingKind || (form.plan ? 'write_blog' : 'prepare_blog');
-    const busy = renderLoading(kind);
+    const busy = !model.updatingMemos && model.backendEnabled !== false && !!(model.pending || model.running) && !model.error;
     const writing = model.pending && model.pendingKind === 'write_blog';
     const wasStreaming = streaming;
     streaming = !!(writing && busy);
@@ -421,7 +413,7 @@ function render() {
         (form.plan
             ? '변경사항 메모를 그대로 사용하거나 자유롭게 고쳐보세요.'
             : '변경사항을 요약해 주세요.');
-    el('progress-box').hidden = !failed && (writing || (!model.pending && !model.running && !/저장|복사|적용|취소/.test(model.status || '')));
+    el('progress-box').hidden = !failed && (writing || !/저장|복사|적용|취소/.test(model.status || ''));
     if (failed) el('status-text').textContent = writing ? '글 생성 보류' : '메모 생성 보류';
     el('cancel-btn').hidden = !model.pending;
     el('candidate-box').hidden = !model.candidate;

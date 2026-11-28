@@ -24,6 +24,8 @@ test('backend usage fits the compact sidebar, exposes details, and opens the ser
     await expect(button.locator('#usage-reset')).toHaveCSS('font-size', '11px');
     await expect(button.locator('#usage-reset')).toHaveCSS('color', 'rgb(157, 157, 157)');
     await expect(button.locator('#usage-paid')).toHaveCSS('font-size', '12px');
+    await expect(button.locator('#usage-free')).toHaveCSS('font-weight', '600');
+    await expect(button.locator('#usage-paid')).toHaveCSS('font-weight', '600');
     expect(await button.innerText()).toBe('남은 무료 크레딧: 3,000 / 3,000\n27분 뒤 / 12:17 PM 초기화\n유료 크레딧: 119,807');
     await expect(button.locator('.codicon-chevron-right')).toHaveJSProperty('hidden', false);
     await expect(button).toHaveAccessibleDescription('사용량 상세 보기');

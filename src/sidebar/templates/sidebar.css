@@ -672,7 +672,7 @@ label.config-box .switch { flex-shrink: 0; }
 }
 #usage-label { min-width: 0; }
 #usage-label > span { display: block; }
-#usage-free { font-weight: 600; }
+#usage-free, #usage-paid { font-weight: 600; }
 #usage-reset { font-size: 11px; color: var(--vscode-descriptionForeground, var(--vscode-foreground)); }
 #usage-btn .codicon { flex: 0 0 1em; font-size: 14px; color: var(--vscode-icon-foreground, currentColor); }
 #usage-btn:hover:enabled { background: var(--vscode-toolbar-hoverBackground); }

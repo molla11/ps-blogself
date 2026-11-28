@@ -25,7 +25,7 @@ const remove = (page: Page, number: number) => page.getByRole('button', { name: 
 
 test.beforeEach(async ({ page }) => { await openWebview(page); await model(page); });
 
-test('the summary stays visible below the title and separate memos form a thread at wide and narrow widths', async ({ page }) => {
+test('the summary stays visible above the title card and separate memos form a thread at wide and narrow widths', async ({ page }) => {
     await expect(page.getByRole('tab', { name: '풀이 메모', selected: true })).toBeVisible();
     await expect(page.getByRole('textbox', { name: '전체 설명', exact: true })).toBeVisible();
     await expect(page.getByRole('textbox', { name: '전체 설명', exact: true })).toHaveValue(plan.summary);
@@ -45,8 +45,11 @@ test('the summary stays visible below the title and separate memos form a thread
         const titleCard = (await page.locator('.plan-title-section').boundingBox())!;
         const first = (await page.locator('.step').nth(0).boundingBox())!;
         const second = (await page.locator('.step').nth(1).boundingBox())!;
-        expect(summary.y).toBeGreaterThan(title.y + title.height);
-        expect(titleCard.y + titleCard.height).toBeGreaterThanOrEqual(summary.y + summary.height);
+        expect(summary.y + summary.height).toBeLessThan(titleCard.y);
+        expect(title.y).toBeGreaterThan(titleCard.y);
+        await expect(page.locator('.plan-title-section textarea')).toHaveCount(1);
+        await expect(page.locator('#summary')).toHaveCSS('font-size', '13px');
+        await expect(page.locator('#summary')).toHaveCSS('color', await page.locator('.plan-summary-field').evaluate(node => getComputedStyle(node).color));
         expect(first.y).toBeGreaterThan(titleCard.y + titleCard.height);
         expect(second.y).toBeGreaterThan(first.y + first.height);
         expect(first.x).toBe(second.x);
@@ -55,6 +58,10 @@ test('the summary stays visible below the title and separate memos form a thread
             const { lineHeight, backgroundSize, backgroundImage } = getComputedStyle(node);
             return { lineHeight, backgroundSize, backgroundImage };
         });
+        await body(page, 1).click();
+        await expect(body(page, 1)).toBeFocused();
+        await expect(body(page, 1)).toHaveCSS('box-shadow', 'none');
+        await expect(body(page, 1)).toHaveCSS('background-image', rule.backgroundImage);
         expect(rule.backgroundImage).toContain('linear-gradient');
         expect(parseFloat(rule.backgroundSize.split(' ')[1])).toBeCloseTo(parseFloat(rule.lineHeight), 1);
         expect(first.x + first.width).toBeLessThanOrEqual(panel.x + panel.width);

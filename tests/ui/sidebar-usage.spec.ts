@@ -8,14 +8,14 @@ async function state(page: Page, usage?: unknown) {
     }})), usage);
 }
 test('backend usage fits the compact sidebar, exposes details, and opens the server usage action', async ({page}) => {
-    await page.clock.install({time: new Date('2026-11-29T11:33:00Z')});
-    await page.clock.pauseAt(new Date('2026-11-29T11:33:01Z'));
+    await page.clock.install({time: new Date('2026-11-29T11:50:00Z')});
+    await page.clock.pauseAt(new Date('2026-11-29T11:50:01Z'));
     await page.setViewportSize({width: 300, height: 650});
     await openWebview(page, true);
     await page.evaluate(() => document.documentElement.style.setProperty('--vscode-descriptionForeground', '#9d9d9d'));
     const account: AccountUsage = {
         unit: 'credits', windowSeconds: 3600, hourlyUsedCredits: 0, freeHourlyUsedCredits: 0, freeHourlyLimitCredits: 3000,
-        resetsAt: '2026-11-29T12:00:00Z', freeRemainingCredits: 3000, creditBalance: 119807, canStart: true, nextFunding: 'free', retryAt: null,
+        resetsAt: '2026-11-29T12:17:00Z', freeRemainingCredits: 3000, creditBalance: 119807, canStart: true, nextFunding: 'free', retryAt: null,
         totalUsedCredits: 46761, todayRequests: 0,
     };
     await state(page, usageView(account));
@@ -24,7 +24,7 @@ test('backend usage fits the compact sidebar, exposes details, and opens the ser
     await expect(button.locator('#usage-reset')).toHaveCSS('font-size', '11px');
     await expect(button.locator('#usage-reset')).toHaveCSS('color', 'rgb(157, 157, 157)');
     await expect(button.locator('#usage-paid')).toHaveCSS('font-size', '12px');
-    expect(await button.innerText()).toBe('무료 크레딧: 0 / 3,000\n27분 뒤 / 12:00 PM 초기화\n유료 크레딧: 119,807');
+    expect(await button.innerText()).toBe('무료 크레딧: 0 / 3,000\n27분 뒤 / 12:17 PM 초기화\n유료 크레딧: 119,807');
     await expect(button.locator('.codicon-chevron-right')).toHaveJSProperty('hidden', false);
     await expect(button).toHaveAccessibleDescription('사용량 상세 보기');
     await expect(button).toHaveAttribute('title', usageView(account).detail);
@@ -66,14 +66,14 @@ test('backend usage fits the compact sidebar, exposes details, and opens the ser
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
     await page.clock.fastForward('01:00');
-    await expect(button.locator('#usage-reset')).toHaveText('26분 뒤 / 12:00 PM 초기화');
+    await expect(button.locator('#usage-reset')).toHaveText('26분 뒤 / 12:17 PM 초기화');
     await page.clock.fastForward('26:00');
     await expect(button.locator('#usage-reset')).toHaveText('사용량 갱신 중…');
     await expect(button).toContainText('2,999 / 3,000');
     await state(page, usageView(account));
     expect(await page.evaluate(() => (window as any).__messages.filter((m: any) => m.type === 'refreshUsage'))).toHaveLength(1);
-    await state(page, usageView({...account, resetsAt: '2026-11-29T13:00:00Z'}));
-    await expect(button.locator('#usage-reset')).toHaveText('60분 뒤 / 1:00 PM 초기화');
+    await state(page, usageView({...account, resetsAt: '2026-11-29T13:17:00Z'}));
+    await expect(button.locator('#usage-reset')).toHaveText('60분 뒤 / 1:17 PM 초기화');
     await expect(button).toContainText('0 / 3,000');
     await button.press('Enter');
     expect(await page.evaluate(() => (window as any).__messages.at(-1))).toEqual({type: 'showUsage'});

@@ -137,11 +137,6 @@ test('keyboard actions support focus navigation, Escape and native Tab', async (
 test('only the file list scrolls while its heading and primary controls stay fixed', async ({ page }) => {
     const headingBefore = await page.locator('#recent-logs-title').boundingBox();
     const controlsBefore = await page.locator('.bottom-actions').boundingBox();
-    const history = (await page.locator('#manage-logs-btn').boundingBox())!;
-    const write = (await page.locator('#generate-blog-btn').boundingBox())!;
-    expect(history.width).toBeGreaterThan(write.width);
-    expect(history.y).toBe(write.y);
-    expect(history.height).toBe(write.height);
     await page.locator('#logs-container').hover();
     await page.mouse.wheel(0, 2000);
     await expect.poll(() => page.locator('#logs-container').evaluate(el => el.scrollTop)).toBeGreaterThan(0);
@@ -185,8 +180,13 @@ test('background updates preserve row identity and close a menu when its file di
 
 test('full history uses the same interactions and view switching dismisses the menu', async ({ page }) => {
     await row(page, 0).click();
+    const history = page.locator('#file-library').getByRole('button', {name: '전체 기록', exact: true});
+    await expect(history).toHaveAttribute('title', '전체 기록 (10 KB)');
+    await history.press('Enter');
+    expect((await messages(page)).at(-1)).toEqual({ type: 'manageLogs' });
     await page.evaluate(allLogs => window.dispatchEvent(new MessageEvent('message', { data: { type: 'showFullLogs', logs: allLogs } })), logs);
     await expect(menu(page)).toBeHidden();
+    await expect(page.locator('#full-logs-back-btn')).toBeFocused();
     await row(page, 2, '#full-logs-container').click();
     await expect(menu(page)).toBeVisible();
     await page.getByRole('menuitem', { name: '수정 기록 보기', exact: true }).click();
@@ -201,6 +201,7 @@ test('full history uses the same interactions and view switching dismisses the m
     await page.locator('#full-logs-back-btn').click();
     await expect(menu(page)).toBeHidden();
     await expect(page.locator('#main-view')).toBeVisible();
+    await expect(history).toBeFocused();
 });
 
 test('right-click remains available and leaving the webview dismisses its menu', async ({ page }) => {

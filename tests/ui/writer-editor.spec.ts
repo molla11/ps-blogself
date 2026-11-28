@@ -97,7 +97,7 @@ test('formatting and undo keep working after save echoes, while another window c
     await expect(editor).toHaveAttribute('contenteditable', 'false');
     await expect(page.getByRole('button', { name: '굵게', exact: true })).toBeDisabled();
     await expect(editor).toHaveText('다른 창의 글');
-    await expect(page.locator('#recovery-box')).toBeVisible();
+    expect((await page.evaluate(() => (window as any).__saved)).localRecovery).toBeTruthy();
 });
 
 test('insert menu, link dialog, outline and export support direct keyboard interactions', async ({ page }) => {

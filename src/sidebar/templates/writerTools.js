@@ -46,45 +46,6 @@ export function bindWriterTools(vscode, onFileChange, onFold, onHome) {
             }
         }
     }
-    function renderButtons(container, actions) {
-        for (const node of [...container.children]) {
-            if (!actions.some(item => item.action === node.dataset.writerAction)) node.remove();
-        }
-        actions.forEach(({ action, label, disabled }, index) => {
-            let node = container.children[index];
-            if (node?.dataset.writerAction !== action) {
-                const next = document.createElement('button');
-                next.type = 'button';
-                next.className = 'secondary';
-                next.dataset.writerAction = action;
-                container.insertBefore(next, node || null);
-                node = next;
-            }
-            if (node.textContent !== label) node.textContent = label;
-            node.disabled = disabled;
-        });
-    }
-    function renderNotices(notices) {
-        const container = el('side-writer-notices');
-        for (const node of [...container.children]) {
-            if (!notices.some(notice => node.id === 'side-' + notice.id)) node.remove();
-        }
-        notices.forEach(({ id, text, actions }, index) => {
-            let notice = el('side-' + id);
-            if (!notice) {
-                notice = document.createElement('div');
-                notice.id = 'side-' + id;
-                notice.className = 'writer-notice';
-                const message = document.createElement('p');
-                message.setAttribute('role', id === 'error-box' ? 'alert' : 'status');
-                notice.append(message, document.createElement('div'));
-                container.insertBefore(notice, container.children[index] || null);
-            }
-            if (notice.firstChild.textContent !== text) notice.firstChild.textContent = text;
-            notice.firstChild.hidden = !text;
-            renderButtons(notice.lastChild, actions);
-        });
-    }
     function renderOutline(headings) {
         const list = el('side-outline-list'), key = JSON.stringify(headings);
         if (list.dataset.headings === key) return;
@@ -142,7 +103,6 @@ export function bindWriterTools(vscode, onFileChange, onFold, onHome) {
         el('writer-article-options').hidden = plan || !c.hasArticle;
         button('prepare').hidden = !plan;
         for (const key of ['model', 'mode', 'style', 'version']) field(key, c[key]);
-        el('side-mode-hint').textContent = c.modeHint;
         el('side-model-hint').textContent = c.modelHint;
         el('side-model-hint').hidden = !c.modelHint;
         button('prepare').disabled = c.prepareDisabled;
@@ -168,7 +128,6 @@ export function bindWriterTools(vscode, onFileChange, onFold, onHome) {
             if (node.textContent !== text) node.textContent = text;
             node.hidden = !text;
         }
-        renderNotices(c.notices);
     }
     function showHome() {
         if (filePath) vscode.postMessage({ type: 'sidebarHome', context: tools.hidden ? 'history' : 'writer', filePath });

@@ -14,6 +14,7 @@ test('notices appear above the controls, preserve expansion and close only after
     await openWebview(page, true); await update(page, [globalNotice, personalNotice]);
     const region = page.getByRole('region', { name: '서비스 공지' });
     await expect(region).toBeVisible();
+    await expect(region.locator('details').first()).toHaveCSS('border-left-width', '0px');
     const banner = (await region.boundingBox())!, controls = (await page.locator('#main-view').boundingBox())!;
     expect(banner.y + banner.height).toBeLessThanOrEqual(controls.y);
     await page.locator('summary').filter({ hasText: '계정 안내' }).click();

@@ -3,7 +3,7 @@
     "publisher": "Shinem-dev",
     "displayName": "ps-blogself",
     "description": "AI가 코드 수정 기록을 알고리즘 풀이 글로 정리해 줍니다.",
-    "version": "0.1.6",
+    "version": "0.1.11",
     "vsce": {
         "readmePath": "MARKETPLACE.md"
     },
@@ -49,6 +49,10 @@
                 "title": "PS-Blogself: 로그인 / 계정"
             },
             {
+                "command": "psb.reviewWritingNotice",
+                "title": "PS-Blogself: 글쓰기 알림 다시 열기"
+            },
+            {
                 "command": "psb.linkArticleJob",
                 "title": "PS-Blogself: 기존 로컬 글을 서버 작업에 연결"
             },
@@ -67,6 +71,12 @@
             }
         ],
         "menus": {
+            "editor/title": [
+                { "command": "psb.reviewWritingNotice", "when": "activeWebviewPanelId == psb.blogPost", "group": "1_writing" }
+            ],
+            "commandPalette": [
+                { "command": "psb.reviewWritingNotice", "when": "activeWebviewPanelId == psb.blogPost" }
+            ],
             "view/title": [
                 {
                     "command": "psb.openSettings",

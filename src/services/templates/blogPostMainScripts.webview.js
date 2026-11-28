@@ -58,7 +58,7 @@ function setWritingVisibility(visible) {
     writingVisible = visible;
     markDisplayedWriting();
 }
-document.addEventListener('visibilitychange', markDisplayedWriting);
+document.addEventListener('visibilitychange', () => { markDisplayedWriting(); showWritingDecision(); });
 const richEditor = createArticleEditor({
     element: el('rich-editor'), toolbar: el('format-tools'), outline: el('outline-list'),
     onChange(markdown, document) {
@@ -69,7 +69,7 @@ const richEditor = createArticleEditor({
         changed('markdown');
     },
     onOpenLink(url) { send('openLink', { url }); },
-    onError(message) { el('error-text').textContent = message; el('error-box').hidden = false; },
+    onError(message) { vscode.postMessage({ type: 'editorError', message }); },
     async onImageFile(file) {
         const data = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result.split(',')[1]); reader.onerror = () => reject(new Error('이미지를 읽을 수 없습니다.')); reader.readAsDataURL(file); });
         return new Promise((resolve, reject) => { const id = send('importImage', { data }); const timer = setTimeout(() => { imageRequests.delete(id); reject(new Error('이미지 저장 시간이 초과되었습니다. 다시 시도해 주세요.')); }, 30000); imageRequests.set(id, { resolve, reject, timer }); });
@@ -111,12 +111,37 @@ function value(id, text) {
     if (node.value !== (text || '')) node.value = text || '';
     height(node);
 }
-function action(type) {
+function action(type, extra = {}) {
     modelSelectionRequest = undefined;
     modelSelectionNotice = '';
     renderWritingModel();
     clearTimeout(editTimer);
-    send(type, {}, true);
+    if (model?.error && model.pending && !model.running &&
+        ((type === 'prepare' && model.pendingKind === 'prepare_blog') || (type === 'generate' && model.pendingKind === 'write_blog'))) {
+        type = 'retry';
+    }
+    send(type, extra, true);
+}
+// A closed notification leaves its decision pending. Only a new decision or the editor command reopens it.
+let lastDecision;
+function writingDecision() {
+    if (!model || model.writingAllowed === false) return;
+    if (!model.editable) return 'ownership';
+    if (localRecovery) return 'recovery';
+    if (model.candidate) return 'candidate';
+}
+function showWritingDecision(reopen = false) {
+    const kind = writingDecision();
+    if (!kind) {
+        lastDecision = undefined;
+        if (reopen) send('reviewWritingError');
+        return;
+    }
+    const candidateId = kind === 'candidate' ? model.candidateId : undefined;
+    const key = JSON.stringify([kind, model.editToken, candidateId]);
+    if (!reopen && (lastDecision?.key === key || !writingVisible || document.hidden)) return;
+    if (lastDecision?.key !== key) lastDecision = { key, id: String(++counter) };
+    send('showWritingDecision', { kind, candidateId, decisionId: lastDecision.id });
 }
 function range() {
     const p = form.plan;
@@ -360,22 +385,9 @@ function chooseVersion(id) {
     if (id) send('previewVersion', { versionId: id });
     document.querySelectorAll('textarea').forEach(height);
 }
-function renderLoading(kind) {
-    const busy = !model.updatingMemos && model.backendEnabled !== false && !!(model.pending || model.running) && !model.error;
-    el('generation-loading').hidden = !busy;
-    if (!busy) return false;
-    el('loading-title').textContent = kind === 'prepare_blog' ? '준비 중…' : '작성 중…';
-    return true;
-}
 function renderWritingMode() {
     updateSidebar();
-    const mode = form.writingMode || 'evolution';
-    value('writing-mode', mode);
-    el('writing-mode-help').textContent = {
-        evolution: '이전 코드와 수정 이유, 바뀐 결과를 따라가며 씁니다.',
-        solution: '현재 코드의 핵심 아이디어와 동작 원리를 설명합니다.',
-        algorithm: '사용한 알고리즘·자료구조의 원리부터 이 문제에 적용하는 방법까지 설명합니다.',
-    }[mode];
+    value('writing-mode', form.writingMode || 'evolution');
 }
 function renderWritingModel() {
     updateSidebar();
@@ -407,29 +419,15 @@ function openModelOptions() {
 }
 function render() {
     form = separateArticleTitle(form);
-    const kind = model.pendingKind || (form.plan ? 'write_blog' : 'prepare_blog');
-    const busy = renderLoading(kind);
+    const busy = !model.updatingMemos && model.backendEnabled !== false && !!(model.pending || model.running) && !model.error;
     const writing = model.pending && model.pendingKind === 'write_blog';
     const wasStreaming = streaming;
     streaming = !!(writing && busy);
     const editable = model.editable !== false;
-    el('ownership-box').hidden = editable;
-    el('recovery-box').hidden = !localRecovery;
-    el('recover-input-btn').disabled = !editable;
+    const failed = model.pending && !model.running && !!model.error;
     el('file-name').textContent = model.fileName;
-    el('status-text').textContent =
-        model.status ||
-        (form.plan
-            ? '변경사항 메모를 그대로 사용하거나 자유롭게 고쳐보세요.'
-            : '변경사항을 요약해 주세요.');
-    el('progress-box').hidden = writing || (!model.pending && !model.running && !/저장|복사|적용|취소/.test(model.status || ''));
-    el('error-box').hidden = !model.error;
-    el('error-text').textContent = model.error || '';
-    el('cancel-btn').hidden = !model.pending;
-    el('discard-pending-btn').hidden = !!model.running;
-    el('candidate-box').hidden = !model.candidate;
     el('preparing').hidden = !!form.plan || busy;
-    el('prepare-empty-btn').hidden = !!model.pending || !!model.running || !!model.candidate;
+    el('prepare-empty-btn').hidden = (!!model.pending && !failed) || !!model.running || !!model.candidate;
     el('preparing').querySelector('p').textContent = model.error
         ? '안내를 확인한 뒤 다시 시도할 수 있어요.'
         : '코드의 변경사항을 순서대로 정리해 드릴게요.';
@@ -437,12 +435,11 @@ function render() {
     el('memo-updating').hidden = !model.updatingMemos;
     el('cancel-write-btn').hidden = !(writing && busy && editable);
     el('generate-btn').hidden = !el('cancel-write-btn').hidden;
-    el('generate-btn').disabled = !form.plan || (model.pending && !model.updatingMemos);
-    el('generate-label').textContent = model.pending && !model.updatingMemos
+    el('generate-btn').disabled = !form.plan || (model.pending && !model.updatingMemos && !(failed && writing));
+    el('generate-label').textContent = failed && writing ? '글쓰기 다시 시도' : model.pending && !model.updatingMemos
         ? (model.pendingKind === 'prepare_blog' || !form.plan ? '준비 중…' : '작성 중…')
         : form.markdown ? '글 다시 쓰기' : '글쓰기';
-    el('prepare-btn').disabled = model.pending && !model.updatingMemos;
-    el('retry-btn').disabled = model.running;
+    el('prepare-btn').disabled = model.pending && !model.updatingMemos && !(failed && !writing);
     value('instructions', form.instructions);
     renderWritingMode();
     el('writing-mode').disabled = !editable;
@@ -478,13 +475,10 @@ function render() {
     document.querySelectorAll('textarea, input:not([type="range"])').forEach(node => { node.readOnly = !editable; });
     el('article-title').readOnly = el('article-body').readOnly = !editable || streaming;
     document.querySelectorAll('input[type="range"]').forEach(node => { node.disabled = !editable; });
-    for (const id of ['generate-btn', 'prepare-btn', 'prepare-empty-btn', 'retry-btn', 'cancel-btn', 'discard-pending-btn', 'apply-candidate-btn', 'discard-candidate-btn']) {
-        if (!editable) el(id).disabled = true;
-        else if (!['generate-btn', 'prepare-btn', 'retry-btn'].includes(id)) el(id).disabled = false;
-    }
+    el('prepare-empty-btn').disabled = false;
     el('contest-backend-notice').hidden = model.backendEnabled !== false;
-    if (model.backendEnabled === false) {
-        for (const id of ['generate-btn', 'prepare-btn', 'prepare-empty-btn', 'retry-btn', 'cancel-btn']) el(id).disabled = true;
+    if (!editable || model.backendEnabled === false) {
+        for (const id of ['generate-btn', 'prepare-btn', 'prepare-empty-btn']) el(id).disabled = true;
     }
     el('start-draft').textContent = form.plan ? '이 메모로 초안 만들기' : '풀이 메모로 이동';
     el('start-draft').disabled = !!form.plan && el('generate-btn').disabled;
@@ -494,10 +488,30 @@ function render() {
         : '풀이 메모로 초안을 만든 뒤 여기에서 다듬으세요.';
     renderWritingModel();
     stash();
+    showWritingDecision();
 }
 window.addEventListener('message', (event) => {
     const message = event.data;
-    if (message.type === 'writingVisibility') { setWritingVisibility(message.visible); return; }
+    if (message.type === 'reviewWritingNotice') { showWritingDecision(true); return; }
+    if (message.type === 'writingDecisionChoice') {
+        if (!lastDecision || message.decisionId !== lastDecision.id || message.kind !== writingDecision() ||
+            message.editToken !== model.editToken || message.candidateId !== (message.kind === 'candidate' ? model.candidateId : undefined)) return;
+        if (message.kind === 'ownership' && message.action === 'takeover') send('takeover');
+        if (message.kind === 'recovery' && message.action === 'recover') recoverInput();
+        if (message.kind === 'candidate' && ['applyCandidate', 'discardCandidate'].includes(message.action)) {
+            action(message.action, { candidateId: model.candidateId });
+        }
+        return;
+    }
+    if (message.type === 'retryWriting') {
+        if (model?.error && model.errorId === message.errorId && model.pendingId === message.pendingId &&
+            model.editToken === message.editToken && model.editable && !model.running &&
+            model.backendEnabled !== false && model.writingAllowed !== false) {
+            action(message.action, { errorId: message.errorId, pendingId: message.pendingId });
+        }
+        return;
+    }
+    if (message.type === 'writingVisibility') { setWritingVisibility(message.visible); showWritingDecision(); return; }
     if (message.type === 'writingModelChecked' || message.type === 'saveError' && message.id === modelSelectionRequest?.id) {
         const request = modelSelectionRequest;
         if (!request || message.id !== request.id) return;
@@ -559,6 +573,9 @@ window.addEventListener('message', (event) => {
             }
         }
         render();
+    } else if (message.type === 'obsoleteAction') {
+        sent.delete(message.id);
+        if (dirty.size && model.editable) send('save', {}, true);
     } else if (message.type === 'ack') {
         const fields = sent.get(message.id);
         if (fields) {
@@ -616,14 +633,12 @@ window.addEventListener('message', (event) => {
         });
     }
 });
-el('takeover-btn').addEventListener('click', () => send('takeover'));
-el('recover-input-btn').addEventListener('click', () => {
-    if (model?.editable === false || !localRecovery) return;
+function recoverInput() {
     for (const [key, value] of Object.entries(localRecovery)) { form[key] = structuredClone(value); dirty.add(key); }
     localRecovery = undefined;
     render();
     action('save');
-});
+}
 for (const [id, key] of [
     ['instructions', 'instructions'],
     ['custom-style', 'customStyle'],
@@ -744,8 +759,6 @@ el('range-details').addEventListener('toggle', () => {
 for (const [id, type] of [
     ['generate-btn', 'generate'],
     ['prepare-btn', 'prepare'],
-    ['retry-btn', 'retry'],
-    ['apply-candidate-btn', 'applyCandidate'],
 ]) {
     el(id).addEventListener('click', () => {
         if (type === 'generate') chooseVersion('');
@@ -759,15 +772,7 @@ for (const [id, type, format] of [['copy-btn', 'copy'], ['export-btn', 'export',
         else { clearTimeout(editTimer); send(type, { format }, true); }
     });
 }
-for (const [id, type] of [
-    ['recharge-credits-btn', 'rechargeCredits'],
-    ['cancel-btn', 'cancel'],
-    ['cancel-write-btn', 'cancel'],
-    ['discard-candidate-btn', 'discardCandidate'],
-    ['discard-pending-btn', 'discardPending'],
-]) {
-    el(id).addEventListener('click', () => send(type));
-}
+el('cancel-write-btn').addEventListener('click', () => send('cancel'));
 for (const name of ['plan', 'article']) {
     el(name + '-tab').addEventListener('click', () => {
         if (activeTab === name) return;

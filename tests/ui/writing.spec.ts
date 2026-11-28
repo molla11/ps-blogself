@@ -45,6 +45,15 @@ async function messages(page: Page) {
     return page.evaluate(() => (window as any).__messages);
 }
 
+async function latestDecision(page: Page) {
+    return (await messages(page)).findLast((m: any) => m.type === 'showWritingDecision');
+}
+async function chooseDecision(page: Page, action: string, decision: any) {
+    await page.evaluate(data => window.dispatchEvent(new MessageEvent('message', { data })), {
+        ...decision, type: 'writingDecisionChoice', action,
+    });
+}
+
 test('the compact sidebar selects a file and starts writing without another navigation screen', async ({
     page,
 }) => {
@@ -206,11 +215,18 @@ test('unsaved input is restored on reopen and candidates require an explicit app
         filePath: base.filePath,
         fields: { instructions: '닫기 전에 입력한 내용' },
     });
-    await model(page, { candidate: true });
+    await model(page, { candidate: true, candidateId: 'result-1' });
     await expect(page.locator('#instructions')).toHaveValue('닫기 전에 입력한 내용');
     await expect(page.locator('#summary')).toHaveValue(plan.summary);
     expect((await messages(page)).some((m: any) => m.type === 'applyCandidate')).toBe(false);
-    await page.getByRole('button', { name: '새 결과 적용' }).click();
+    const first = await latestDecision(page);
+    expect(first).toMatchObject({ kind: 'candidate', candidateId: 'result-1' });
+    await model(page, { candidate: true, candidateId: 'result-1' });
+    expect((await messages(page)).filter((m: any) => m.type === 'showWritingDecision')).toHaveLength(1);
+    await model(page, { candidate: true, candidateId: 'result-2' });
+    await chooseDecision(page, 'applyCandidate', first);
+    expect((await messages(page)).some((m: any) => m.type === 'applyCandidate')).toBe(false);
+    await chooseDecision(page, 'applyCandidate', await latestDecision(page));
     expect((await messages(page)).some((m: any) => m.type === 'applyCandidate')).toBe(true);
 });
 
@@ -253,7 +269,7 @@ test('a rewrite streams into the read-only editor and keeps unsaved source edits
     await expect(page.locator('#article-body')).toHaveValue('작성 중에도 보존할 본문');
     await model(page, { showAdvancedWritingViews: true, candidate: true, title: '이전 제목', markdown: '사용자가 쓴 본문' });
     await expect(heading).toHaveCount(0);
-    await expect(page.locator('#candidate-box')).toHaveJSProperty('hidden', false);
+    expect((await latestDecision(page)).kind).toBe('candidate');
     await expect(page.locator('#article-body')).toBeEditable();
     await expect(page.locator('#article-body')).toHaveValue('작성 중에도 보존할 본문');
 });
@@ -291,11 +307,10 @@ test('partial text stays out of saves and undo history across a failed rewrite a
     await expect(page.locator('#article-title')).toHaveValue('완성한 제목');
 });
 
-test('cancelled initial preparation can restart without closing the writer', async ({ page }) => {
+test('initial preparation can restart in the writer after cancellation from the notification', async ({ page }) => {
     await open(page);
-    await model(page, { plan: undefined, pending: true, running: true });
-    await page.locator('#cancel-btn').click();
-    expect((await messages(page)).at(-1).type).toBe('cancel');
+    await model(page, { plan: undefined, pending: true, running: true, pendingKind: 'prepare_blog' });
+    await expect(page.locator('#progress-box')).toBeHidden();
     await model(page, { plan: undefined, pending: false, running: false, status: '작업을 취소했습니다.' });
     await page.getByRole('button', { name: '메모 생성', exact: true }).click();
     expect((await messages(page)).at(-1).type).toBe('prepare');
@@ -304,18 +319,18 @@ test('cancelled initial preparation can restart without closing the writer', asy
 test('another window’s writer is read-only, follows live text, and can request editing ownership', async ({ page }) => {
     await open(page);
     await model(page, { editable: false, editToken: 'window-b' });
-    await expect(page.locator('#ownership-box')).toBeVisible();
+    expect((await latestDecision(page)).kind).toBe('ownership');
     await expect(page.locator('#summary')).toHaveJSProperty('readOnly', true);
     await expect(page.locator('#generate-btn')).toBeDisabled();
     await page.locator('#range-details > summary').click();
     await expect(page.locator('#range-start')).toBeDisabled();
     await model(page, { editable: false, editToken: 'window-b', plan: { ...plan, summary: '다른 창의 최신 수정' } });
     await expect(page.locator('#summary')).toHaveValue('다른 창의 최신 수정');
-    await page.getByRole('button', { name: '이 창에서 편집', exact: true }).click();
+    await chooseDecision(page, 'takeover', await latestDecision(page));
     expect((await messages(page)).at(-1)).toMatchObject({ type: 'takeover', editToken: 'window-b' });
     expect((await messages(page)).at(-1).fields).toBeUndefined();
     await model(page, { editToken: 'new-window-a' });
-    await expect(page.locator('#ownership-box')).toBeHidden();
+    await expect(page.locator('#ownership-box')).toHaveCount(0);
     await expect(page.locator('#summary')).toHaveJSProperty('readOnly', false);
     await expect(page.locator('#generate-btn')).toBeEnabled();
 });
@@ -325,13 +340,15 @@ test('losing ownership preserves unsaved input for explicit recovery', async ({ 
     await model(page);
     await page.locator('#summary').fill('아직 저장하지 못한 설명');
     await model(page, { editable: false, editToken: 'window-b' });
-    await expect(page.locator('#recovery-box')).toBeVisible();
+    expect((await latestDecision(page)).kind).toBe('ownership');
     await expect(page.locator('#summary')).toHaveValue(plan.summary);
-    await expect(page.locator('#recover-input-btn')).toBeDisabled();
+    expect((await messages(page)).some((m: any) => m.kind === 'recovery')).toBe(false);
     expect((await page.evaluate(() => (window as any).__saved)).localRecovery.plan.summary).toBe('아직 저장하지 못한 설명');
     await model(page, { editToken: 'new-window-a', plan: { ...plan, summary: '다른 창에서 저장한 설명' } });
     await expect(page.locator('#summary')).toHaveValue('다른 창에서 저장한 설명');
-    await page.locator('#recover-input-btn').click();
+    const recovery = await latestDecision(page);
+    expect(recovery.kind).toBe('recovery');
+    await chooseDecision(page, 'recover', recovery);
     await expect(page.locator('#summary')).toHaveValue('아직 저장하지 못한 설명');
     expect((await messages(page)).at(-1)).toMatchObject({ type: 'save', editToken: 'new-window-a' });
     expect((await messages(page)).at(-1).fields.plan.summary).toBe('아직 저장하지 못한 설명');
@@ -341,7 +358,7 @@ test('reopening after an ownership change does not silently overwrite the newer 
     await open(page, false, { filePath: base.filePath, editToken: 'old-owner', fields: { instructions: '이전 창의 미저장 입력' } });
     await model(page, { instructions: '다른 창의 최신 입력' });
     await expect(page.locator('#instructions')).toHaveValue('다른 창의 최신 입력');
-    await expect(page.locator('#recovery-box')).toBeVisible();
+    expect((await latestDecision(page)).kind).toBe('recovery');
     expect((await messages(page)).some((m: any) => m.type === 'save')).toBe(false);
 });
 
@@ -472,8 +489,8 @@ test('article tools in the sidebar use the live draft and the selected version',
     await model(page, { ...article, candidate: true });
     await refreshSidebar();
     await expect(sidebar.locator('#side-view-modes')).toBeHidden();
-    await expect(sidebar.locator('#side-candidate-box button')).toHaveText(['새 결과 적용', '현재 내용 유지']);
-    await expect(sidebar.locator('#side-candidate-box p')).toBeHidden();
+    await expect(sidebar.getByRole('button', { name: '새 결과 적용' })).toHaveCount(0);
+    expect((await latestDecision(page)).kind).toBe('candidate');
     await expect(sidebar.locator('#side-history')).toBeVisible();
     await expect(sidebar.locator('#side-export')).toBeVisible();
     await model(page, { ...article, showAdvancedWritingViews: true });
@@ -720,7 +737,7 @@ test('existing notes stay editable and can be used for writing during automatic 
     await open(page);
     await model(page, { pending: true, running: true, pendingKind: 'prepare_blog', updatingMemos: true });
     await expect(page.locator('#memo-updating')).toBeVisible();
-    await expect(page.locator('#generation-loading')).toBeHidden();
+    await expect(page.locator('#progress-box')).toBeHidden();
     await page.locator('#summary').fill('직접 수정한 설명');
     await page.getByRole('button', { name: '글쓰기', exact: true }).click();
     const request = (await messages(page)).find((m: any) => m.type === 'generate');

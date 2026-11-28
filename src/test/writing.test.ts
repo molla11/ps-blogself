@@ -62,7 +62,10 @@ test('a model completion cannot overwrite a newer user explanation or article', 
     mergeResult(draft, { plan: { ...plan, summary: 'AI 새 설명' } }, startedAt);
     assert.equal(draft.plan.summary, '내가 고친 문장');
     assert.equal(draft.candidate?.plan?.summary, 'AI 새 설명');
+    const memoDecision = draft.candidate?.decisionId;
+    assert.ok(memoDecision);
     mergeResult(draft, { title: 'AI 제목', markdown: '새 글' }, startedAt);
+    assert.notEqual(draft.candidate?.decisionId, memoDecision);
     assert.equal(draft.markdown, '편집 중인 글');
     mergeResult(draft, draft.candidate!, draft.revision);
     assert.equal(draft.markdown, '새 글');
@@ -254,6 +257,8 @@ test('reopening integrated drafts separates the title in drafts, versions and pe
         draft.candidate = oldArticle('새 제목', '새 본문');
         await store.save(draft);
         const restored = (await store.read(history.filePath))!;
+        assert.ok(restored.candidate?.decisionId);
+        assert.equal((await store.read(history.filePath))?.candidate?.decisionId, restored.candidate.decisionId);
         for (const [article, title, body] of [[restored, '현재 제목', '현재 본문'], [restored.articleVersions[0], '이전 제목', '이전 본문'], [restored.candidate!, '새 제목', '새 본문']] as const) {
             assert.equal(article.title, title);
             assert.equal(article.markdown, body);

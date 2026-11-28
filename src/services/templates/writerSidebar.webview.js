@@ -12,9 +12,7 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode, gho
         plan: 'plan-tab', article: 'article-tab', generate: 'generate-btn', cancelWrite: 'cancel-write-btn', restore: 'restore-version-btn',
         viewSyncFailures: 'view-sync-failures', older: 'version-older-btn', newer: 'version-newer-btn',
     };
-    const noticeIds = ['ownership-box', 'recovery-box', 'progress-box', 'error-box', 'candidate-box'];
-    const forwarded = new Map([...noticeIds.map(el), el('export-menu')]
-        .flatMap(group => [...group.querySelectorAll('button')].map(button => [button.id, button])));
+    const forwarded = new Map([...el('export-menu').querySelectorAll('button')].map(button => [button.id, button]));
     function buttons(group) {
         return [...group.querySelectorAll('button:not([hidden])')].map(button => ({
             action: button.id, label: button.getAttribute('aria-label') || button.textContent.trim(), disabled: button.disabled,
@@ -28,7 +26,7 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode, gho
     function useLocalDrawer(local) {
         if (local === (positions.size > 0)) return;
         if (local) {
-            for (const id of ['writer-file-tools', 'writer-options', 'contest-backend-notice', ...noticeIds, 'article-toolbar', 'article-outline']) {
+            for (const id of ['writer-file-tools', 'writer-options', 'contest-backend-notice', 'article-toolbar', 'article-outline']) {
                 const node = el(id), position = document.createComment(id);
                 node.before(position);
                 positions.set(node, position);
@@ -53,9 +51,6 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode, gho
             if (!linked) return;
             const options = [...el('writing-model-options').querySelectorAll('[role=option]')];
             const prepare = prepareButton();
-            const notices = noticeIds.filter(id => !el(id).hidden).map(id => ({
-                id, text: el(id).querySelector('span')?.textContent || '', actions: buttons(el(id)),
-            }));
             const controls = {
                 tab: el('plan-view').hidden ? 'article' : 'plan',
                 hasArticle: el('article-empty').hidden,
@@ -63,13 +58,13 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode, gho
                 generateDisabled: el('generate-btn').disabled,
                 showCancelWrite: !el('cancel-write-btn').hidden,
                 hasPlan: !el('plan-content').hidden,
-                prepareLabel: currentModel().pendingKind === 'prepare_blog' ? '메모 생성 중…' : prepare.textContent.trim(),
+                prepareLabel: currentModel().pendingKind === 'prepare_blog' && !currentModel().error ? '메모 생성 중…' : prepare.textContent.trim(),
                 prepareDisabled: prepare.disabled || prepare.hidden || (el('preparing').hidden && el('plan-content').hidden),
                 model: { value: options.find(option => option.getAttribute('aria-selected') === 'true')?.value,
                     options: options.map(option => [option.value, option.textContent]), disabled: el('writing-model').disabled },
                 modelHint: [el('writing-model-help').hidden ? '' : el('writing-model-help').textContent,
                     el('writing-model-hint').textContent].filter(Boolean).join(' '),
-                mode: selectState('writing-mode'), style: selectState('writing-style'), modeHint: el('writing-mode-help').textContent,
+                mode: selectState('writing-mode'), style: selectState('writing-style'),
                 version: selectState('version-select'), restoreHidden: el('restore-version-btn').hidden,
                 restoreDisabled: el('restore-version-btn').disabled, versionsHidden: el('versions-box').hidden,
                 olderDisabled: el('version-older-btn').disabled, newerDisabled: el('version-newer-btn').disabled,
@@ -82,7 +77,7 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode, gho
                     !action.startsWith('ghost-') || action === 'ghost-connect-btn' || ghostConnected()),
                 ghostStatus: el('ghost-status').hidden ? '' : el('ghost-status').textContent,
                 saveStatus: el('save-status').textContent, syncStatus: el('sync-status').textContent,
-                hasSyncFailures: !el('view-sync-failures').hidden, notices,
+                hasSyncFailures: !el('view-sync-failures').hidden,
             };
             const key = JSON.stringify(controls);
             if (key === previous) return;
@@ -92,7 +87,7 @@ export function connectWriterSidebar(vscode, currentModel, selectEditorMode, gho
     }
     // Saves, Ghost updates and outline edits can arrive independently of the document model.
     const observer = new MutationObserver(update);
-    for (const id of ['save-status', 'sync-status', 'view-sync-failures', 'ghost-status', 'export-menu', 'outline-list', ...noticeIds]) {
+    for (const id of ['save-status', 'sync-status', 'view-sync-failures', 'ghost-status', 'export-menu', 'outline-list']) {
         observer.observe(el(id), { childList: true, subtree: true, attributes: true, characterData: true });
     }
     window.addEventListener('message', ({ data }) => {

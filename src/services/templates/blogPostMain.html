@@ -9,7 +9,7 @@
     </head>
     <body>
         <p id="contest-writing-notice" role="status">대회 모드에서 글쓰기 화면 진입을 차단했습니다.</p>
-        <p id="contest-backend-notice" class="notice" role="status" hidden>대회 모드에서 온라인 요청을 차단했습니다.</p>
+        <p id="contest-backend-notice" class="muted" role="status" hidden>대회 모드에서 온라인 요청을 차단했습니다.</p>
         <!-- AI icons: Codicons sparkle-filled; license in media/codicons/LICENSE. -->
         <div class="writing-header" id="writing-header">
             <div id="view-tabs" role="tablist" aria-label="글 작성 화면">
@@ -53,14 +53,13 @@
                         <span id="writing-model-hint" role="status"></span>
                     </div>
                     <div class="plan-options" id="plan-options">
-                        <label class="option-field" for="writing-mode"><span id="writing-mode-label">글 구성</span>
-                            <select id="writing-mode" aria-labelledby="writing-mode-label" aria-describedby="writing-mode-help">
+                        <label class="option-field" for="writing-mode"><span id="writing-mode-label">구성</span>
+                            <select id="writing-mode" aria-labelledby="writing-mode-label">
                                 <option value="evolution">수정 과정 중심 (기본)</option>
                                 <option value="solution">풀이 해설 중심</option>
                                 <option value="algorithm">알고리즘 설명 중심</option>
                             </select>
                         </label>
-                        <p id="writing-mode-help" class="muted">이전 코드와 수정 이유, 바뀐 결과를 따라가며 씁니다.</p>
                         <label class="option-field" for="writing-style">문체
                             <select id="writing-style">
                                 <option value="plain">했다/이다체 (기본)</option>
@@ -75,34 +74,6 @@
             </div>
         </div>
         <main>
-            <div class="notice" id="ownership-box" role="status" hidden>
-                <span>다른 창에서 편집 중입니다. 최신 내용을 함께 보고 있어요.</span>
-                <button class="secondary" id="takeover-btn">이 창에서 편집</button>
-            </div>
-            <div class="notice" id="recovery-box" hidden>
-                <span>이 창의 미저장 입력을 보관하고 있습니다.</span>
-                <button class="secondary" id="recover-input-btn">미저장 입력 적용</button>
-            </div>
-            <div class="notice" id="progress-box" role="status">
-                <span id="status-text">기록을 불러오고 있어요…</span
-                ><button class="quiet" id="cancel-btn" hidden>취소</button>
-            </div>
-            <div class="notice error" id="error-box" role="alert" hidden>
-                <span id="error-text"></span>
-                <div class="actions">
-                    <button id="retry-btn">다시 시도</button
-                    ><button class="secondary" id="recharge-credits-btn">크레딧 충전</button>
-                    <button class="quiet error-close" id="discard-pending-btn" type="button" aria-label="오류 닫기" title="닫기" hidden>
-                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-                    </button>
-                </div>
-            </div>
-            <div class="notice" id="candidate-box" hidden>
-                <div class="actions">
-                    <button id="apply-candidate-btn">새 결과 적용</button
-                    ><button class="quiet" id="discard-candidate-btn">현재 내용 유지</button>
-                </div>
-            </div>
             <section id="plan-view" role="tabpanel" aria-labelledby="plan-tab">
                 <label class="field" id="custom-style-field" hidden>원하는 문체
                     <textarea id="custom-style" rows="2" maxlength="2000"
@@ -140,21 +111,14 @@
                         </div>
                         <div id="range-changes" class="range-changes"></div>
                     </details>
-                    <div class="plan-title-section" role="group" aria-label="글 제목과 전체 설명">
+                    <label class="plan-summary-field">
+                        <span class="visually-hidden">전체 설명</span>
+                        <textarea id="summary" class="plan-text" rows="1" maxlength="12000" placeholder="풀이의 전체 흐름"></textarea>
+                    </label>
+                    <div class="plan-title-section">
                         <label class="plan-title-field">
                             <span class="visually-hidden">글 제목</span>
                             <textarea id="plan-title" class="plan-text" rows="1" maxlength="300" placeholder="글 제목"></textarea>
-                        </label>
-                        <hr class="plan-title-divider" />
-                        <label class="plan-summary-field">
-                            <span class="visually-hidden">전체 설명</span>
-                            <textarea
-                                id="summary"
-                                class="plan-text"
-                                rows="1"
-                                maxlength="12000"
-                                placeholder="풀이의 전체 흐름"
-                            ></textarea>
                         </label>
                     </div>
                     <div id="steps" class="memo-process" role="group" aria-label="변경사항 메모"></div>
@@ -280,10 +244,6 @@
         <aside id="local-writer-tools" popover="auto" aria-label="글쓰기 도구">
             <button class="quiet" type="button" popovertarget="local-writer-tools" popovertargetaction="hide">도구 닫기</button>
         </aside>
-        <div id="generation-loading" role="status" aria-live="polite" hidden>
-            <span class="loading-spinner" aria-hidden="true"></span>
-            <span id="loading-title"></span>
-        </div>
         <dialog id="url-dialog" aria-labelledby="url-dialog-title">
             <form id="url-form">
                 <h2 id="url-dialog-title">링크</h2>

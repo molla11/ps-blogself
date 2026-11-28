@@ -36,48 +36,33 @@ async function withFetch(action: () => Promise<void>) {
     try { await action(); } finally { globalThis.fetch = previous; }
 }
 
-test('credit recharge explains the admin request and copies only the chosen account email', async t => {
-    const { connection, secrets } = harness();
-    let choice: string | undefined = '계정 이메일 복사';
-    const dialog = t.mock.method(vscodeMock.window, 'showInformationMessage', async () => choice);
-    const clipboard = t.mock.method(vscodeMock.env.clipboard, 'writeText');
-    const request = t.mock.method(globalThis, 'fetch', async () => { throw new Error('No network request expected'); });
-    await connection.showCreditRecharge();
-    assert.deepEqual(dialog.mock.calls[0].arguments, [
-        '크레딧 충전은 관리자에게 요청해 주세요.',
-        { modal: true, detail: '문의: hsjang635@gmail.com\n충전할 계정 이메일을 함께 전달해 주세요.\n\ntest-user@example.test' },
-        '계정 이메일 복사',
-    ]);
-    assert.deepEqual(clipboard.mock.calls[0].arguments, ['test-user@example.test']);
-    choice = undefined;
-    await connection.showCreditRecharge();
-    secrets.clear();
-    await connection.showCreditRecharge();
-    assert.equal(dialog.mock.calls[2].arguments.length, 2);
-    assert.equal(clipboard.mock.callCount(), 1);
-    assert.equal(request.mock.callCount(), 0);
-});
-
 test('usage uses backend amounts, limits and window without deriving a remaining balance or daily quota', () => {
     const view = usageView(accountUsage({...sample, windowSeconds: 1800, freeRemainingCredits: 1700}));
-    assert.equal(view.label, '남은 크레딧 · 무료 1,700 · 유료 24,000');
+    assert.equal(view.label, '남은 무료 크레딧: 1,700 / 5,000');
     assert.deepEqual(view.detail.split('\n'), [
-        view.label,
-        '기본 모델은 다음 요청에 무료 크레딧을 사용해요.',
+        '남은 크레딧: 무료 1,700 · 유료 24,000',
+        '무료 크레딧은 사용한 만큼이 30분 뒤 채워집니다.',
+        '현재 선택된 모델은 다음 요청에 무료 크레딧을 사용합니다.',
         '',
         '최근 30분 사용 6,000크레딧 (무료 2,469 / 5,000)',
         '오늘 요청 7회 · 누적 사용 25,000크레딧',
     ]);
     assert.match(usageView({...sample, nextFunding: 'credit'}).detail, /다음 요청에 유료 크레딧/);
     const credit = usageView(accountUsage({...sample, creditBalance: -500, canStart: false, nextFunding: null}));
-    assert.match(credit.label, /유료 -500$/); assert.match(credit.detail, /새 요청을 시작할 수 없어요/);
+    assert.match(credit.paidLabel!, /유료 크레딧: -500$/); assert.match(credit.detail, /새 요청을 시작할 수 없어요/);
     const limited = usageView({...sample, freeHourlyUsedCredits: 12400, freeRemainingCredits: 0, retryAt: '2026-10-31T12:34:56Z'});
+    assert.equal(limited.label, '남은 무료 크레딧: 0 / 5,000');
     assert.match(limited.detail, /12,400 \/ 5,000/); assert.match(limited.detail, /다시 요청 가능 ·/);
     assert.doesNotMatch(view.label + view.detail, /USD|\$|달러|비용|환산/);
-    assert.match(usageView({...sample, creditBalance: 0.025}).label, /유료 0$/);
-    assert.match(usageView({...sample, creditBalance: 1.2}).label, /유료 1$/);
-    assert.match(usageView({...sample, creditBalance: 1.99}).label, /유료 1$/);
-    assert.match(usageView({...sample, creditBalance: -1.2}).label, /유료 -2$/);
+    assert.match(usageView({...sample, creditBalance: 0.025}).paidLabel!, /유료 크레딧: 0$/);
+    assert.match(usageView({...sample, creditBalance: 1.2}).paidLabel!, /유료 크레딧: 1$/);
+    assert.match(usageView({...sample, creditBalance: 1.99}).paidLabel!, /유료 크레딧: 1$/);
+    assert.match(usageView({...sample, creditBalance: -1.2}).paidLabel!, /유료 크레딧: -2$/);
+    const reset = '2026-11-29T12:00:00.000Z';
+    const hourly = usageView(accountUsage({...sample, resetsAt: reset}));
+    assert.equal(hourly.resetsAt, reset);
+    assert.match(hourly.detail, /계정 접속 시각을 기준으로 1시간마다/);
+    assert.throws(() => accountUsage({...sample, resetsAt: 'unknown'}));
     assert.throws(() => accountUsage({...sample, unit: 'USD'}));
     assert.throws(() => accountUsage({requests: 0, dailyLimit: 30}));
     assert.throws(() => accountUsage({...sample, hourlyUsedCredits: NaN}));
@@ -103,7 +88,7 @@ test('simultaneous usage refreshes share one authenticated request and round dis
         return response();
     };
     await Promise.all([connection.refreshUsage(), connection.refreshUsage(), connection.refreshUsage()]);
-    assert.equal(calls, 1); assert.equal((await connection.usage())?.label, '남은 크레딧 · 무료 2,530 · 유료 24,000');
+    assert.equal(calls, 1); assert.equal((await connection.usage())?.label, '남은 무료 크레딧: 2,530 / 5,000');
 }));
 
 test('a usage failure is unavailable, never a fabricated zero balance; retry recovers', () => withFetch(async () => {
@@ -157,7 +142,7 @@ test('a backend 402 displays the actual negative credit balance without calculat
     const {connection} = harness();
     globalThis.fetch = async () => Response.json({message: 'Credit 충전 필요', usage: {...sample, creditBalance: -400, canStart: false, nextFunding: null}}, {status: 402});
     await assert.rejects(connection.request('/jobs', 'POST', {}), ServiceError);
-    assert.match((await connection.usage())!.label, /유료 -400$/);
+    assert.match((await connection.usage())!.paidLabel!, /유료 크레딧: -400$/);
     assert.match((await connection.usage())!.detail, /새 요청을 시작할 수 없어요/);
 }));
 
@@ -190,7 +175,7 @@ test('paid model selection checks current backend availability even when free cr
     }
     assert.equal(calls, 8);
     // The displayed balance rounds down; availability still comes from the server.
-    assert.match((await connection.usage())!.label, /유료 0$/);
+    assert.match((await connection.usage())!.paidLabel!, /유료 크레딧: 0$/);
 }));
 
 test('unverified paid model choices retain the previous model without initiating login or AI work', () => withFetch(async () => {

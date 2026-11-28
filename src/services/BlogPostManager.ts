@@ -55,7 +55,10 @@ interface View {
     previousMemoHistory?: { history: FileHistory; fingerprint: string };
     memoRetryAt?: number;
     error: string;
-    status: string;
+    errorId?: string;
+    openDecision?: string;
+    openErrorId?: string;
+    errorRetry?: 'prepare' | 'generate' | 'retry';
     progress: number;
     ready: boolean;
     partial?: string;
@@ -195,7 +198,6 @@ export class BlogPostManager {
             for (const view of this.views.values()) {
                 if (!requestsEnabled && view.task) {
                     view.watcher?.abort();
-                    view.status = '대회 모드에서 온라인 요청을 차단했습니다.';
                 }
                 if (resume && (view.editable || view.panel)) this.run(view);
                 this.render(view);
@@ -203,6 +205,10 @@ export class BlogPostManager {
         }));
         context.subscriptions.push(
             vscode.commands.registerCommand('psb.connect', () => this.connect()),
+            vscode.commands.registerCommand('psb.reviewWritingNotice', () => {
+                const active = [...this.views.values()].find(view => view.panel?.active);
+                return active?.panel?.webview.postMessage({ type: 'reviewWritingNotice' });
+            }),
             vscode.commands.registerCommand('psb.linkArticleJob', () => this.linkArticleJob()),
             vscode.commands.registerCommand('psb.connectGhost', async () => { await this.ghost.configure(); }),
             vscode.commands.registerCommand('psb.sample', async () => {
@@ -319,7 +325,7 @@ export class BlogPostManager {
                 } else return undefined;
             }
             const draft = await this.store.open(initial);
-            const view: View = { draft, editable: this.store.owns(draft), queue: Promise.resolve(), error: '', status: '', progress: 0, ready: false };
+            const view: View = { draft, editable: this.store.owns(draft), queue: Promise.resolve(), error: '', progress: 0, ready: false };
             this.views.set(filePath, view);
             view.sync = this.store.watch(filePath, () => { void this.enqueue(view, () => this.refresh(view)).catch(() => {}); });
             view.ownerCheck = setInterval(() => {
@@ -444,6 +450,8 @@ export class BlogPostManager {
                 { enableScripts: true, retainContextWhenHidden: true },
             );
         current.panel = panel;
+        current.openDecision = undefined;
+        current.openErrorId = undefined;
         current.sidebarDismissed = false;
         current.ready = false;
         current.controls = undefined;
@@ -471,6 +479,25 @@ export class BlogPostManager {
             }
         });
         panel.webview.onDidReceiveMessage((message) => {
+            if (current.panel !== panel) return;
+            if (message?.type === 'showWritingDecision') {
+                this.showWritingDecision(current, panel, message);
+                return;
+            }
+            if (message?.type === 'reviewWritingError') {
+                if (current.openErrorId && current.openErrorId === current.errorId) void vscode.commands.executeCommand('notifications.showList');
+                else if (current.error && current.errorRetry) {
+                    this.notifyError(current, current.error, current.errorRetry);
+                    this.render(current);
+                } else vscode.window.setStatusBarMessage('확인할 글쓰기 알림이 없습니다.', 3000);
+                return;
+            }
+            if (message?.type === 'editorError') {
+                if (current.panel === panel && typeof message.message === 'string' && message.message) {
+                    void vscode.window.showErrorMessage(message.message.slice(0, 2000));
+                }
+                return;
+            }
             if (message?.type === 'openWriterSidebar') {
                 if (current.panel === panel && panel.active && !configManager.contest) {
                     current.sidebarDismissed = false;
@@ -489,15 +516,20 @@ export class BlogPostManager {
             }
             void this.enqueue(current, async () => {
                 try {
-                    await this.handle(current, message);
-                    void panel.webview.postMessage({ type: 'ack', id: message?.id });
+                    const handled = await this.handle(current, message);
+                    void panel.webview.postMessage({ type: handled === false ? 'obsoleteAction' : 'ack', id: message?.id });
                 } catch (error) {
                     if (error instanceof DraftConflict) await this.refresh(current);
-                    current.error = error instanceof Error ? error.message : String(error);
+                    const text = error instanceof Error ? error.message : String(error);
+                    // An image failure rejects the editor's import promise, which reports it once.
+                    if (message?.type !== 'importImage') {
+                        const retry = ['prepare', 'generate', 'retry'].includes(message?.type) ? message.type : undefined;
+                        this.notifyError(current, text, retry);
+                    }
                     void panel.webview.postMessage({
                         type: 'saveError',
                         id: message?.id,
-                        message: current.error,
+                        message: text,
                     });
                 }
                 this.render(current);
@@ -512,11 +544,66 @@ export class BlogPostManager {
             .replace('{{styles}}', () => `<style nonce="${nonce}">${css}</style>`)
             .replace('{{script}}', () => `<script nonce="${nonce}" src="${panel.webview.asWebviewUri(vscode.Uri.joinPath(webviews, 'writer.js'))}"></script>`);
     }
+    private static showWritingDecision(view: View, panel: vscode.WebviewPanel, message: {
+        kind: string; decisionId: string; candidateId?: string; editToken?: string;
+    }) {
+        const { kind, decisionId, candidateId, editToken } = message;
+        if (typeof decisionId !== 'string' || !this.writingAllowed || editToken !== view.draft.editor?.token) return;
+        if (view.openDecision === decisionId) {
+            void vscode.commands.executeCommand('notifications.showList');
+            return;
+        }
+        let prompt: string;
+        let actions: Record<string, string>;
+        if (kind === 'ownership' && !view.editable) {
+            prompt = '다른 창에서 이 글을 편집하고 있습니다.';
+            actions = { '이 창에서 편집': 'takeover' };
+        } else if (kind === 'recovery' && view.editable) {
+            prompt = '이 창에 저장하지 못한 입력이 있습니다. 복구할까요?';
+            actions = { '미저장 입력 적용': 'recover' };
+        } else if (kind === 'candidate' && view.editable && candidateId && candidateId === view.draft.candidate?.decisionId) {
+            prompt = view.draft.candidate.plan ? '새 메모가 준비됐습니다. 적용할까요?' : '새 글이 준비됐습니다. 적용할까요?';
+            actions = { '새 결과 적용': 'applyCandidate', '현재 상태 유지': 'discardCandidate' };
+        } else return;
+        view.openDecision = decisionId;
+        void vscode.window.showInformationMessage(`${path.basename(view.draft.filePath)} · ${prompt}`, ...Object.keys(actions)).then(choice => {
+            if (view.panel !== panel || view.openDecision !== decisionId) return;
+            view.openDecision = undefined;
+            if (choice && this.writingAllowed && view.draft.editor?.token === editToken) {
+                void panel.webview.postMessage({ type: 'writingDecisionChoice', kind, decisionId, candidateId, editToken, action: actions[choice] });
+            }
+        });
+    }
+    private static notifyError(view: View, text: string, retry?: 'prepare' | 'generate' | 'retry') {
+        if (this.closing) return;
+        const panel = view.panel;
+        if (!retry) {
+            if (panel) void vscode.window.showErrorMessage(text);
+            else Logger.warn(text);
+            return;
+        }
+        view.error = text;
+        view.errorRetry = retry;
+        const errorId = view.errorId = randomUUID();
+        const editToken = view.draft.editor?.token;
+        const pendingId = view.draft.pending?.request.requestId;
+        if (!view.editable) return;
+        const canRetry = panel && this.writingAllowed && backendRequests.enabled;
+        view.openErrorId = errorId;
+        const actions = canRetry ? (pendingId ? ['다시 시도', '작업 취소'] : ['다시 시도']) : [];
+        void vscode.window.showErrorMessage(text, ...actions).then(choice => {
+            if (view.openErrorId === errorId) view.openErrorId = undefined;
+            if (!choice || this.closing || view.panel !== panel || view.errorId !== errorId || !view.error ||
+                view.task || !view.editable || !this.writingAllowed || !backendRequests.enabled ||
+                view.draft.editor?.token !== editToken || view.draft.pending?.request.requestId !== pendingId) return;
+            void panel?.webview.postMessage({ type: 'retryWriting', action: choice === '작업 취소' ? 'discardPending' : retry, errorId, editToken, pendingId });
+        });
+    }
     private static enqueue(view: View, action: () => Promise<void>) {
         const next = view.queue.then(action);
         view.queue = next.catch((error) => {
             if (error?.name === 'AbortError') return;
-            view.error = error instanceof Error ? error.message : String(error);
+            this.notifyError(view, error instanceof Error ? error.message : String(error));
             this.render(view);
         });
         return next;
@@ -589,9 +676,10 @@ export class BlogPostManager {
             pendingKind: draft.pending?.request.kind,
             running: !!view.task,
             progress: view.progress,
-            status: view.status,
             error: view.error,
+            errorId: view.errorId,
             candidate: !!draft.candidate,
+            candidateId: draft.candidate?.decisionId,
             planNotices: draft.planNotices,
             articleNotices: draft.articleNotices,
             candidateNotices: draft.candidate?.notices,
@@ -680,8 +768,7 @@ export class BlogPostManager {
                 if (view.draft.publicationId !== identity.id) return;
                 view.ghost = state;
                 if (automatic) {
-                    view.status = publish ? '글을 완성하고 Ghost에 공개 게시했습니다.' : '글을 완성하고 Ghost에 초안으로 저장했습니다.';
-                    this.render(view);
+                    vscode.window.setStatusBarMessage(publish ? '글을 완성하고 Ghost에 공개 게시했습니다.' : '글을 완성하고 Ghost에 초안으로 저장했습니다.', 4000);
                 }
             } catch (error) {
                 await this.refreshGhost(view);
@@ -818,10 +905,15 @@ export class BlogPostManager {
             throw new Error('화면 요청을 확인할 수 없습니다.');
         }
         await this.refresh(view);
+        if (['applyCandidate', 'discardCandidate'].includes(message.type) &&
+            (!view.draft.candidate || view.draft.candidate.decisionId !== message.candidateId)) return false;
+        if (message.type === 'takeover' && (view.editable || message.editToken !== view.draft.editor?.token)) return;
+        if (message.errorId && (!view.error || message.errorId !== view.errorId || view.task ||
+            message.pendingId !== view.draft.pending?.request.requestId)) return false;
         if (!this.writingAllowed && !['ready', 'save', 'viewedWriting'].includes(message.type)) {
             throw new Error('대회 모드에서 글쓰기 화면 진입을 차단했습니다.');
         }
-        const reading = ['ready', 'takeover', 'viewedWriting', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'rechargeCredits', 'ghostConnect', 'ghostOpen', 'viewSyncFailures'].includes(message.type);
+        const reading = ['ready', 'takeover', 'viewedWriting', 'diff', 'preview', 'previewVersion', 'export', 'copy', 'openLink', 'connect', 'ghostConnect', 'ghostOpen', 'viewSyncFailures'].includes(message.type);
         if (!reading && (!view.editable || message.editToken !== view.draft.editor?.token)) throw new DraftConflict();
         if (message.fields && Array.isArray(message.dirtyKeys)) {
             const fields = Object.fromEntries(Object.entries(message.fields).filter(([key]) => message.dirtyKeys.includes(key)));
@@ -897,14 +989,10 @@ export class BlogPostManager {
                 else await this.start(view, view.draft.plan ? 'write_blog' : 'prepare_blog');
                 break;
             case 'cancel':
-                if (view.draft.pending) {
-                    view.draft.pending.cancelRequested = true;
-                    await this.store.save(view.draft);
-                    if (view.draft.pending.jobId && isServerTarget(view.draft.pending.target)) await this.jobs.cancel(view.draft.pending.jobId, view.draft.pending.target);
-                    this.run(view);
-                }
+                await this.cancelPending(view);
                 break;
             case 'discardPending':
+                await this.edit(view, message.fields);
                 if (view.task) throw new Error('작업을 취소한 뒤 다시 시도해 주세요.');
                 if (view.draft.pending?.jobId && isServerTarget(view.draft.pending.target) && !view.draft.pending.apiUrl) {
                     try { await this.jobs.cancel(view.draft.pending.jobId, view.draft.pending.target); }
@@ -926,6 +1014,7 @@ export class BlogPostManager {
                 }
                 break;
             case 'discardCandidate': {
+                await this.edit(view, message.fields);
                 const history = view.draft.candidate?.plan && view.draft.candidate.history, last = history?.snapshots.at(-1);
                 if (history && last) view.draft.declinedMemo = { historyId: history.id, timestamp: last.timestamp, hash: last.hash };
                 delete view.draft.candidate;
@@ -978,14 +1067,14 @@ export class BlogPostManager {
                         uri,
                         Buffer.from(await this.exportContent(article, html, uri)),
                     );
-                    view.status = `${html ? 'HTML' : 'Markdown'} 파일로 저장했습니다.`;
+                    vscode.window.setStatusBarMessage(`${html ? 'HTML' : 'Markdown'} 파일로 저장했습니다.`, 3000);
                 }
                 break;
             }
             case 'copy':
                 if (!message.versionId && view.editable && message.editToken === view.draft.editor?.token) await this.edit(view, message.fields);
                 await vscode.env.clipboard.writeText(this.markdown(message.versionId ? this.version(view.draft, message.versionId) : view.draft));
-                view.status = '글을 복사했습니다.';
+                vscode.window.setStatusBarMessage('글을 복사했습니다.', 3000);
                 break;
             case 'restore': {
                 const version = this.version(view.draft, message.versionId);
@@ -996,7 +1085,7 @@ export class BlogPostManager {
                     view.draft.revision,
                 );
                 await this.saveArticleEdit(view.draft);
-                view.status = '선택한 버전을 적용했습니다.';
+                vscode.window.setStatusBarMessage('선택한 버전을 적용했습니다.', 3000);
                 break;
             }
             case 'openLink': {
@@ -1042,9 +1131,6 @@ export class BlogPostManager {
                 this.uploadGhost(view, article, message.type === 'ghostPublish');
                 break;
             }
-            case 'rechargeCredits':
-                await this.connection.showCreditRecharge();
-                break;
             case 'connect':
                 await this.connect();
                 break;
@@ -1128,6 +1214,14 @@ export class BlogPostManager {
         await this.store.save(draft);
         this.run(view);
     }
+    private static async cancelPending(view: View) {
+        const pending = view.draft.pending;
+        if (!pending) return;
+        pending.cancelRequested = true;
+        await this.store.save(view.draft);
+        if (pending.jobId && isServerTarget(pending.target)) await this.jobs.cancel(pending.jobId, pending.target);
+        this.run(view);
+    }
     private static run(view: View, retry = false) {
         if (!backendRequests.enabled || this.closing || view.task || !view.draft.pending) return;
         const pending = view.draft.pending;
@@ -1136,14 +1230,13 @@ export class BlogPostManager {
         view.partial = '';
         view.watcher = new AbortController();
         const controller = view.watcher, signal = controller.signal;
-        view.status = pending.append ? '최근 코드 변경을 메모에 반영하고 있어요…' : pending.request.kind === 'prepare_blog' ? '구간과 풀이 설명을 준비하고 있어요…' : '글을 작성하고 있어요…';
         view.task = Promise.resolve().then(async () => {
             try {
                 if (pending.apiUrl || !isServerTarget(pending.target)) {
                     if (!view.editable) return;
                     if (pending.cancelRequested) {
                         await this.enqueue(view, async () => { signal.throwIfAborted(); delete view.draft.pending; await this.store.save(view.draft); });
-                        view.status = '작업을 취소했습니다.';
+                        if (view.panel && pending.request.priority !== 'prefetch') vscode.window.setStatusBarMessage('작업을 취소했습니다.', 3000);
                         return;
                     }
                     if (!retry) throw new Error('이전 실행 방식의 작업입니다. 다시 시도하면 현재 서비스로 새 요청을 보냅니다.');
@@ -1169,7 +1262,7 @@ export class BlogPostManager {
                 }
                 if (!pending.jobId && (pending.cancelRequested || (!retry && pending.request.priority === 'prefetch' && !this.autoMemos))) {
                     await this.enqueue(view, async () => { signal.throwIfAborted(); delete view.draft.pending; await this.store.save(view.draft); });
-                    view.status = '작업을 취소했습니다.';
+                    if (view.panel && pending.request.priority !== 'prefetch') vscode.window.setStatusBarMessage('작업을 취소했습니다.', 3000);
                     return;
                 }
                 let job = pending.jobId ? await this.jobs.job(pending.jobId, target) : await this.jobs.create(pending.request, target);
@@ -1180,7 +1273,23 @@ export class BlogPostManager {
                 if (retry && ['failed', 'cancelled'].includes(job.status) && !pending.cancelRequested) job = await this.jobs.retry(job.id, target);
                 if (pending.cancelRequested && ['queued', 'running', 'failed'].includes(job.status)) job = (await this.jobs.cancel(job.id, target))!;
                 update(job);
-                if (['queued', 'running'].includes(job.status)) job = await this.jobs.watch(job.id, target, update, signal);
+                if (['queued', 'running'].includes(job.status)) {
+                    const watch = () => this.jobs.watch(job.id, target, update, signal);
+                    if (pending.request.priority === 'prefetch' || !view.panel) job = await watch();
+                    else {
+                        const title = pending.request.kind === 'prepare_blog' ? '구간과 풀이 설명을 준비하고 있어요…' : '글을 작성하고 있어요…';
+                        job = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (_progress, token) => {
+                            const cancel = token.onCancellationRequested(() => {
+                                void this.enqueue(view, async () => {
+                                    if (!signal.aborted && view.watcher === controller && view.editable && view.draft.pending?.request.requestId === pending.request.requestId) {
+                                        await this.cancelPending(view);
+                                    }
+                                }).catch(() => {});
+                            });
+                            try { return await watch(); } finally { cancel.dispose(); }
+                        });
+                    }
+                }
                 if (job.status === 'completed') {
                     if (!job.result || (pending.request.kind === 'prepare_blog' ? !job.result.plan : typeof job.result.markdown !== 'string')) throw new Error('AI 응답에 글이 없습니다. 다시 시도해 주세요.');
                     await this.enqueue(view, async () => {
@@ -1206,8 +1315,6 @@ export class BlogPostManager {
                         if (applied && pending.request.kind === 'write_blog' && !pending.cancelRequested) this.autoUpload(view);
                     });
                     view.partial = '';
-                    view.status = view.draft.candidate ? '' : pending.request.kind === 'prepare_blog' ? '준비됐어요. 그대로 글을 쓰거나 설명을 고쳐보세요.' : '글을 완성했습니다.';
-                    if (view.status && pending.history && pending.request.source.changes.length < pending.history.snapshots.length) view.status += ` 최근 ${pending.request.source.changes.length}개 변경을 분석했습니다.`;
                 } else if (job.status === 'failed') {
                     throw new Error(job.error || '글쓰기에 실패했습니다. 다시 시도할 수 있습니다.');
                 } else if (job.status === 'cancelled') {
@@ -1216,7 +1323,7 @@ export class BlogPostManager {
                     }
                     await this.enqueue(view, async () => { signal.throwIfAborted(); delete view.draft.pending; await this.store.save(view.draft); });
                     view.partial = '';
-                    view.status = view.memoRetryAt ? '' : '작업을 취소했습니다.';
+                    if (view.panel && pending.request.priority !== 'prefetch') vscode.window.setStatusBarMessage('작업을 취소했습니다.', 3000);
                 }
             } catch (error) {
                 if (error instanceof DraftConflict) await this.enqueue(view, () => this.refresh(view));
@@ -1236,9 +1343,8 @@ export class BlogPostManager {
                             await this.store.save(view.draft);
                         }
                         view.error = '';
-                        view.status = '';
                     });
-                } else if (!signal.aborted) view.error = error instanceof Error ? error.message : String(error);
+                } else if (!signal.aborted) this.notifyError(view, error instanceof Error ? error.message : String(error), 'retry');
             } finally {
                 if (!this.closing) void this.connection.refreshUsage(true);
                 if (view.watcher === controller) {

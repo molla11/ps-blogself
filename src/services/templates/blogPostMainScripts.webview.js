@@ -58,7 +58,7 @@ function setWritingVisibility(visible) {
     writingVisible = visible;
     markDisplayedWriting();
 }
-document.addEventListener('visibilitychange', markDisplayedWriting);
+document.addEventListener('visibilitychange', () => { markDisplayedWriting(); showWritingDecision(); });
 const richEditor = createArticleEditor({
     element: el('rich-editor'), toolbar: el('format-tools'), outline: el('outline-list'),
     onChange(markdown, document) {
@@ -121,6 +121,27 @@ function action(type, extra = {}) {
         type = 'retry';
     }
     send(type, extra, true);
+}
+// A closed notification leaves its decision pending. Only a new decision or the editor command reopens it.
+let lastDecision;
+function writingDecision() {
+    if (!model || model.writingAllowed === false) return;
+    if (!model.editable) return 'ownership';
+    if (localRecovery) return 'recovery';
+    if (model.candidate) return 'candidate';
+}
+function showWritingDecision(reopen = false) {
+    const kind = writingDecision();
+    if (!kind) {
+        lastDecision = undefined;
+        if (reopen) send('reviewWritingError');
+        return;
+    }
+    const candidateId = kind === 'candidate' ? model.candidateId : undefined;
+    const key = JSON.stringify([kind, model.editToken, candidateId]);
+    if (!reopen && (lastDecision?.key === key || !writingVisible || document.hidden)) return;
+    if (lastDecision?.key !== key) lastDecision = { key, id: String(++counter) };
+    send('showWritingDecision', { kind, candidateId, decisionId: lastDecision.id });
 }
 function range() {
     const p = form.plan;
@@ -404,19 +425,7 @@ function render() {
     streaming = !!(writing && busy);
     const editable = model.editable !== false;
     const failed = model.pending && !model.running && !!model.error;
-    el('ownership-box').hidden = editable;
-    el('recovery-box').hidden = !localRecovery;
-    el('recover-input-btn').disabled = !editable;
     el('file-name').textContent = model.fileName;
-    el('status-text').textContent =
-        model.status ||
-        (form.plan
-            ? '변경사항 메모를 그대로 사용하거나 자유롭게 고쳐보세요.'
-            : '변경사항을 요약해 주세요.');
-    el('progress-box').hidden = !failed && (writing || !/저장|복사|적용|취소/.test(model.status || ''));
-    if (failed) el('status-text').textContent = writing ? '글 생성 보류' : '메모 생성 보류';
-    el('cancel-btn').hidden = !model.pending;
-    el('candidate-box').hidden = !model.candidate;
     el('preparing').hidden = !!form.plan || busy;
     el('prepare-empty-btn').hidden = (!!model.pending && !failed) || !!model.running || !!model.candidate;
     el('preparing').querySelector('p').textContent = model.error
@@ -466,13 +475,10 @@ function render() {
     document.querySelectorAll('textarea, input:not([type="range"])').forEach(node => { node.readOnly = !editable; });
     el('article-title').readOnly = el('article-body').readOnly = !editable || streaming;
     document.querySelectorAll('input[type="range"]').forEach(node => { node.disabled = !editable; });
-    for (const id of ['generate-btn', 'prepare-btn', 'prepare-empty-btn', 'cancel-btn', 'apply-candidate-btn', 'discard-candidate-btn']) {
-        if (!editable) el(id).disabled = true;
-        else if (!['generate-btn', 'prepare-btn'].includes(id)) el(id).disabled = false;
-    }
+    el('prepare-empty-btn').disabled = false;
     el('contest-backend-notice').hidden = model.backendEnabled !== false;
-    if (model.backendEnabled === false) {
-        for (const id of ['generate-btn', 'prepare-btn', 'prepare-empty-btn', 'cancel-btn']) el(id).disabled = true;
+    if (!editable || model.backendEnabled === false) {
+        for (const id of ['generate-btn', 'prepare-btn', 'prepare-empty-btn']) el(id).disabled = true;
     }
     el('start-draft').textContent = form.plan ? '이 메모로 초안 만들기' : '풀이 메모로 이동';
     el('start-draft').disabled = !!form.plan && el('generate-btn').disabled;
@@ -482,9 +488,21 @@ function render() {
         : '풀이 메모로 초안을 만든 뒤 여기에서 다듬으세요.';
     renderWritingModel();
     stash();
+    showWritingDecision();
 }
 window.addEventListener('message', (event) => {
     const message = event.data;
+    if (message.type === 'reviewWritingNotice') { showWritingDecision(true); return; }
+    if (message.type === 'writingDecisionChoice') {
+        if (!lastDecision || message.decisionId !== lastDecision.id || message.kind !== writingDecision() ||
+            message.editToken !== model.editToken || message.candidateId !== (message.kind === 'candidate' ? model.candidateId : undefined)) return;
+        if (message.kind === 'ownership' && message.action === 'takeover') send('takeover');
+        if (message.kind === 'recovery' && message.action === 'recover') recoverInput();
+        if (message.kind === 'candidate' && ['applyCandidate', 'discardCandidate'].includes(message.action)) {
+            action(message.action, { candidateId: model.candidateId });
+        }
+        return;
+    }
     if (message.type === 'retryWriting') {
         if (model?.error && model.errorId === message.errorId && model.pendingId === message.pendingId &&
             model.editToken === message.editToken && model.editable && !model.running &&
@@ -493,7 +511,7 @@ window.addEventListener('message', (event) => {
         }
         return;
     }
-    if (message.type === 'writingVisibility') { setWritingVisibility(message.visible); return; }
+    if (message.type === 'writingVisibility') { setWritingVisibility(message.visible); showWritingDecision(); return; }
     if (message.type === 'writingModelChecked' || message.type === 'saveError' && message.id === modelSelectionRequest?.id) {
         const request = modelSelectionRequest;
         if (!request || message.id !== request.id) return;
@@ -555,6 +573,9 @@ window.addEventListener('message', (event) => {
             }
         }
         render();
+    } else if (message.type === 'obsoleteAction') {
+        sent.delete(message.id);
+        if (dirty.size && model.editable) send('save', {}, true);
     } else if (message.type === 'ack') {
         const fields = sent.get(message.id);
         if (fields) {
@@ -612,14 +633,12 @@ window.addEventListener('message', (event) => {
         });
     }
 });
-el('takeover-btn').addEventListener('click', () => send('takeover'));
-el('recover-input-btn').addEventListener('click', () => {
-    if (model?.editable === false || !localRecovery) return;
+function recoverInput() {
     for (const [key, value] of Object.entries(localRecovery)) { form[key] = structuredClone(value); dirty.add(key); }
     localRecovery = undefined;
     render();
     action('save');
-});
+}
 for (const [id, key] of [
     ['instructions', 'instructions'],
     ['custom-style', 'customStyle'],
@@ -740,7 +759,6 @@ el('range-details').addEventListener('toggle', () => {
 for (const [id, type] of [
     ['generate-btn', 'generate'],
     ['prepare-btn', 'prepare'],
-    ['apply-candidate-btn', 'applyCandidate'],
 ]) {
     el(id).addEventListener('click', () => {
         if (type === 'generate') chooseVersion('');
@@ -754,13 +772,7 @@ for (const [id, type, format] of [['copy-btn', 'copy'], ['export-btn', 'export',
         else { clearTimeout(editTimer); send(type, { format }, true); }
     });
 }
-for (const [id, type] of [
-    ['cancel-btn', 'cancel'],
-    ['cancel-write-btn', 'cancel'],
-    ['discard-candidate-btn', 'discardCandidate'],
-]) {
-    el(id).addEventListener('click', () => send(type === 'cancel' && model?.error && !model.running ? 'discardPending' : type));
-}
+el('cancel-write-btn').addEventListener('click', () => send('cancel'));
 for (const name of ['plan', 'article']) {
     el(name + '-tab').addEventListener('click', () => {
         if (activeTab === name) return;

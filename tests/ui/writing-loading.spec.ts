@@ -39,8 +39,7 @@ test('preparation and retry leave the webview notice hidden while a failed memo 
     await expect(page.locator('#generation-loading')).toHaveCount(0);
     await expect(page.locator('.skeleton')).toHaveCount(0);
     await update(page, { ...preparing, running: false, error: '연결에 실패했습니다.' });
-    await expect(page.locator('#progress-box')).toBeVisible();
-    await expect(page.locator('#status-text')).toHaveText('메모 생성 보류');
+    await expect(page.getByRole('button', { name: '메모 생성', exact: true })).toBeEnabled();
     await update(page, preparing);
     await expect(page.locator('#progress-box')).toBeHidden();
     await update(page, { pending: false, running: false });
@@ -79,7 +78,7 @@ test('native retry applies to the current failed draft and keeps unsaved edits',
     expect(await retries()).toHaveLength(0);
     await retry();
     expect(await retries()).toMatchObject([{ errorId: 'error-a', fields: { plan: { summary: '유지할 풀이 설명' } } }]);
-    await page.locator('#cancel-btn').click();
+    await retry({ action: 'discardPending' });
     expect(await page.evaluate(() => (window as any).__messages.at(-1).type)).toBe('discardPending');
     await update(page, { ...failure, editable: false });
     await retry();

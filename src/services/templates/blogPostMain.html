@@ -9,7 +9,7 @@
     </head>
     <body>
         <p id="contest-writing-notice" role="status">대회 모드에서 글쓰기 화면 진입을 차단했습니다.</p>
-        <p id="contest-backend-notice" class="notice" role="status" hidden>대회 모드에서 온라인 요청을 차단했습니다.</p>
+        <p id="contest-backend-notice" class="muted" role="status" hidden>대회 모드에서 온라인 요청을 차단했습니다.</p>
         <!-- AI icons: Codicons sparkle-filled; license in media/codicons/LICENSE. -->
         <div class="writing-header" id="writing-header">
             <div id="view-tabs" role="tablist" aria-label="글 작성 화면">
@@ -74,24 +74,6 @@
             </div>
         </div>
         <main>
-            <div class="notice" id="ownership-box" role="status" hidden>
-                <span>다른 창에서 편집 중입니다. 최신 내용을 함께 보고 있어요.</span>
-                <button class="secondary" id="takeover-btn">이 창에서 편집</button>
-            </div>
-            <div class="notice" id="recovery-box" hidden>
-                <span>이 창의 미저장 입력을 보관하고 있습니다.</span>
-                <button class="secondary" id="recover-input-btn">미저장 입력 적용</button>
-            </div>
-            <div class="notice" id="progress-box" role="status">
-                <span id="status-text">기록을 불러오고 있어요…</span
-                ><button class="quiet" id="cancel-btn" hidden>취소</button>
-            </div>
-            <div class="notice" id="candidate-box" hidden>
-                <div class="actions">
-                    <button id="apply-candidate-btn">새 결과 적용</button
-                    ><button class="quiet" id="discard-candidate-btn">현재 내용 유지</button>
-                </div>
-            </div>
             <section id="plan-view" role="tabpanel" aria-labelledby="plan-tab">
                 <label class="field" id="custom-style-field" hidden>원하는 문체
                     <textarea id="custom-style" rows="2" maxlength="2000"

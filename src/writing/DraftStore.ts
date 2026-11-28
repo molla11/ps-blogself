@@ -57,7 +57,10 @@ export class DraftStore {
             Object.assign(draft, syncState(draft));
             Object.assign(draft, separateArticleTitle(draft));
             draft.articleVersions = draft.articleVersions.map(separateArticleTitle);
-            if (draft.candidate) draft.candidate = separateArticleTitle(draft.candidate);
+            if (draft.candidate) {
+                draft.candidate = separateArticleTitle(draft.candidate);
+                draft.candidate.decisionId ??= createHash('sha256').update(JSON.stringify(draft.candidate)).digest('hex');
+            }
             draft.articleVersions = previousArticleVersions(draft);
             for (const article of [draft, ...draft.articleVersions]) {
                 if (article.publicationId) continue;

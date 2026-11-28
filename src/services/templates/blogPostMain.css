@@ -45,7 +45,7 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; }
 #view-tabs button:hover { background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--ink) 8%, var(--paper))); filter: none; }
 #view-tabs [aria-selected=true] { color: var(--ink); font-weight: 650; border-bottom-color: var(--vscode-focusBorder, var(--accent)); }
 #view-tabs button:focus-visible { outline-offset: -4px; }
-.notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 24px; font-size: 12px; }
+#contest-backend-notice { margin: 12px 24px; }
 #author-notices { position: fixed; right: 16px; bottom: 12px; z-index: 15; }
 #notice-toggle, #notice-panel {
     color: var(--vscode-editorHoverWidget-foreground, var(--ink));
@@ -70,8 +70,6 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; }
 #notice-panel p { margin: 0 0 .5em; }
 #notice-panel pre { padding: 8px; font-size: 12px; }
 #notice-panel :not(pre) > code { padding: 1px 3px; border-radius: 3px; background: var(--vscode-textCodeBlock-background, var(--desk)); }
-.notice > span { flex: 1; min-width: 180px; }
-#progress-box { color: var(--muted); }
 .section-heading { display: flex; justify-content: flex-end; margin: 4px 0 16px; }
 .section-description { margin: 4px 0 0; }
 #plan-view { width: calc(100% - 48px); max-width: 640px; margin: 24px auto 48px; }
@@ -245,7 +243,7 @@ dialog::backdrop { background: #00000045; }
     .writing-options { display: grid; grid-template-columns: minmax(0, 1fr); }
     .model-picker { justify-self: end; padding: 8px 0; }
     .plan-options { display: flex; flex-wrap: wrap; grid-column: 1 / -1; justify-self: end; gap: 8px 12px; padding-bottom: 8px; }
-    .notice { margin: 10px 14px; }
+    #contest-backend-notice { margin: 10px 14px; }
     #plan-view { width: calc(100% - 28px); margin: 14px auto; }
     .plan-title-section, .step, #preparing { padding: 20px 16px; }
     .document-controls { padding: 8px 10px; gap: 6px; }
@@ -306,7 +304,6 @@ dialog::backdrop { background: #00000045; }
 .with-writer-sidebar #writer-options,
 .with-writer-sidebar #article-toolbar,
 .with-writer-sidebar #article-outline,
-.with-writer-sidebar main > .notice,
 .with-writer-sidebar #prepare-empty-btn,
 .with-writer-sidebar .section-heading { display: none; }
 :is(.with-writer-sidebar, .with-local-writer-tools) .document-layout { margin-top: 0; }
@@ -322,5 +319,5 @@ dialog::backdrop { background: #00000045; }
 #local-writer-tools > button { display: block; margin-inline-start: auto; }
 #local-writer-tools :is(.writing-header, .article-toolbar, #article-outline) { position: static; width: auto; height: auto; max-height: none; }
 #local-writer-tools :is(.topbar, .writing-navigation, .document-controls, .version-bar) { padding: 8px 0; flex-wrap: wrap; }
-#local-writer-tools .notice { margin: 8px 0; }
+#local-writer-tools #contest-backend-notice { margin: 8px 0; }
 body:has(#article-view[hidden]) #local-writer-tools :is(#article-toolbar, #article-outline) { display: none; }

@@ -124,7 +124,7 @@ export interface WritingDraft extends WritingPreferences {
         cancelRequested?: boolean;
         append?: boolean;
     };
-    candidate?: { publicationId?: string; articleOrigin?: ArticleOrigin; plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory; notices?: AuthorNotice[] };
+    candidate?: { decisionId?: string; publicationId?: string; articleOrigin?: ArticleOrigin; plan?: WritingPlan; title?: string; markdown?: string; document?: ArticleDocument; history?: FileHistory; notices?: AuthorNotice[] };
     planNotices?: AuthorNotice[];
     articleNotices?: AuthorNotice[];
     articleVersions: ArticleVersion[];
@@ -400,7 +400,7 @@ export function mergeResult(
     }
     const notices = resultNotices(result.notices);
     if (draft.revision !== baseRevision) {
-        draft.candidate = { ...result, notices };
+        draft.candidate = { ...result, notices, decisionId: randomUUID() };
         return;
     }
     if (result.plan) {
